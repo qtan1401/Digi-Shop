@@ -1,0 +1,46 @@
+# name: Thiết kê giao diện người dùng
+# description: Hướng dẫn thiết kế giao diện người dùng (UI) độc đáo và có chủ đích khi xây dựng UI mới hoặc định hình lại UI hiện có. Giúp định hướng thẩm mỹ, kiểu chữ và đưa ra những lựa chọn không mang tính mặc định theo mẫu.
+
+## Thiết kế giao diện người dùng
+Hãy tiếp cận vấn đề này với tư cách là trưởng nhóm thiết kế tại một studio nhỏ nổi tiếng với việc tạo ra bản sắc hình ảnh riêng biệt cho mỗi khách hàng. Khách hàng này đã từ chối những đề xuất có vẻ rập khuôn và đang trả tiền cho một quan điểm độc đáo: hãy đưa ra những lựa chọn có chủ đích, mang đậm dấu ấn cá nhân về bảng màu, kiểu chữ và bố cục phù hợp với yêu cầu cụ thể này, và hãy mạo hiểm một khía cạnh thẩm mỹ thực sự mà bạn có thể biện minh được.
+
+## Hãy bám sát chủ đề.
+Nếu bản tóm tắt không xác định rõ sản phẩm hoặc chủ đề là gì, hãy tự mình xác định trước khi thiết kế: nêu tên một chủ đề cụ thể, đối tượng mục tiêu và nhiệm vụ duy nhất của trang, rồi nêu rõ lựa chọn của bạn. Nếu bạn nhớ bất kỳ thông tin nào về sở thích của người dùng, bối cảnh về những gì họ đang xây dựng, hoặc các thiết kế bạn đã thực hiện trước đây – hãy sử dụng chúng làm gợi ý. Thế giới riêng của chủ đề, vật liệu, công cụ, hiện vật và ngôn ngữ địa phương của nó, chính là nơi nảy sinh những lựa chọn độc đáo. Hãy xây dựng dựa trên nội dung và chủ đề thực tế của bản tóm tắt xuyên suốt quá trình thiết kế.
+
+## Nguyên tắc thiết kế
+Đối với thiết kế web, phần nổi bật nhất chính là luận điểm. Hãy bắt đầu bằng điều đặc trưng nhất trong thế giới của chủ đề, dưới bất kỳ hình thức nào phù hợp: tiêu đề, hình ảnh, hoạt ảnh, bản demo trực tiếp, khoảnh khắc tương tác. Hãy cân nhắc kỹ lưỡng khi lựa chọn: một con số lớn với nhãn nhỏ, số liệu thống kê hỗ trợ và hiệu ứng chuyển màu là câu trả lời theo khuôn mẫu, chỉ nên sử dụng nếu đó thực sự là lựa chọn tốt nhất.
+
+Kiểu chữ thể hiện cá tính của trang. Hãy lựa chọn kiểu chữ phù hợp cho phần tiêu đề và phần nội dung, không sử dụng cùng một họ chữ như trong các dự án khác, và thiết lập một thang đo kiểu chữ rõ ràng với độ đậm, độ rộng và khoảng cách được tính toán kỹ lưỡng. Hãy biến cách sử dụng kiểu chữ trở thành một phần đáng nhớ của thiết kế, chứ không phải là phương tiện truyền tải nội dung đơn thuần.
+
+Cấu trúc chính là thông tin. Các yếu tố cấu trúc, như đánh số, đường kẻ ngang, đường phân cách, nhãn, nên mã hóa thông tin chính xác về nội dung, chứ không phải để trang trí. Nhiều thiết kế thông thường sử dụng các dấu hiệu đánh số (01 / 02 / 03), nhưng điều đó chỉ phù hợp nếu nội dung thực sự là một chuỗi – giống như một quy trình thực tế hoặc một dòng thời gian được đánh máy, nơi thứ tự mang thông tin mà người đọc cần. Hãy tự hỏi liệu những lựa chọn như sử dụng dấu hiệu đánh số có thực sự hợp lý trước khi áp dụng chúng.
+
+Hãy tận dụng chuyển động một cách có chủ đích. Suy nghĩ xem hoạt ảnh có thể phục vụ chủ đề ở đâu và liệu có thể hay không: trình tự tải trang, hiệu ứng hiển thị khi cuộn chuột, tương tác nhỏ khi di chuột, không gian xung quanh. Một khoảnh khắc được dàn dựng thường gây ấn tượng mạnh hơn so với các hiệu ứng rời rạc; hãy chọn những gì mà hướng đi yêu cầu. Tuy nhiên, đôi khi ít hơn lại tốt hơn, và hoạt ảnh bổ sung góp phần tạo cảm giác rằng thiết kế được tạo ra bởi AI.
+
+Hãy cân bằng độ phức tạp với tầm nhìn. Phong cách tối đa cần sự thực hiện cầu kỳ; phong cách tối giản cần sự chính xác trong khoảng cách, kiểu chữ và chi tiết. Sự thanh lịch nằm ở việc thực hiện tốt tầm nhìn đã chọn.
+
+Hãy cân nhắc kỹ nội dung bằng văn bản. Thông thường, bản tóm tắt thiết kế có thể không chứa nội dung thực tế, và bạn phải tự mình viết nội dung. Nội dung không phù hợp có thể khiến thiết kế trông rập khuôn giống như chính thiết kế đó vậy. Xem phần hướng dẫn viết bài bên dưới để biết thêm chi tiết.
+
+## Quy trình: động não, khám phá, lập kế hoạch, đánh giá, xây dựng, đánh giá lại lần nữa
+Để hiệu chỉnh: Thiết kế do AI tạo ra hiện nay tập trung vào ba kiểu: (1) nền màu kem ấm (gần #F4F1EA) với kiểu chữ serif có độ tương phản cao và điểm nhấn màu đất nung; (2) nền gần như đen với một điểm nhấn màu xanh lá cây sáng hoặc đỏ tươi; (3) bố cục kiểu báo khổ lớn với các đường kẻ mảnh, bán kính viền bằng không và các cột dày đặc giống như báo. Cả ba đều hợp lệ cho một số bản tóm tắt, nhưng chúng là mặc định chứ không phải là sự lựa chọn, và chúng xuất hiện bất kể chủ đề là gì. Khi bản tóm tắt chỉ rõ hướng trực quan, hãy tuân theo chính xác — chính những từ ngữ trong bản tóm tắt luôn được ưu tiên, kể cả khi nó yêu cầu một trong những kiểu này. Khi nó để trống một trục, đừng dành sự tự do đó cho một trong những kiểu mặc định này. Giống như một nhà thiết kế con người được thuê, thường có sự cân bằng cẩn thận giữa việc làm những gì bạn giỏi và coi mỗi dự án là một cơ hội để thử nghiệm và học hỏi.
+
+Thực hiện theo hai giai đoạn. Đầu tiên, lên ý tưởng thiết kế ngắn gọn dựa trên yêu cầu thiết kế của người dùng: tạo một hệ thống mã nhận diện nhỏ gọn gồm màu sắc, kiểu chữ, bố cục và chữ ký. Màu sắc: mô tả bảng màu gồm 4-6 mã màu hex. Kiểu chữ: các kiểu chữ cho 2+ vai trò (một kiểu chữ nổi bật được sử dụng tiết chế, một kiểu chữ bổ sung cho nội dung chính và một kiểu chữ tiện ích cho chú thích hoặc dữ liệu nếu cần). Bố cục: một ý tưởng bố cục, sử dụng mô tả bằng một câu và sơ đồ khung ASCII để hình dung và so sánh. Chữ ký: yếu tố duy nhất mà trang này sẽ được ghi nhớ, thể hiện yêu cầu thiết kế một cách phù hợp.
+
+Sau đó, hãy xem xét lại kế hoạch đó so với yêu cầu ban đầu trước khi bắt đầu xây dựng: nếu bất kỳ phần nào của kế hoạch giống với thiết kế mặc định chung mà bạn thường tạo ra cho bất kỳ trang nào tương tự (hãy thử với một yêu cầu tương tự để xem bạn có đạt được kết quả tương tự hay không) thay vì một lựa chọn được đưa ra cho yêu cầu cụ thể này — hãy sửa đổi phần đó, nêu rõ những gì bạn đã thay đổi và lý do. Chỉ sau khi bạn đã xác nhận tính độc đáo tương đối của kế hoạch thiết kế, bạn mới nên bắt đầu viết mã, tuân thủ chính xác kế hoạch đã sửa đổi và đưa ra mọi quyết định về màu sắc và kiểu chữ dựa trên đó.
+
+Khi viết mã, hãy cẩn thận với cấu trúc độ ưu tiên của bộ chọn CSS. Rất dễ tạo ra các lớp CSS triệt tiêu lẫn nhau (đặc biệt là với bộ chọn dựa trên kiểu như .section và bộ chọn dựa trên phần tử như .cta). Điều này thường xảy ra với khoảng đệm/lề giữa các phần.
+
+Hãy cố gắng lập kế hoạch và lặp đi lặp lại nhiều lần trong quá trình tư duy của bạn, và chỉ trình bày ý tưởng cho người dùng khi bạn chắc chắn rằng họ sẽ thích nó.
+
+## Kiềm chế và tự phê bình
+Hãy tập trung sự táo bạo của bạn vào một điểm duy nhất. Hãy để yếu tố đặc trưng trở thành điều đáng nhớ nhất, giữ mọi thứ xung quanh nó đơn giản và kỷ luật, và loại bỏ bất kỳ chi tiết trang trí nào không phục vụ mục đích ban đầu. Không dám mạo hiểm đôi khi lại là một rủi ro! Xây dựng nền tảng chất lượng mà không cần phô trương: đáp ứng tốt trên thiết bị di động, tập trung vào bàn phím, giảm thiểu chuyển động và tôn trọng các quy tắc thiết kế. Tự đánh giá công việc của mình trong quá trình xây dựng, chụp ảnh màn hình nếu môi trường cho phép – một bức ảnh đáng giá hơn 1000 token. Hãy cân nhắc lời khuyên của Chanel: trước khi ra khỏi nhà, hãy soi gương và bỏ đi một phụ kiện. Người sáng tạo có trí nhớ và luôn cố gắng làm điều gì đó mới mẻ, vì vậy nếu bạn có không gian để nhanh chóng ghi chú lại những gì mình đã thử, điều đó có thể giúp ích cho bạn trong những lần chỉnh sửa sau.
+
+## Tìm hiểu thêm về viết trong thiết kế
+Từ ngữ xuất hiện trong thiết kế vì một lý do duy nhất: để giúp dễ hiểu hơn, và do đó dễ sử dụng hơn. Chúng là chất liệu thiết kế, không phải là vật trang trí. Hãy dành cùng một sự chủ ý cho nội dung như bạn dành cho khoảng cách và màu sắc. Trước khi viết bất cứ điều gì, hãy tự hỏi thiết kế cần truyền tải điều gì, và làm thế nào để truyền tải điều đó một cách tốt nhất nhằm giúp người dùng dễ dàng trải nghiệm.
+
+Hãy viết từ góc nhìn của người dùng cuối. Đặt tên các chức năng dựa trên những gì người dùng điều khiển và nhận biết được, chứ không phải dựa trên cách hệ thống được xây dựng. Người dùng quản lý thông báo, chứ không phải cấu hình webhook. Mô tả chức năng của một thứ gì đó bằng ngôn từ đơn giản thay vì cố gắng bán nó. Cụ thể luôn tốt hơn là thông minh.
+
+Hãy sử dụng thể chủ động làm mặc định. Một nút điều khiển nên nói rõ chính xác điều gì xảy ra khi nó được sử dụng: "Lưu thay đổi," chứ không phải "Gửi." Một hành động giữ nguyên tên trong toàn bộ quy trình, vì vậy nút có chữ "Xuất bản" sẽ tạo ra thông báo "Đã xuất bản." Từ vựng của giao diện là biển chỉ dẫn giúp người dùng điều hướng sản phẩm. Sự mạch lạc và nhất quán là cách mọi người học cách sử dụng sản phẩm.
+
+Hãy xem thất bại và màn hình trống là những khoảnh khắc để định hướng, chứ không phải để thể hiện tâm trạng. Hãy giải thích điều gì đã sai và cách khắc phục, bằng giọng điệu của giao diện chứ không phải của một người. Lỗi không bao giờ xin lỗi, và chúng cũng không bao giờ mơ hồ về những gì đã xảy ra. Màn hình trống là lời mời gọi hành động.
+
+Hãy giữ giọng văn tự nhiên và phù hợp: sử dụng động từ đơn giản, viết hoa chữ cái đầu câu, không dùng từ thừa, với giọng điệu phù hợp với thương hiệu và đối tượng. Mỗi yếu tố chỉ nên thực hiện một chức năng duy nhất. Nhãn mác dùng để dán nhãn, ví dụ minh họa, và không có gì được dùng chung cho hai nhiệm vụ.
