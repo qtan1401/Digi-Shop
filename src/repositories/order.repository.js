@@ -1,13 +1,13 @@
 // ===== ORDER REPOSITORY =====
-// Đây là tầng Repository - chịu trách nhiệm lưu và truy xuất dữ liệu đơn hàng
-// Repository chỉ thao tác trực tiếp với dữ liệu (Model), không chứa logic nghiệp vụ
+// Tầng duy nhất được phép đọc/ghi trực tiếp vào orders[]
+// Không chứa business logic
 
 const orders = require("../models/order.model");
 
 /**
- * Tạo một đơn hàng mới và lưu vào danh sách
- * @param {Object} orderData - Dữ liệu đơn hàng cần tạo
- * @returns {Object} Đơn hàng vừa tạo
+ * Tạo đơn hàng mới, lưu vào store
+ * @param {Object} orderData
+ * @returns {Object} Đơn hàng đã lưu
  */
 const createOrder = (orderData) => {
     orders.push(orderData);
@@ -15,24 +15,50 @@ const createOrder = (orderData) => {
 };
 
 /**
- * Lấy danh sách tất cả đơn hàng
- * @returns {Array} Mảng các đơn hàng
+ * Lấy tất cả đơn hàng (mới nhất trước)
+ * @returns {Array}
  */
-const getAllOrders = () => {
-    return orders;
+const getAllOrders = () => [...orders].reverse();
+
+/**
+ * Tìm đơn hàng theo ID
+ * @param {string} id
+ * @returns {Object|undefined}
+ */
+const getOrderById = (id) => orders.find((o) => o.id === id || o.id == id);
+
+/**
+ * Cập nhật orderStatus của đơn hàng
+ * @param {string} id
+ * @param {string} status  -- "PENDING"|"PROCESSING"|"SHIPPED"|"DELIVERED"|"CANCELLED"
+ * @returns {Object|null}
+ */
+const updateOrderStatus = (id, status) => {
+    const order = getOrderById(id);
+    if (!order) return null;
+    order.orderStatus = status;
+    order.updatedAt = new Date().toISOString();
+    return order;
 };
 
 /**
- * Tìm đơn hàng theo mã đơn hàng (ID)
- * @param {string|number} id - Mã đơn hàng
- * @returns {Object|undefined} Đơn hàng tìm được hoặc undefined
+ * Cập nhật paymentStatus của đơn hàng
+ * @param {string} id
+ * @param {string} status  -- "UNPAID"|"PAID"|"REFUNDED"
+ * @returns {Object|null}
  */
-const getOrderById = (id) => {
-    return orders.find((order) => order.id === id || order.id == id);
+const updatePaymentStatus = (id, status) => {
+    const order = getOrderById(id);
+    if (!order) return null;
+    order.paymentStatus = status;
+    order.updatedAt = new Date().toISOString();
+    return order;
 };
 
 module.exports = {
     createOrder,
     getAllOrders,
-    getOrderById
+    getOrderById,
+    updateOrderStatus,
+    updatePaymentStatus
 };

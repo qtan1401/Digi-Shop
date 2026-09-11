@@ -4,24 +4,23 @@ const path = require("path");
 // Import Routes
 const productRoutes = require("./routes/product.routes");
 const checkoutRoutes = require("./routes/checkout.routes");
+const orderRoutes = require("./routes/order.routes");
+const cartRoutes = require("./routes/cart.routes");
 
 const app = express();
 
 // ===== MIDDLEWARE =====
-// Parse JSON body từ request
 app.use(express.json());
-
-// Serve static files (HTML, CSS, JS) từ thư mục "public"
 app.use(express.static(path.join(__dirname, "../public")));
 
 // ===== ROUTES =====
-// Mount routes - gắn routes vào các prefix URL
 app.use("/api/products", productRoutes);
-app.use("/api", checkoutRoutes);
+app.use("/api/cart", cartRoutes);         // Cart domain — validate & shipping
+app.use("/api", checkoutRoutes);          // Checkout domain — mua ngay + giỏ hàng
+app.use("/api/orders", orderRoutes);      // Order domain — tra cứu + quản lý
 
-// Route mặc định
 app.get("/", (req, res) => {
-    res.json({ message: "Welcome to Node.js MVC API" });
+    res.json({ message: "Welcome to Digi-Shop API" });
 });
 
 module.exports = app;
