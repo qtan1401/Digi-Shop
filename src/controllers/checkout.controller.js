@@ -1,119 +1,74 @@
 // ===== CHECKOUT CONTROLLER =====
-// Đây là tầng Controller - tiếp nhận HTTP request từ Client, gọi Service xử lý và trả response
-// Controller chỉ làm nhiệm vụ điều phối và định dạng dữ liệu trả về, không chứa logic nghiệp vụ
+// Tiếp nhận HTTP request thanh toán; gọi checkout service; map lỗi → HTTP status
 
 const checkoutService = require("../services/checkout.service");
 
+// Map error message → HTTP status code
+const errorToStatus = (msg) => {
+    if (msg.includes("không tồn tại") || msg.includes("không tìm thấy") || msg.includes("Không tìm thấy")) return 404;
+    if (msg.includes("hết hàng") || msg.includes("không đủ") || msg.includes("không hợp lệ") || msg.includes("trống") || msg.includes("Không thể")) return 400;
+    return 500;
+};
+
 /**
- * [POST] /api/checkout/check-stock/:id hoặc [POST] /api/checkout/:id (kiểm tra tồn kho)
- * Tiếp nhận yêu cầu kiểm tra số lượng hàng trong kho
+ * [POST] /api/checkout/check-stock/:id
+ * Kiểm tra tồn kho (không trừ kho)
  */
 const checkProductinStock = async (req, res) => {
     try {
         const productId = req.params.id || req.body.productId;
         const quantity = req.body.quantity || req.query.quantity || 1;
-
         const result = await checkoutService.checkProduct(productId, quantity);
-        res.status(200).json({
-            success: true,
-            message: "Sản phẩm còn hàng trong kho",
-            inStock: true,
-            data: result
-        });
+        res.status(200).json({ success: true, message: "Sản phẩm còn hàng trong kho", inStock: true, data: result });
     } catch (error) {
-        res.status(400).json({
-            success: false,
-            message: error.message
-        });
+        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
     }
 };
 
 /**
- * [POST] /api/checkout hoặc [POST] /api/checkout/:id
- * Tiếp nhận yêu cầu thực hiện thanh toán và tạo đơn hàng
+ * [POST] /api/checkout/:id  hoặc  [POST] /api/checkout
+ * Mua ngay 1 sản phẩm
  */
 const processCheckout = async (req, res) => {
     try {
-        // Lấy ID sản phẩm từ URL params hoặc từ Body của request
         const productId = req.params.id || req.body.productId;
-        const {
-            quantity = 1,
-            customerName,
-            customerPhone,
-            customerAddress,
-            paymentMethod,
-            note
-        } = req.body;
+        const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
 
-        // Gọi tầng Service để xử lý quy trình thanh toán
         const result = await checkoutService.processCheckout({
-            productId,
-            quantity,
-            customerName,
-            customerPhone,
-            customerAddress,
-            paymentMethod,
-            note
+            productId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note
         });
 
-        // Trả về kết quả thành công kèm thông tin đơn hàng
-        res.status(200).json({
+        res.status(201).json({
             success: true,
-            message: "Đặt hàng và thanh toán thành công!",
+            message: "Đặt hàng thành công!",
             data: result.order,
             remainingStock: result.remainingStock
         });
     } catch (error) {
-        // Trả về lỗi nếu không đủ hàng hoặc dữ liệu không hợp lệ
-        res.status(400).json({
-            success: false,
-            message: error.message
-        });
+        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
     }
 };
 
 /**
- * [GET] /api/checkout/orders/:id
- * Lấy chi tiết đơn hàng theo mã đơn
+ * [POST] /api/checkout/batch
+ * Thanh toán toàn bộ giỏ hàng (nhiều sản phẩm)
+ * Body: { items: [{productId, quantity}], customerName, customerPhone, customerAddress, paymentMethod, note }
  */
-const getOrderDetail = async (req, res) => {
+const cartCheckout = async (req, res) => {
     try {
-        const orderId = req.params.id;
-        const order = await checkoutService.getOrderById(orderId);
-        res.status(200).json({
+        const { items, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
+        const result = await checkoutService.processCartCheckout({
+            items, customerName, customerPhone, customerAddress, paymentMethod, note
+        });
+
+        res.status(201).json({
             success: true,
-            data: order
+            message: "Đặt hàng thành công!",
+            data: result.order
         });
     } catch (error) {
-        res.status(404).json({
-            success: false,
-            message: error.message
-        });
+        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
     }
 };
 
-/**
- * [GET] /api/checkout/orders
- * Lấy danh sách tất cả các đơn hàng đã đặt
- */
-const getAllOrders = async (req, res) => {
-    try {
-        const orders = await checkoutService.getAllOrders();
-        res.status(200).json({
-            success: true,
-            data: orders
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: error.message
-        });
-    }
-};
-
-module.exports = {
-    checkProductinStock,
-    processCheckout,
-    getOrderDetail,
-    getAllOrders
-};
+module.exports = { checkProductinStock, processCheckout, cartCheckout };

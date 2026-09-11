@@ -1,161 +1,186 @@
 // ===== CHECKOUT SERVICE =====
-// Đây là tầng Service - xử lý toàn bộ logic nghiệp vụ (business logic) của việc thanh toán
-// Service kiểm tra tính hợp lệ, trừ kho và tạo đơn hàng thông qua các Repository
+// Xử lý toàn bộ logic nghiệp vụ thanh toán: validate → trừ kho → tạo đơn
+// Hai luồng:
+//   processCheckout()      — Mua ngay 1 sản phẩm (giữ tương thích với flow cũ)
+//   processCartCheckout()  — Thanh toán toàn bộ giỏ hàng (nhiều sản phẩm)
 
 const productRepository = require("../repositories/product.repository");
 const orderRepository = require("../repositories/order.repository");
+const { calculateShipping } = require("./cart.service");
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+const buildCustomer = ({ customerName, customerPhone, customerAddress, note }) => ({
+    name: (customerName && customerName.trim()) || "Khách hàng",
+    phone: (customerPhone && customerPhone.trim()) || "",
+    address: (customerAddress && customerAddress.trim()) || "",
+    note: (note && note.trim()) || ""
+});
+
+const formatPaymentMethod = (method) =>
+    method === "BANKING" ? "Chuyển khoản ngân hàng" : "Thanh toán khi nhận hàng (COD)";
+
+const generateOrderId = () => "ORD-" + Date.now();
+
+const now = () => new Date().toISOString();
+
+// ─── Mua ngay 1 sản phẩm ─────────────────────────────────────────────────────
 
 /**
- * Kiểm tra xem sản phẩm có đủ số lượng trong kho hay không
- * @param {number|string} productId - ID sản phẩm
- * @param {number} quantity - Số lượng khách muốn mua
- * @returns {Object} Thông tin sản phẩm và trạng thái kho
- * @throws {Error} Nếu sản phẩm không tồn tại hoặc không đủ số lượng
+ * Kiểm tra tồn kho (không trừ kho, không tạo đơn)
+ * Dùng cho endpoint check-stock
  */
 const checkProduct = async (productId, quantity = 1) => {
-    // 1. Kiểm tra dữ liệu đầu vào
     const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) {
-        throw new Error("Số lượng mua phải là số nguyên lớn hơn 0");
-    }
+    if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua phải là số nguyên lớn hơn 0");
 
-    // 2. Tìm sản phẩm trong kho
     const product = productRepository.getProductByID(productId);
-    if (!product) {
-        throw new Error("Không tìm thấy sản phẩm trong hệ thống");
-    }
+    if (!product) throw new Error("Không tìm thấy sản phẩm trong hệ thống");
+    if (product.stock <= 0) throw new Error("Sản phẩm hiện đã hết hàng");
+    if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện chỉ còn ${product.stock} sản phẩm)`);
 
-    // 3. Kiểm tra số lượng tồn kho
-    if (product.stock <= 0) {
-        throw new Error("Sản phẩm hiện đã hết hàng");
-    }
-
-    if (product.stock < qty) {
-        throw new Error(`Số lượng trong kho không đủ (Hiện chỉ còn ${product.stock} sản phẩm)`);
-    }
-
-    // 4. Trả về thông tin sản phẩm và tồn kho hợp lệ
     return {
-        product,
-        inStock: true,
+        product: { id: product.id, name: product.name, price: product.price, stock: product.stock },
         requestedQuantity: qty,
-        availableStock: product.stock
+        inStock: true
     };
 };
 
 /**
- * Xử lý quy trình thanh toán và tạo đơn hàng hoàn chỉnh
- * @param {Object} checkoutData - Dữ liệu thanh toán từ client
- * @param {number|string} checkoutData.productId - ID sản phẩm cần mua
- * @param {number} checkoutData.quantity - Số lượng mua
- * @param {string} [checkoutData.customerName] - Họ tên khách hàng
- * @param {string} [checkoutData.customerPhone] - Số điện thoại
- * @param {string} [checkoutData.customerAddress] - Địa chỉ nhận hàng
- * @param {string} [checkoutData.paymentMethod] - Phương thức thanh toán (COD, BANKING)
- * @param {string} [checkoutData.note] - Ghi chú đơn hàng
- * @returns {Object} Kết quả gồm thông tin đơn hàng và số lượng tồn kho còn lại
+ * Thanh toán 1 sản phẩm (Mua ngay) — giữ nguyên tương thích
  */
 const processCheckout = async (checkoutData) => {
-    const {
-        productId,
-        quantity = 1,
-        customerName,
-        customerPhone,
-        customerAddress,
-        paymentMethod = "COD",
-        note = ""
-    } = checkoutData;
+    const { productId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" } = checkoutData;
 
-    // Bước 1: Validate ID sản phẩm
-    if (!productId) {
-        throw new Error("Vui lòng cung cấp ID sản phẩm cần thanh toán");
-    }
+    if (!productId) throw new Error("Vui lòng cung cấp ID sản phẩm.");
 
-    // Bước 2: Validate số lượng mua
     const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) {
-        throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm");
-    }
+    if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm.");
 
-    // Bước 3: Lấy thông tin sản phẩm từ Repository
     const product = productRepository.getProductByID(productId);
-    if (!product) {
-        throw new Error("Không tìm thấy sản phẩm cần thanh toán");
-    }
+    if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+    if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
+    if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
 
-    // Bước 4: Kiểm tra tồn kho
-    if (product.stock <= 0) {
-        throw new Error("Sản phẩm đã hết hàng, không thể tiếp tục thanh toán");
-    }
+    // Tính tiền
+    const subtotal = product.price * qty;
+    const shippingFee = calculateShipping(subtotal);
+    const totalPrice = subtotal + shippingFee;
 
-    if (product.stock < qty) {
-        throw new Error(`Số lượng trong kho không đủ đáp ứng (Hiện còn ${product.stock} sản phẩm)`);
-    }
-
-    // Bước 5: Tính toán tổng tiền
-    const totalPrice = product.price * qty;
-
-    // Bước 6: Trừ số lượng tồn kho của sản phẩm
+    // Trừ kho
     productRepository.decreaseStock(productId, qty);
 
-    // Bước 7: Tạo đối tượng đơn hàng mới (Order)
-    const newOrder = {
-        id: "ORD-" + Date.now(), // Tạo mã đơn hàng duy nhất dựa trên timestamp
-        product: {
-            id: product.id,
+    // Tạo đơn — dùng cấu trúc items[] thống nhất với cart checkout
+    const order = {
+        id: generateOrderId(),
+        items: [{
+            productId: product.id,
             name: product.name,
-            slug: product.slug,
-            image: product.image
-        },
-        quantity: qty,
-        unitPrice: product.price,
-        totalPrice: totalPrice,
-        customer: {
-            name: (customerName && customerName.trim()) || "Khách hàng",
-            phone: (customerPhone && customerPhone.trim()) || "Chưa cung cấp",
-            address: (customerAddress && customerAddress.trim()) || "Nhận tại cửa hàng",
-            note: (note && note.trim()) || ""
-        },
-        paymentMethod: paymentMethod === "BANKING" ? "Chuyển khoản ngân hàng" : "Thanh toán khi nhận hàng (COD)",
-        status: "COMPLETED", // Trạng thái đơn hàng
-        createdAt: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+            image: product.image,
+            unitPrice: product.price,
+            quantity: qty,
+            lineTotal: subtotal
+        }],
+        subtotal,
+        shippingFee,
+        discount: 0,
+        totalPrice,
+        customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
+        paymentMethod: formatPaymentMethod(paymentMethod),
+        orderStatus: "PENDING",
+        paymentStatus: paymentMethod === "BANKING" ? "UNPAID" : "UNPAID",
+        createdAt: now(),
+        updatedAt: now()
     };
 
-    // Bước 8: Lưu đơn hàng vào Order Repository
-    const savedOrder = orderRepository.createOrder(newOrder);
-
-    // Bước 9: Trả về kết quả thanh toán cho Controller
-    return {
-        order: savedOrder,
-        remainingStock: product.stock
-    };
+    const savedOrder = orderRepository.createOrder(order);
+    return { order: savedOrder, remainingStock: product.stock };
 };
 
+// ─── Thanh toán giỏ hàng (nhiều sản phẩm) ────────────────────────────────────
+
 /**
- * Lấy chi tiết đơn hàng theo mã đơn
- * @param {string|number} orderId - Mã đơn hàng
- * @returns {Object} Đơn hàng tìm được
- * @throws {Error} Nếu không tìm thấy đơn hàng
+ * Checkout toàn bộ giỏ hàng
+ * @param {Object} param
+ * @param {Array<{productId, quantity}>} param.items
+ * @param {string} param.customerName
+ * @param {string} param.customerPhone
+ * @param {string} param.customerAddress
+ * @param {string} param.paymentMethod
+ * @param {string} param.note
  */
-const getOrderById = async (orderId) => {
-    const order = orderRepository.getOrderById(orderId);
-    if (!order) {
-        throw new Error("Không tìm thấy đơn hàng với mã: " + orderId);
+const processCartCheckout = async ({ items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" }) => {
+    if (!Array.isArray(items) || items.length === 0) {
+        throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
-    return order;
+
+    // Validate & snapshot từng item — KHÔNG tin giá từ client
+    const validatedItems = [];
+    const stockErrors = [];
+
+    for (const { productId, quantity } of items) {
+        const qty = parseInt(quantity, 10);
+        if (isNaN(qty) || qty <= 0) {
+            throw new Error(`Số lượng không hợp lệ cho sản phẩm ID ${productId}.`);
+        }
+
+        const product = productRepository.getProductByID(productId);
+        if (!product) {
+            stockErrors.push(`Sản phẩm ID ${productId} không tồn tại.`);
+            continue;
+        }
+        if (product.stock <= 0) {
+            stockErrors.push(`"${product.name}" đã hết hàng.`);
+            continue;
+        }
+        if (product.stock < qty) {
+            stockErrors.push(`"${product.name}" chỉ còn ${product.stock} sản phẩm (bạn chọn ${qty}).`);
+            continue;
+        }
+
+        validatedItems.push({ product, qty });
+    }
+
+    if (stockErrors.length > 0) {
+        throw new Error("Không thể thanh toán:\n" + stockErrors.join("\n"));
+    }
+
+    // Trừ kho tất cả (chỉ sau khi toàn bộ đã pass validate)
+    for (const { product, qty } of validatedItems) {
+        productRepository.decreaseStock(product.id, qty);
+    }
+
+    // Build order items & tính tiền
+    const orderItems = validatedItems.map(({ product, qty }) => ({
+        productId: product.id,
+        name: product.name,
+        image: product.image,
+        unitPrice: product.price,
+        quantity: qty,
+        lineTotal: product.price * qty
+    }));
+
+    const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+    const shippingFee = calculateShipping(subtotal);
+    const totalPrice = subtotal + shippingFee;
+
+    const order = {
+        id: generateOrderId(),
+        items: orderItems,
+        subtotal,
+        shippingFee,
+        discount: 0,
+        totalPrice,
+        customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
+        paymentMethod: formatPaymentMethod(paymentMethod),
+        orderStatus: "PENDING",
+        paymentStatus: "UNPAID",
+        createdAt: now(),
+        updatedAt: now()
+    };
+
+    const savedOrder = orderRepository.createOrder(order);
+    return { order: savedOrder };
 };
 
-/**
- * Lấy danh sách tất cả các đơn hàng đã tạo
- * @returns {Array} Danh sách đơn hàng
- */
-const getAllOrders = async () => {
-    return orderRepository.getAllOrders();
-};
-
-module.exports = {
-    checkProduct,
-    processCheckout,
-    getOrderById,
-    getAllOrders
-};
+module.exports = { checkProduct, processCheckout, processCartCheckout };

@@ -1,20 +1,25 @@
 // ===== ORDER MODEL =====
-// Đây là tầng Model - chứa dữ liệu và cấu trúc dữ liệu của đơn hàng (Order)
-// Trong thực tế sẽ lưu vào Database (MongoDB, MySQL,...), ở đây dùng mảng để học tập
+// Cấu trúc dữ liệu đơn hàng — hỗ trợ cả đơn lẻ (1 sản phẩm) và đơn giỏ hàng (nhiều sản phẩm)
+//
+// Order shape:
+// {
+//   id: string,                    -- "ORD-{timestamp}"
+//   items: Array<{                 -- mảng sản phẩm trong đơn
+//     productId, name, image,
+//     unitPrice, quantity, lineTotal
+//   }>,
+//   subtotal: number,              -- tổng tiền hàng (chưa ship)
+//   shippingFee: number,           -- phí vận chuyển
+//   discount: number,              -- giảm giá (hiện luôn = 0, dự phòng phase 2)
+//   totalPrice: number,            -- subtotal + shippingFee - discount
+//   customer: { name, phone, address, note },
+//   paymentMethod: string,         -- "COD" | "BANKING"
+//   orderStatus: string,           -- "PENDING" | "PROCESSING" | "SHIPPED" | "DELIVERED" | "CANCELLED"
+//   paymentStatus: string,         -- "UNPAID" | "PAID" | "REFUNDED"
+//   createdAt: string,
+//   updatedAt: string
+// }
 
-/**
- * Danh sách đơn hàng trong bộ nhớ
- * Cấu trúc mỗi đơn hàng gồm:
- * - id: Mã đơn hàng (string/number)
- * - product: Thông tin sản phẩm (id, name, price, image)
- * - quantity: Số lượng mua
- * - unitPrice: Đơn giá tại thời điểm mua
- * - totalPrice: Tổng tiền thanh toán
- * - customer: Thông tin khách hàng (name, phone, address, note)
- * - paymentMethod: Phương thức thanh toán (COD, BANKING)
- * - status: Trạng thái đơn hàng (COMPLETED, PENDING, CANCELLED)
- * - createdAt: Thời gian tạo đơn
- */
 const orders = [];
 
 module.exports = orders;
