@@ -1,86 +1,143 @@
 // ===== PAYMENT.JS =====
-// File này xử lý toàn bộ giao diện và tương tác trang thanh toán (checkout)
-// Luồng hoạt động: Lấy ID sản phẩm → Gọi API lấy thông tin → Hiển thị form đặt hàng → Gửi yêu cầu thanh toán → Hiển thị hóa đơn thành công
+// Trang thanh toán (checkouts.html)
+// Nguồn sản phẩm: URL param ?id=X (Mua ngay 1 SP) hoặc ?source=cart (từ giỏ hàng)
+// Validate form: name, phone, address bắt buộc — không được để trống
 
-/**
- * Lấy giá trị tham số (param) từ URL Query String
- * Ví dụ: checkouts.html?id=1 → getUrlParam("id") trả về "1"
- * @param {string} param - Tên tham số cần lấy
- * @returns {string|null} Giá trị của tham số
- */
-const getUrlParam = (param) => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get(param);
-};
+const getUrlParam = (param) => new URLSearchParams(window.location.search).get(param);
+const formatPrice = (price) => Number(price).toLocaleString("vi-VN") + "₫";
 
-/**
- * Format giá tiền sang dạng VNĐ (Ví dụ: 34990000 → "34.990.000₫")
- * @param {number} price - Giá tiền
- * @returns {string} Chuỗi định dạng tiền tệ VNĐ
- */
-const formatPrice = (price) => {
-    return price.toLocaleString("vi-VN") + "₫";
-};
+const SHIPPING_FEE = 100000; // Phí vận chuyển mặc định 100.000 VNĐ
 
-// Biến lưu trữ trạng thái sản phẩm hiện tại và số lượng đặt mua
+// ─── State ────────────────────────────────────────────────────────────────────
+// Chế độ "buy now": currentProduct != null, cartItems = null
+// Chế độ "cart":    currentProduct = null, cartItems = [...]
 let currentProduct = null;
 let currentQuantity = 1;
+let cartItems = null;       // dùng khi source=cart
 
-/**
- * Cập nhật tổng tiền khi thay đổi số lượng
- */
-const updateTotal = () => {
-    if (!currentProduct) return;
-    const totalEl = document.getElementById("checkout-total-price");
-    if (totalEl) {
-        totalEl.textContent = formatPrice(currentProduct.price * currentQuantity);
-    }
-    const qtyInput = document.getElementById("qty-input");
-    if (qtyInput) {
-        qtyInput.value = currentQuantity;
-    }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const computeSubtotal = () => {
+    if (cartItems) return cartItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    if (currentProduct) return currentProduct.price * currentQuantity;
+    return 0;
 };
 
-/**
- * Tăng số lượng mua (không vượt quá số lượng tồn kho)
- */
+const computeShipping = (subtotal) => SHIPPING_FEE;
+
+const refreshSummary = () => {
+    const subtotal = computeSubtotal();
+    const shipping = computeShipping(subtotal);
+    const total = subtotal + shipping;
+
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setEl("summary-subtotal", formatPrice(subtotal));
+    setEl("summary-shipping", formatPrice(shipping));
+    setEl("summary-total", formatPrice(total));
+    if (currentProduct) setEl("checkout-total-price", formatPrice(currentProduct.price * currentQuantity));
+};
+
+// ─── Quantity controls (buy-now mode only) ────────────────────────────────────
+
 const increaseQty = () => {
-    if (currentProduct && currentQuantity < currentProduct.stock) {
-        currentQuantity++;
-        updateTotal();
-    }
+    if (currentProduct && currentQuantity < currentProduct.stock) { currentQuantity++; refreshSummary(); }
 };
-
-/**
- * Giảm số lượng mua (tối thiểu là 1)
- */
 const decreaseQty = () => {
-    if (currentQuantity > 1) {
-        currentQuantity--;
-        updateTotal();
-    }
+    if (currentQuantity > 1) { currentQuantity--; refreshSummary(); }
 };
+const updateTotal = refreshSummary; // alias
+
+// ─── Form Validation ──────────────────────────────────────────────────────────
 
 /**
- * Hiển thị màn hình thông báo thanh toán thành công kèm chi tiết đơn hàng
- * @param {Object} order - Dữ liệu đơn hàng vừa được tạo từ backend
+ * Validate các ô thông tin bắt buộc trong form thanh toán.
+ * Hiển thị lỗi inline bên dưới từng field.
+ * Không được để trống bất kỳ ô bắt buộc nào: Họ tên, Số điện thoại, Địa chỉ nhận hàng.
+ * @returns {boolean} true nếu form hợp lệ
  */
+const validateForm = () => {
+    let isValid = true;
+
+    const rules = [
+        {
+            id: "customer-name",
+            errorId: "error-name",
+            validate: (v) => v.trim().length > 0 && v.trim().length >= 2,
+            message: "Họ và tên không được để trống (tối thiểu 2 ký tự)."
+        },
+        {
+            id: "customer-phone",
+            errorId: "error-phone",
+            validate: (v) => {
+                const val = v.trim();
+                if (!val) return false;
+                return /^(0|\+84)[0-9]{8,10}$/.test(val);
+            },
+            message: "Số điện thoại không được để trống và phải đúng định dạng (VD: 0912345678)."
+        },
+        {
+            id: "customer-address",
+            errorId: "error-address",
+            validate: (v) => v.trim().length > 0 && v.trim().length >= 5,
+            message: "Địa chỉ nhận hàng không được để trống (tối thiểu 5 ký tự)."
+        }
+    ];
+
+    rules.forEach(({ id, errorId, validate, message }) => {
+        const input = document.getElementById(id);
+        const errorEl = document.getElementById(errorId);
+        if (!input || !errorEl) return;
+
+        const ok = validate(input.value);
+        if (!ok) {
+            isValid = false;
+            errorEl.textContent = message;
+            errorEl.style.display = "block";
+            input.classList.add("checkout-input--error");
+        } else {
+            errorEl.style.display = "none";
+            errorEl.textContent = "";
+            input.classList.remove("checkout-input--error");
+        }
+    });
+
+    return isValid;
+};
+
+// Xóa lỗi inline khi user bắt đầu gõ
+const attachLiveValidation = () => {
+    ["customer-name", "customer-phone", "customer-address"].forEach((id) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.addEventListener("input", () => {
+            const errorEl = document.getElementById("error-" + id.replace("customer-", ""));
+            if (errorEl) { errorEl.style.display = "none"; }
+            input.classList.remove("checkout-input--error");
+        });
+    });
+};
+
+// ─── Render success ───────────────────────────────────────────────────────────
+
 const renderOrderSuccess = (order) => {
     const container = document.getElementById("payment-info");
+
+    const itemsHtml = order.items.map((item) => `
+        <div class="order-detail-row">
+            <span class="order-detail-label">${item.name} × ${item.quantity}</span>
+            <span class="order-detail-value">${formatPrice(item.lineTotal)}</span>
+        </div>`).join("");
+
     container.innerHTML = `
         <div class="order-success-card">
             <div class="order-success-icon">✓</div>
-            <h2 class="order-success-title">Đặt hàng & Thanh toán thành công!</h2>
-            <p class="order-success-desc">Cảm ơn bạn đã mua sắm tại NodeShop. Đơn hàng của bạn đã được ghi nhận.</p>
-            
+            <h2 class="order-success-title">Đặt hàng thành công!</h2>
+            <p class="order-success-desc">Cảm ơn bạn đã mua sắm tại NodeShop. Đơn hàng đã được ghi nhận.</p>
+
             <div class="order-detail-box">
                 <div class="order-detail-row">
                     <span class="order-detail-label">Mã đơn hàng</span>
                     <span class="order-detail-value font-mono"><strong>${order.id}</strong></span>
-                </div>
-                <div class="order-detail-row">
-                    <span class="order-detail-label">Thời gian đặt</span>
-                    <span class="order-detail-value">${order.createdAt}</span>
                 </div>
                 <div class="order-detail-row">
                     <span class="order-detail-label">Khách hàng</span>
@@ -88,7 +145,7 @@ const renderOrderSuccess = (order) => {
                 </div>
                 <div class="order-detail-row">
                     <span class="order-detail-label">Số điện thoại</span>
-                    <span class="order-detail-value">${order.customer.phone || "Không có"}</span>
+                    <span class="order-detail-value">${order.customer.phone}</span>
                 </div>
                 <div class="order-detail-row">
                     <span class="order-detail-label">Địa chỉ nhận hàng</span>
@@ -102,14 +159,16 @@ const renderOrderSuccess = (order) => {
                 <div class="order-detail-row">
                     <span class="order-detail-label">Ghi chú</span>
                     <span class="order-detail-value">${order.customer.note}</span>
-                </div>` : ''}
+                </div>` : ""}
+                <div class="order-detail-row"><span class="order-detail-label" style="font-weight:600;color:var(--text-primary)">Sản phẩm đã đặt</span><span></span></div>
+                ${itemsHtml}
                 <div class="order-detail-row">
-                    <span class="order-detail-label">Sản phẩm</span>
-                    <span class="order-detail-value">${order.product.name} (x${order.quantity})</span>
+                    <span class="order-detail-label">Tạm tính</span>
+                    <span class="order-detail-value">${formatPrice(order.subtotal)}</span>
                 </div>
                 <div class="order-detail-row">
-                    <span class="order-detail-label">Đơn giá</span>
-                    <span class="order-detail-value">${formatPrice(order.unitPrice)}</span>
+                    <span class="order-detail-label">Phí vận chuyển</span>
+                    <span class="order-detail-value">${formatPrice(order.shippingFee)}</span>
                 </div>
                 <div class="order-detail-row">
                     <span class="order-detail-label">Tổng thanh toán</span>
@@ -119,219 +178,251 @@ const renderOrderSuccess = (order) => {
 
             <div class="order-actions">
                 <a href="/" class="btn btn--primary">Tiếp tục mua sắm</a>
-                <a href="/product_info.html?id=${order.product.id}" class="btn btn--secondary">Xem lại sản phẩm</a>
+                <a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a>
             </div>
-        </div>
-    `;
+        </div>`;
 };
 
-/**
- * Xử lý sự kiện khi người dùng nhấn nút "Xác nhận thanh toán"
- */
-const handleCheckout = async () => {
-    if (!currentProduct) return;
+// ─── Checkout handler ─────────────────────────────────────────────────────────
 
-    // Kiểm tra tồn kho trước khi gửi request
-    if (currentProduct.stock <= 0) {
-        alert("Sản phẩm đã hết hàng, không thể thanh toán.");
-        return;
-    }
+const handleCheckout = async () => {
+    // Validate form trước — nếu có ô trống hoặc sai thì dừng lại
+    if (!validateForm()) return;
 
     const btnEl = document.getElementById("btn-checkout");
     const errorAlertEl = document.getElementById("checkout-error-alert");
+    if (errorAlertEl) { errorAlertEl.style.display = "none"; errorAlertEl.textContent = ""; }
 
-    // Xóa thông báo lỗi cũ nếu có
-    if (errorAlertEl) {
-        errorAlertEl.style.display = "none";
-        errorAlertEl.textContent = "";
-    }
-
-    // Lấy thông tin khách hàng từ form
-    const customerName = document.getElementById("customer-name")?.value || "";
-    const customerPhone = document.getElementById("customer-phone")?.value || "";
-    const customerAddress = document.getElementById("customer-address")?.value || "";
+    const customerName = document.getElementById("customer-name")?.value?.trim() || "";
+    const customerPhone = document.getElementById("customer-phone")?.value?.trim() || "";
+    const customerAddress = document.getElementById("customer-address")?.value?.trim() || "";
     const paymentMethod = document.getElementById("payment-method")?.value || "COD";
-    const note = document.getElementById("customer-note")?.value || "";
+    const note = document.getElementById("customer-note")?.value?.trim() || "";
 
-    // Đổi trạng thái nút bấm trong lúc chờ server xử lý
-    btnEl.textContent = "Đang xử lý thanh toán...";
+    btnEl.textContent = "Đang xử lý...";
     btnEl.disabled = true;
 
     try {
-        // Gửi HTTP POST request đến Backend API
-        const res = await fetch(`/api/checkout/${currentProduct.id}`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                quantity: currentQuantity,
-                customerName: customerName,
-                customerPhone: customerPhone,
-                customerAddress: customerAddress,
-                paymentMethod: paymentMethod,
-                note: note
-            })
-        });
+        let res, body;
 
-        const data = await res.json();
-
-        // Nếu server trả về lỗi nghiệp vụ
-        if (!data.success) {
-            throw new Error(data.message || "Có lỗi xảy ra trong quá trình thanh toán");
+        if (cartItems) {
+            // ── Chế độ giỏ hàng (POST /api/checkout/batch) ──
+            body = {
+                items: cartItems.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+                customerName, customerPhone, customerAddress, paymentMethod, note
+            };
+            res = await fetch("/api/checkout/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+        } else {
+            // ── Chế độ mua ngay (POST /api/checkout/:id) ──
+            body = { quantity: currentQuantity, customerName, customerPhone, customerAddress, paymentMethod, note };
+            res = await fetch(`/api/checkout/${currentProduct.id}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
         }
 
-        // Cập nhật lại tồn kho cục bộ
-        currentProduct.stock = data.remainingStock;
+        const data = await res.json();
+        if (!data.success) throw new Error(data.message || "Có lỗi xảy ra.");
 
-        // Render màn hình đặt hàng thành công
+        // Xóa giỏ hàng sau khi thanh toán thành công
+        if (cartItems && typeof CartService !== "undefined") CartService.clearCart();
+
         renderOrderSuccess(data.data);
     } catch (error) {
-        // Phục hồi nút bấm
         btnEl.textContent = "Xác nhận thanh toán";
         btnEl.disabled = false;
-
-        // Hiển thị lỗi lên giao diện
         if (errorAlertEl) {
-            errorAlertEl.textContent = "⚠️ " + error.message;
+            errorAlertEl.textContent = "⚠ " + error.message;
             errorAlertEl.style.display = "block";
+            errorAlertEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
         } else {
             alert("Lỗi: " + error.message);
         }
     }
 };
 
-/**
- * Tải thông tin sản phẩm từ API và dựng giao diện trang thanh toán
- */
-const loadCheckout = async () => {
-    const id = getUrlParam("id");
-    const container = document.getElementById("payment-info");
+// ─── Render form layout (dùng chung cho cả 2 mode) ───────────────────────────
 
-    // Kiểm tra xem có ID sản phẩm trên URL hay không
-    if (!id) {
-        container.innerHTML = `
-            <div class="error-message">
-                <h2>Không tìm thấy sản phẩm</h2>
-                <p>Vui lòng chọn sản phẩm từ trang chủ trước khi thanh toán.</p>
-                <div style="margin-top: 16px;">
-                    <a href="/" class="btn btn--primary">Quay lại trang chủ</a>
+const renderCheckoutForm = (summaryHtml, qtyControls, isOutOfStock) => {
+    const container = document.getElementById("payment-info");
+    container.innerHTML = `
+        <div class="checkout-layout">
+
+            <!-- LEFT: Tóm tắt đơn hàng -->
+            <div class="checkout-summary">
+                <div class="checkout-summary__title">Đơn hàng của bạn</div>
+                ${summaryHtml}
+                <div class="checkout-summary__row checkout-summary__row--subtotal">
+                    <span>Tạm tính</span>
+                    <span id="summary-subtotal">—</span>
+                </div>
+                <div class="checkout-summary__row">
+                    <span>Phí vận chuyển</span>
+                    <span id="summary-shipping">—</span>
+                </div>
+                <div class="checkout-summary__row checkout-summary__row--total">
+                    <span>Tổng cộng</span>
+                    <span id="summary-total">—</span>
                 </div>
             </div>
-        `;
-        return;
-    }
 
+            <!-- RIGHT: Form thông tin -->
+            <div class="checkout-card__form">
+                <div id="checkout-error-alert" class="checkout-alert-error" style="display:none;"></div>
+
+                ${qtyControls}
+                ${qtyControls ? '<div class="checkout-divider"></div>' : ''}
+
+                <div class="checkout-section-title">Thông tin giao hàng</div>
+
+                <div class="checkout-grid-2">
+                    <div class="checkout-input-group">
+                        <label for="customer-name">Họ và tên người nhận <span class="required-star">*</span></label>
+                        <input type="text" id="customer-name" class="checkout-input" placeholder="Ví dụ: Nguyễn Văn A" autocomplete="name">
+                        <span class="checkout-field-error" id="error-name" style="display:none;"></span>
+                    </div>
+                    <div class="checkout-input-group">
+                        <label for="customer-phone">Số điện thoại <span class="required-star">*</span></label>
+                        <input type="tel" id="customer-phone" class="checkout-input" placeholder="Ví dụ: 0912345678" autocomplete="tel">
+                        <span class="checkout-field-error" id="error-phone" style="display:none;"></span>
+                    </div>
+                </div>
+
+                <div class="checkout-input-group">
+                    <label for="customer-address">Địa chỉ nhận hàng <span class="required-star">*</span></label>
+                    <input type="text" id="customer-address" class="checkout-input" placeholder="Số nhà, tên đường, phường/xã, quận/huyện, tỉnh/thành" autocomplete="street-address">
+                    <span class="checkout-field-error" id="error-address" style="display:none;"></span>
+                </div>
+
+                <div class="checkout-grid-2">
+                    <div class="checkout-input-group">
+                        <label for="payment-method">Phương thức thanh toán</label>
+                        <select id="payment-method" class="checkout-select">
+                            <option value="COD">Thanh toán khi nhận hàng (COD)</option>
+                            <option value="BANKING">Chuyển khoản ngân hàng (QR)</option>
+                        </select>
+                    </div>
+                    <div class="checkout-input-group">
+                        <label for="customer-note">Ghi chú (Tùy chọn)</label>
+                        <input type="text" id="customer-note" class="checkout-input" placeholder="Ví dụ: Giao giờ hành chính">
+                    </div>
+                </div>
+
+                <div class="checkout-divider"></div>
+
+                <button class="btn btn--primary btn--checkout" id="btn-checkout"
+                    onclick="handleCheckout()" ${isOutOfStock ? 'disabled style="opacity:.45;cursor:not-allowed;"' : ''}>
+                    ${isOutOfStock ? "Sản phẩm đã hết hàng" : "Xác nhận thanh toán"}
+                </button>
+            </div>
+        </div>`;
+
+    attachLiveValidation();
+    refreshSummary();
+};
+
+// ─── Load: Mua ngay (source = product id) ────────────────────────────────────
+
+const loadBuyNow = async (id) => {
+    const container = document.getElementById("payment-info");
     try {
-        // Gọi API lấy chi tiết sản phẩm
         const res = await fetch(`/api/products/info/${id}`);
         const data = await res.json();
-
-        if (!data.success) {
-            throw new Error(data.message);
-        }
+        if (!data.success) throw new Error(data.message);
 
         currentProduct = data.data;
         currentQuantity = 1;
-
         const isOutOfStock = currentProduct.stock <= 0;
 
-        // Render giao diện thanh toán hoàn chỉnh
-        container.innerHTML = `
-            <div class="checkout-card">
-                <!-- THÔNG TIN SẢN PHẨM -->
-                <div class="checkout-card__product">
-                    <img src="${currentProduct.image}" alt="${currentProduct.name}" class="checkout-card__image">
-                    <div class="checkout-card__info">
-                        <h2 class="checkout-card__name">${currentProduct.name}</h2>
-                        <p class="checkout-card__desc">${currentProduct.description}</p>
-                        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto;">
-                            <span class="checkout-card__price">${formatPrice(currentProduct.price)}</span>
-                            <span style="font-size: 0.85rem; color: ${isOutOfStock ? '#C0392B' : 'var(--text-secondary)'};">
-                                ${isOutOfStock ? '❌ Hết hàng' : `📦 Tồn kho: ${currentProduct.stock}`}
-                            </span>
-                        </div>
-                    </div>
+        const summaryHtml = `
+            <div class="checkout-summary__item">
+                <img src="${currentProduct.image}" alt="${currentProduct.name}" class="checkout-summary__img">
+                <div class="checkout-summary__item-info">
+                    <div class="checkout-summary__item-name">${currentProduct.name}</div>
+                    <div class="checkout-summary__item-desc">${currentProduct.description}</div>
+                    <div class="checkout-summary__item-price">${formatPrice(currentProduct.price)}</div>
                 </div>
+            </div>`;
 
-                <!-- FORM ĐẶT HÀNG & THANH TOÁN -->
-                <div class="checkout-card__form">
-                    <div id="checkout-error-alert" class="checkout-alert-error" style="display: none;"></div>
-
-                    <!-- CHỌN SỐ LƯỢNG -->
-                    <div class="checkout-form-row">
-                        <label for="qty-input">Số lượng đặt mua</label>
-                        <div class="quantity-input">
-                            <button type="button" onclick="decreaseQty()" ${isOutOfStock ? 'disabled' : ''}>−</button>
-                            <input type="number" id="qty-input" value="${isOutOfStock ? 0 : 1}" min="1" max="${currentProduct.stock}" readonly>
-                            <button type="button" onclick="increaseQty()" ${isOutOfStock ? 'disabled' : ''}>+</button>
-                        </div>
-                    </div>
-
-                    <div class="checkout-divider"></div>
-
-                    <!-- THÔNG TIN GIAO HÀNG -->
-                    <div class="checkout-section-title">Thông tin giao hàng</div>
-                    
-                    <div class="checkout-grid-2">
-                        <div class="checkout-input-group">
-                            <label for="customer-name">Họ và tên người nhận *</label>
-                            <input type="text" id="customer-name" class="checkout-input" placeholder="Ví dụ: Nguyễn Văn A" required>
-                        </div>
-                        <div class="checkout-input-group">
-                            <label for="customer-phone">Số điện thoại *</label>
-                            <input type="tel" id="customer-phone" class="checkout-input" placeholder="Ví dụ: 0912345678" required>
-                        </div>
-                    </div>
-
-                    <div class="checkout-input-group">
-                        <label for="customer-address">Địa chỉ nhận hàng *</label>
-                        <input type="text" id="customer-address" class="checkout-input" placeholder="Số nhà, đường, phường/xã, quận/huyện, tỉnh/thành" required>
-                    </div>
-
-                    <div class="checkout-grid-2">
-                        <div class="checkout-input-group">
-                            <label for="payment-method">Phương thức thanh toán</label>
-                            <select id="payment-method" class="checkout-select">
-                                <option value="COD">Thanh toán khi nhận hàng (COD)</option>
-                                <option value="BANKING">Chuyển khoản ngân hàng (QR Code)</option>
-                            </select>
-                        </div>
-                        <div class="checkout-input-group">
-                            <label for="customer-note">Ghi chú (Tùy chọn)</label>
-                            <input type="text" id="customer-note" class="checkout-input" placeholder="Ví dụ: Giao giờ hành chính">
-                        </div>
-                    </div>
-
-                    <div class="checkout-divider"></div>
-
-                    <!-- TỔNG CỘNG TIỀN THANH TOÁN -->
-                    <div class="checkout-total">
-                        <span class="checkout-total__label">Tổng tiền thanh toán</span>
-                        <span class="checkout-total__price" id="checkout-total-price">
-                            ${formatPrice(isOutOfStock ? 0 : currentProduct.price * currentQuantity)}
-                        </span>
-                    </div>
-
-                    <!-- NÚT XÁC NHẬN -->
-                    <button class="btn btn--primary btn--checkout" id="btn-checkout" onclick="handleCheckout()" ${isOutOfStock ? 'disabled style="opacity: 0.6; cursor: not-allowed;"' : ''}>
-                        ${isOutOfStock ? 'Sản phẩm đã hết hàng' : 'Xác nhận thanh toán'}
-                    </button>
+        const qtyControls = isOutOfStock ? "" : `
+            <div class="checkout-form-row">
+                <label>Số lượng đặt mua</label>
+                <div class="quantity-input">
+                    <button type="button" onclick="decreaseQty()">−</button>
+                    <input type="number" id="qty-input" value="1" min="1" max="${currentProduct.stock}" readonly>
+                    <button type="button" onclick="increaseQty()">+</button>
                 </div>
-            </div>
-        `;
+            </div>`;
+
+        renderCheckoutForm(summaryHtml, qtyControls, isOutOfStock);
     } catch (error) {
         container.innerHTML = `
             <div class="error-message">
                 <h2>Không tìm thấy sản phẩm</h2>
                 <p>${error.message}</p>
-                <div style="margin-top: 16px;">
-                    <a href="/" class="btn btn--primary">Quay lại trang chủ</a>
-                </div>
-            </div>
-        `;
+                <a href="/" class="btn btn--primary" style="margin-top:16px;display:inline-block;">Quay lại trang chủ</a>
+            </div>`;
     }
 };
 
-// Chạy hàm loadCheckout khi trang web đã tải xong DOM
+// ─── Load: Từ giỏ hàng (source = cart) ───────────────────────────────────────
+
+const loadFromCart = () => {
+    const container = document.getElementById("payment-info");
+    cartItems = (typeof CartService !== "undefined") ? CartService.getItems() : [];
+
+    if (!cartItems || cartItems.length === 0) {
+        container.innerHTML = `
+            <div class="error-message">
+                <h2>Giỏ hàng trống</h2>
+                <p>Vui lòng thêm sản phẩm vào giỏ trước khi thanh toán.</p>
+                <a href="/" class="btn btn--primary" style="margin-top:16px;display:inline-block;">Quay lại mua sắm</a>
+            </div>`;
+        return;
+    }
+
+    const summaryHtml = cartItems.map((item) => `
+        <div class="checkout-summary__item">
+            <img src="${item.image || ''}" alt="${item.name}" class="checkout-summary__img">
+            <div class="checkout-summary__item-info">
+                <div class="checkout-summary__item-name">${item.name}</div>
+                <div class="checkout-summary__item-desc">${item.description || ''}</div>
+                <div class="checkout-summary__item-price">${formatPrice(item.price)} × ${item.quantity}</div>
+            </div>
+        </div>`).join("");
+
+    renderCheckoutForm(summaryHtml, "", false);
+};
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
+const loadCheckout = async () => {
+    const id = getUrlParam("id");
+    const source = getUrlParam("source");
+
+    if (!id && source !== "cart") {
+        document.getElementById("payment-info").innerHTML = `
+            <div class="error-message">
+                <h2>Không tìm thấy sản phẩm</h2>
+                <p>Vui lòng chọn sản phẩm từ trang chủ hoặc vào giỏ hàng trước khi thanh toán.</p>
+                <div style="margin-top:16px;display:flex;gap:12px;">
+                    <a href="/" class="btn btn--primary">Trang chủ</a>
+                    <a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a>
+                </div>
+            </div>`;
+        return;
+    }
+
+    if (source === "cart") {
+        loadFromCart();
+    } else {
+        await loadBuyNow(id);
+    }
+};
+
 document.addEventListener("DOMContentLoaded", loadCheckout);

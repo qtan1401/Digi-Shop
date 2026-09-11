@@ -1,30 +1,13 @@
 // ===== PRODUCT_INFO.JS =====
-// File này xử lý trang chi tiết sản phẩm
-// Lấy id từ URL (Query String), gọi API, và render thông tin
+// Trang chi tiết sản phẩm: hiển thị thông tin + nút Mua ngay + Thêm vào giỏ
+// Disabled cả 2 nút khi hết hàng
 
-/**
- * Lấy giá trị của parameter từ URL
- * @param {string} param - Tên parameter cần lấy
- * @returns {string|null} Giá trị parameter hoặc null
- */
-const getUrlParam = (param) => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get(param);
-};
+const getUrlParam = (param) => new URLSearchParams(window.location.search).get(param);
+const formatPrice = (price) => price.toLocaleString("vi-VN") + "₫";
 
-/**
- * Format giá tiền sang dạng VNĐ
- */
-const formatPrice = (price) => {
-    return price.toLocaleString("vi-VN") + "₫";
-};
-
-/**
- * Tạo stock indicator
- */
 const createStockInfo = (stock) => {
     if (stock <= 0) {
-        return `<div class="product-info__stock">
+        return `<div class="product-info__stock product-info__stock--out">
             <span class="product-info__stock-dot product-info__stock-dot--low"></span>
             Hết hàng
         </div>`;
@@ -37,9 +20,6 @@ const createStockInfo = (stock) => {
     </div>`;
 };
 
-/**
- * Fetch thông tin sản phẩm từ API và render lên trang
- */
 const loadProductInfo = async () => {
     const id = getUrlParam("id");
     const container = document.getElementById("product-info");
@@ -49,20 +29,19 @@ const loadProductInfo = async () => {
             <div class="error-message">
                 <h2>Không tìm thấy sản phẩm</h2>
                 <p>Không có ID sản phẩm trong URL</p>
-            </div>
-        `;
+                <a href="/" class="btn btn--primary" style="margin-top:16px;display:inline-block;">Quay lại trang chủ</a>
+            </div>`;
         return;
     }
 
     try {
         const res = await fetch(`/api/products/info/${id}`);
         const data = await res.json();
-
-        if (!data.success) {
-            throw new Error(data.message);
-        }
+        if (!data.success) throw new Error(data.message);
 
         const product = data.data;
+        const outOfStock = product.stock <= 0;
+
         container.innerHTML = `
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="product-info__card">
@@ -73,7 +52,15 @@ const loadProductInfo = async () => {
                     ${createStockInfo(product.stock)}
                     <p class="product-info__description">${product.description}</p>
                     <div class="product-info__actions">
-                        <a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
+                        ${outOfStock
+                            ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
+                               <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm vào giỏ</button>`
+                            : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
+                               <button class="btn btn--secondary btn--add-cart" id="btn-add-cart"
+                                   onclick="handleAddToCart()">
+                                   Thêm vào giỏ
+                               </button>`
+                        }
                     </div>
                     <div class="product-info__meta">
                         <div class="product-info__meta-item">
@@ -86,18 +73,36 @@ const loadProductInfo = async () => {
                         </div>
                     </div>
                 </div>
-            </div>
-        `;
+            </div>`;
+
+        // Gắn handler sau khi DOM render xong (product đã có trong closure)
+        if (!outOfStock) {
+            window.handleAddToCart = () => {
+                const btn = document.getElementById("btn-add-cart");
+                const result = CartService.addItem(product);
+                if (!result.ok) {
+                    showToast("Sản phẩm đã hết hàng!", "error");
+                    return;
+                }
+                const original = btn.textContent;
+                btn.textContent = "✓ Đã thêm vào giỏ";
+                btn.disabled = true;
+                setTimeout(() => {
+                    btn.textContent = original;
+                    btn.disabled = false;
+                }, 1500);
+                showToast(`Đã thêm "${product.name}" vào giỏ hàng`, "success");
+            };
+        }
+
     } catch (error) {
         container.innerHTML = `
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="error-message">
                 <h2>Không tìm thấy sản phẩm</h2>
                 <p>${error.message}</p>
-            </div>
-        `;
+            </div>`;
     }
 };
 
-// Chạy khi trang load xong
 document.addEventListener("DOMContentLoaded", loadProductInfo);
