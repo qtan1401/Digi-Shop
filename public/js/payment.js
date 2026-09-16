@@ -39,11 +39,24 @@ const refreshSummary = () => {
 
 // ─── Quantity controls (buy-now mode only) ────────────────────────────────────
 
+const updateQtyDisplay = () => {
+    const el = document.getElementById("qty-input");
+    if (el) el.value = currentQuantity;
+};
+
 const increaseQty = () => {
-    if (currentProduct && currentQuantity < currentProduct.stock) { currentQuantity++; refreshSummary(); }
+    if (currentProduct && currentQuantity < currentProduct.stock) {
+        currentQuantity++;
+        refreshSummary();
+        updateQtyDisplay();
+    }
 };
 const decreaseQty = () => {
-    if (currentQuantity > 1) { currentQuantity--; refreshSummary(); }
+    if (currentQuantity > 1) {
+        currentQuantity--;
+        refreshSummary();
+        updateQtyDisplay();
+    }
 };
 const updateTotal = refreshSummary; // alias
 

@@ -81,7 +81,7 @@ const loadProductInfo = async () => {
                 const btn = document.getElementById("btn-add-cart");
                 const result = CartService.addItem(product);
                 if (!result.ok) {
-                    showToast("Sản phẩm đã hết hàng!", "error");
+                    showToast(result.message || "Sản phẩm đã hết hàng!", "error");
                     return;
                 }
                 const original = btn.textContent;

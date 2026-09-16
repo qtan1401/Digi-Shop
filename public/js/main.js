@@ -45,7 +45,7 @@ const createProductCard = (product) => {
 function handleAddToCart(id, name, price, stock, btnEl) {
     const result = CartService.addItem({ id, name, price, stock, image: "", description: "" });
     if (!result.ok) {
-        showToast("Sản phẩm đã hết hàng!", "error");
+        showToast(result.message || "Sản phẩm đã hết hàng!", "error");
         return;
     }
     // Visual feedback tạm thời trên nút
