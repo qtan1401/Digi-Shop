@@ -10,15 +10,37 @@ const { calculateShipping } = require("./cart.service");
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
+const VALID_PAYMENT_METHODS = ["COD", "BANKING"];
+
+const validateCustomer = ({ customerName, customerPhone, customerAddress }) => {
+    const errors = [];
+    if (!customerName || customerName.trim().length < 2) {
+        errors.push("Tên khách hàng phải có ít nhất 2 ký tự");
+    }
+    const phoneRegex = /^(0|\+84)[0-9]{8,10}$/;
+    if (!customerPhone || !phoneRegex.test(customerPhone.trim())) {
+        errors.push("Số điện thoại không hợp lệ (VD: 0901234567 hoặc +84901234567)");
+    }
+    if (!customerAddress || customerAddress.trim().length < 5) {
+        errors.push("Địa chỉ phải có ít nhất 5 ký tự");
+    }
+    if (errors.length) throw new Error(errors.join("; "));
+};
+
 const buildCustomer = ({ customerName, customerPhone, customerAddress, note }) => ({
-    name: (customerName && customerName.trim()) || "Khách hàng",
-    phone: (customerPhone && customerPhone.trim()) || "",
-    address: (customerAddress && customerAddress.trim()) || "",
+    name: customerName.trim(),
+    phone: customerPhone.trim(),
+    address: customerAddress.trim(),
     note: (note && note.trim()) || ""
 });
 
-const formatPaymentMethod = (method) =>
-    method === "BANKING" ? "Chuyển khoản ngân hàng" : "Thanh toán khi nhận hàng (COD)";
+const formatPaymentMethod = (method) => {
+    const upper = (method || "").toUpperCase();
+    if (!VALID_PAYMENT_METHODS.includes(upper)) {
+        throw new Error("Phương thức thanh toán không hợp lệ");
+    }
+    return upper === "BANKING" ? "Chuyển khoản ngân hàng" : "Thanh toán khi nhận hàng (COD)";
+};
 
 const generateOrderId = () => "ORD-" + Date.now();
 
@@ -54,6 +76,12 @@ const processCheckout = async (checkoutData) => {
 
     if (!productId) throw new Error("Vui lòng cung cấp ID sản phẩm.");
 
+    // Validate customer (K1)
+    validateCustomer({ customerName, customerPhone, customerAddress });
+
+    // Validate paymentMethod (K2)
+    const formattedPayment = formatPaymentMethod(paymentMethod);
+
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm.");
 
@@ -84,11 +112,10 @@ const processCheckout = async (checkoutData) => {
         subtotal,
         shippingFee,
         discount: 0,
-        totalPrice,
         customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
-        paymentMethod: formatPaymentMethod(paymentMethod),
+        paymentMethod: formattedPayment,
         orderStatus: "PENDING",
-        paymentStatus: paymentMethod === "BANKING" ? "UNPAID" : "UNPAID",
+        paymentStatus: "UNPAID",
         createdAt: now(),
         updatedAt: now()
     };
@@ -114,35 +141,30 @@ const processCartCheckout = async ({ items, customerName, customerPhone, custome
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
 
-    // Validate & snapshot từng item — KHÔNG tin giá từ client
-    const validatedItems = [];
-    const stockErrors = [];
+    // Validate customer (K1)
+    validateCustomer({ customerName, customerPhone, customerAddress });
 
+    // Validate paymentMethod (K2)
+    const formattedPayment = formatPaymentMethod(paymentMethod);
+
+    // Gộp trùng productId trước validate (B1)
+    const qtyMap = new Map();
     for (const { productId, quantity } of items) {
         const qty = parseInt(quantity, 10);
         if (isNaN(qty) || qty <= 0) {
             throw new Error(`Số lượng không hợp lệ cho sản phẩm ID ${productId}.`);
         }
-
-        const product = productRepository.getProductByID(productId);
-        if (!product) {
-            stockErrors.push(`Sản phẩm ID ${productId} không tồn tại.`);
-            continue;
-        }
-        if (product.stock <= 0) {
-            stockErrors.push(`"${product.name}" đã hết hàng.`);
-            continue;
-        }
-        if (product.stock < qty) {
-            stockErrors.push(`"${product.name}" chỉ còn ${product.stock} sản phẩm (bạn chọn ${qty}).`);
-            continue;
-        }
-
-        validatedItems.push({ product, qty });
+        qtyMap.set(productId, (qtyMap.get(productId) || 0) + qty);
     }
 
-    if (stockErrors.length > 0) {
-        throw new Error("Không thể thanh toán:\n" + stockErrors.join("\n"));
+    // Validate stock trên TỔNG quantity
+    const validatedItems = [];
+    for (const [productId, totalQty] of qtyMap) {
+        const product = productRepository.getProductByID(productId);
+        if (!product) throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+        if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
+        if (product.stock < totalQty) throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${totalQty}).`);
+        validatedItems.push({ product, qty: totalQty });
     }
 
     // Trừ kho tất cả (chỉ sau khi toàn bộ đã pass validate)
@@ -172,7 +194,7 @@ const processCartCheckout = async ({ items, customerName, customerPhone, custome
         discount: 0,
         totalPrice,
         customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
-        paymentMethod: formatPaymentMethod(paymentMethod),
+        paymentMethod: formattedPayment,
         orderStatus: "PENDING",
         paymentStatus: "UNPAID",
         createdAt: now(),
