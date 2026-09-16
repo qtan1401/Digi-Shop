@@ -42,15 +42,32 @@ const CartService = {
      * @param {{ id, name, slug, image, description, price, stock }} product
      * @param {number} quantity
      */
+    /**
+     * Thêm sản phẩm vào giỏ. Nếu đã có thì tăng số lượng.
+     * @param {{ id, name, slug, image, description, price, stock }} product
+     * @param {number} quantity
+     * @returns {{ ok: boolean, reason?: string, message?: string }}
+     */
     addItem(product, quantity = 1) {
-        if (!product || product.stock <= 0) return { ok: false, reason: "out_of_stock" };
+        if (!product || product.stock <= 0) {
+            return { ok: false, reason: "out_of_stock", message: "Sản phẩm đã hết hàng" };
+        }
 
         const items = _load();
         const idx = items.findIndex((i) => i.productId === product.id);
+        const existingQty = idx >= 0 ? items[idx].quantity : 0;
+        const newTotalQty = existingQty + quantity;
+
+        if (newTotalQty > product.stock) {
+            const canAdd = product.stock - existingQty;
+            if (canAdd <= 0) {
+                return { ok: false, reason: "max_reached", message: `Đã đạt tối đa ${product.stock} sản phẩm trong giỏ` };
+            }
+            return { ok: false, reason: "exceeds_stock", message: `Chỉ còn ${canAdd} sản phẩm có thể thêm (tối đa ${product.stock})` };
+        }
 
         if (idx >= 0) {
-            const newQty = items[idx].quantity + quantity;
-            items[idx].quantity = Math.min(newQty, product.stock);
+            items[idx].quantity = newTotalQty;
         } else {
             items.push({
                 productId: product.id,
@@ -58,8 +75,8 @@ const CartService = {
                 slug: product.slug || "",
                 image: product.image || "",
                 description: product.description || "",
-                price: product.price,           // snapshot tại thời điểm add
-                quantity: Math.min(quantity, product.stock),
+                price: product.price,
+                quantity: quantity,
                 addedAt: new Date().toISOString()
             });
         }
@@ -75,17 +92,22 @@ const CartService = {
         this.updateBadge();
     },
 
-    updateQty(productId, qty) {
+    updateQty(productId, qty, maxStock) {
         const items = _load();
         const idx = items.findIndex((i) => i.productId === productId);
-        if (idx < 0) return;
+        if (idx < 0) return { ok: false, reason: "not_found" };
+
         if (qty <= 0) {
             items.splice(idx, 1);
         } else {
+            if (typeof maxStock === "number" && qty > maxStock) {
+                return { ok: false, reason: "exceeds_stock", message: `Chỉ còn ${maxStock} sản phẩm trong kho` };
+            }
             items[idx].quantity = qty;
         }
         _save(items);
         this.updateBadge();
+        return { ok: true };
     },
 
     clearCart() {
