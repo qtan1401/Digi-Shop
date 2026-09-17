@@ -51,6 +51,24 @@ const validateCartItems = (items) => {
             };
         }
 
+        // Sản phẩm đã bị xóa mềm — giữ lại trong kết quả để client có thể
+        // thông báo cho người dùng, nhưng không được tính vào tổng tiền.
+        if (product.isDeleted === true) {
+            hasUnavailable = true;
+            return {
+                productId: product.id,
+                name: product.name,
+                image: product.image,
+                description: product.description,
+                price: product.price,
+                quantity: qty,
+                stock: product.stock,
+                available: false,
+                unavailableReason: `Sản phẩm '${product.name}' đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.`,
+                lineTotal: 0
+            };
+        }
+
         // Sản phẩm hết hàng
         if (product.stock <= 0) {
             hasUnavailable = true;

@@ -10,7 +10,13 @@ const formatPrice = (price) => Number(price).toLocaleString("vi-VN") + "₫";
 let validatedItems = []; // Cache validated items from server
 
 // ─── Tính toán ────────────────────────────────────────────────────────────────
-const calcSubtotal = (items) => items.reduce((s, i) => s + i.price * i.quantity, 0);
+const calcSubtotal = (items) => items.reduce((sum, item) => {
+    const validated = validatedItems.find((candidate) => candidate.productId === item.productId);
+    if (validated && validated.available === false) return sum;
+    const quantity = validated?.quantity ?? item.quantity;
+    const price = validated?.price ?? item.price;
+    return sum + price * quantity;
+}, 0);
 const calcShipping = (subtotal) => SHIPPING_FEE;
 
 // ─── Render giỏ hàng ─────────────────────────────────────────────────────────
@@ -32,10 +38,16 @@ const renderCart = (items) => {
     const shippingFee = calcShipping(subtotal);
     const total = subtotal + shippingFee;
 
+    const unavailableItems = validatedItems.filter((validated) => validated && validated.available === false);
+    const unavailableMessage = unavailableItems
+        .map((validated) => validated.unavailableReason || `"${validated.name}" không khả dụng.`)
+        .join(" ");
+    const checkoutBlocked = unavailableItems.length > 0;
     const itemsHtml = items.map((item) => {
-        const lineTotal = item.price * item.quantity;
-        // Find stock from validatedItems
-        const validated = validatedItems.find(v => v.productId === item.productId);
+        const validated = validatedItems.find((candidate) => candidate.productId === item.productId);
+        const quantity = validated?.quantity ?? item.quantity;
+        const price = validated?.price ?? item.price;
+        const lineTotal = validated?.available === false ? 0 : price * quantity;
         const stock = validated ? validated.stock : item.quantity;
         const maxQty = Math.max(item.quantity, stock); // Allow current qty even if stock lower
         return `
@@ -59,6 +71,7 @@ const renderCart = (items) => {
                     <button class="cart-item__remove" onclick="removeItem(${item.productId})" title="Xóa sản phẩm">✕</button>
                 </div>
                 ${validated && validated.quantityAdjusted ? '<span class="cart-item__stock-warning">Số lượng đã điều chỉnh do hết hàng</span>' : ''}
+                ${validated && validated.available === false ? `<span class="cart-item__stock-warning">${validated.unavailableReason || "Sản phẩm không khả dụng, vui lòng xóa khỏi giỏ hàng."}</span>` : ''}
             </div>
         </div>`;
     }).join("");
@@ -70,6 +83,7 @@ const renderCart = (items) => {
 
     root.innerHTML = `
         <div class="cart-items">${itemsHtml}</div>
+        ${unavailableMessage ? `<div class="cart-item__stock-warning" role="alert">${unavailableMessage}</div>` : ""}
         ${shipBanner}
         <div class="cart-summary">
             <div class="cart-summary__row"><span>Tạm tính</span><span>${formatPrice(subtotal)}</span></div>
@@ -78,7 +92,9 @@ const renderCart = (items) => {
         </div>
         <div class="cart-actions">
             <a href="/" class="btn btn--secondary">Tiếp tục mua sắm</a>
-            <a href="/checkouts.html?source=cart" class="btn btn--primary" id="btn-checkout">Thanh toán ngay</a>
+            ${checkoutBlocked
+                ? '<button class="btn btn--primary" id="btn-checkout" type="button" disabled aria-disabled="true" title="Xóa sản phẩm không khả dụng trước khi thanh toán">Xóa sản phẩm không khả dụng để thanh toán</button>'
+                : '<a href="/checkouts.html?source=cart" class="btn btn--primary" id="btn-checkout">Thanh toán ngay</a>'}
         </div>`;
 };
 

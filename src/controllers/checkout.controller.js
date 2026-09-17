@@ -6,7 +6,7 @@ const checkoutService = require("../services/checkout.service");
 // Map error message → HTTP status code
 const errorToStatus = (msg) => {
     if (msg.includes("không tồn tại") || msg.includes("không tìm thấy") || msg.includes("Không tìm thấy")) return 404;
-    if (msg.includes("hết hàng") || msg.includes("không đủ") || msg.includes("không hợp lệ") || msg.includes("trống") || msg.includes("Không thể")) return 400;
+    if (msg.includes("hết hàng") || msg.includes("không đủ") || msg.includes("không hợp lệ") || msg.includes("trống") || msg.includes("Không thể") || msg.includes("ngừng kinh doanh")) return 400;
     return 500;
 };
 

@@ -45,6 +45,8 @@ const formatPaymentMethod = (method) => {
 const generateOrderId = () => "ORD-" + Date.now();
 
 const now = () => new Date().toISOString();
+const discontinuedProductMessage = (product) =>
+    `Sản phẩm '${product.name}' đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.`;
 
 // ─── Mua ngay 1 sản phẩm ─────────────────────────────────────────────────────
 
@@ -55,9 +57,9 @@ const now = () => new Date().toISOString();
 const checkProduct = async (productId, quantity = 1) => {
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua phải là số nguyên lớn hơn 0");
-
     const product = productRepository.getProductByID(productId);
     if (!product) throw new Error("Không tìm thấy sản phẩm trong hệ thống");
+    if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
     if (product.stock <= 0) throw new Error("Sản phẩm hiện đã hết hàng");
     if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện chỉ còn ${product.stock} sản phẩm)`);
 
@@ -87,6 +89,7 @@ const processCheckout = async (checkoutData) => {
 
     const product = productRepository.getProductByID(productId);
     if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+    if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
     if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
     if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
 
@@ -98,7 +101,7 @@ const processCheckout = async (checkoutData) => {
     // Trừ kho
     productRepository.decreaseStock(productId, qty);
 
-    // Tạo đơn — dùng cấu trúc items[] thống nhất với cart checkout
+    // Tạo đơn — dùng cấu trúc items[] thống nhất với flow checkout giỏ hàng
     const order = {
         id: generateOrderId(),
         items: [{
@@ -112,6 +115,7 @@ const processCheckout = async (checkoutData) => {
         subtotal,
         shippingFee,
         discount: 0,
+        totalPrice,
         customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
         paymentMethod: formattedPayment,
         orderStatus: "PENDING",
@@ -162,6 +166,7 @@ const processCartCheckout = async ({ items, customerName, customerPhone, custome
     for (const [productId, totalQty] of qtyMap) {
         const product = productRepository.getProductByID(productId);
         if (!product) throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+        if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
         if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
         if (product.stock < totalQty) throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${totalQty}).`);
         validatedItems.push({ product, qty: totalQty });
