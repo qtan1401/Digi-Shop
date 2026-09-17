@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="NodeShop — Quản trị danh mục và sản phẩm">
+    <title>NodeShop — Quản trị catalog</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/admin.css">
+</head>
+<body class="admin-page">
+    <header class="admin-header">
+        <div class="admin-header__inner">
+            <a class="admin-brand" href="/" aria-label="NodeShop trang chủ">NodeShop <span>Admin</span></a>
+            <a class="admin-header__store-link" href="/">Xem cửa hàng <span aria-hidden="true">↗</span></a>
+        </div>
+    </header>
+
+    <main class="admin-shell">
+        <section class="admin-intro" aria-labelledby="admin-title">
+            <div>
+                <p class="admin-eyebrow">CATALOG CONTROL CENTER</p>
+                <h1 id="admin-title">Quản trị catalog</h1>
+                <p class="admin-intro__copy">Quản lý danh mục, sản phẩm và vòng đời tồn kho trong một nơi.</p>
+            </div>
+            <button class="btn btn--primary" id="add-product-btn" type="button">+ Thêm sản phẩm</button>
+        </section>
+
+        <div class="admin-feedback" id="global-feedback" role="status" aria-live="polite" hidden></div>
+
+        <section class="admin-layout" aria-label="Bảng điều khiển catalog">
+            <aside class="admin-sidebar">
+                <div class="panel category-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Phân loại</p>
+                            <h2>Danh mục</h2>
+                        </div>
+                        <button class="icon-button" id="add-category-btn" type="button" title="Thêm danh mục" aria-label="Thêm danh mục">+</button>
+                    </div>
+                    <div class="category-list" id="category-list" aria-live="polite">
+                        <div class="side-loading" aria-label="Đang tải danh mục"><span class="mini-spinner"></span> Đang tải…</div>
+                    </div>
+                </div>
+                <div class="panel audit-panel" id="audit-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="panel-kicker">Theo dõi</p>
+                            <h2>Audit log</h2>
+                        </div>
+                        <button class="text-button" id="refresh-audit-btn" type="button">Làm mới</button>
+                    </div>
+                    <div class="audit-list" id="audit-list">
+                        <p class="muted">Đang tải lịch sử…</p>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="admin-content">
+                <div class="panel product-panel">
+                    <div class="product-toolbar">
+                        <div class="status-tabs" role="tablist" aria-label="Trạng thái sản phẩm">
+                            <button class="status-tab is-active" type="button" role="tab" aria-selected="true" data-status="active">Đang bán <span id="active-count" class="tab-count">—</span></button>
+                            <button class="status-tab" type="button" role="tab" aria-selected="false" data-status="deleted">Đã xóa <span id="deleted-count" class="tab-count">—</span></button>
+                            <button class="status-tab" type="button" role="tab" aria-selected="false" data-status="all">Tất cả</button>
+                        </div>
+                        <button class="btn btn--secondary btn--small" id="refresh-products-btn" type="button">↻ Làm mới</button>
+                    </div>
+                    <div class="filter-bar">
+                        <label class="search-field" for="product-search">
+                            <span aria-hidden="true">⌕</span>
+                            <input id="product-search" type="search" placeholder="Tìm theo tên hoặc SKU…" autocomplete="off">
+                            <span class="filter-spinner" id="search-spinner" aria-hidden="true" hidden></span>
+                        </label>
+                        <label class="filter-select" for="category-filter">
+                            <span class="sr-only">Lọc theo danh mục</span>
+                            <select id="category-filter">
+                                <option value="">Tất cả danh mục</option>
+                            </select>
+                        </label>
+                        <button class="text-button clear-filters" id="clear-filters-btn" type="button" hidden>Xóa lọc</button>
+                    </div>
+                    <div class="table-summary" id="table-summary" aria-live="polite">Đang tải sản phẩm…</div>
+                    <div class="table-wrap" id="product-table-region">
+                        <div class="skeleton-table" aria-label="Đang tải sản phẩm">
+                            <span></span><span></span><span></span><span></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <div class="modal-backdrop" id="product-modal" hidden>
+        <section class="modal" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+            <div class="modal-header">
+                <div>
+                    <p class="panel-kicker" id="product-modal-kicker">CATALOG</p>
+                    <h2 id="product-modal-title">Thêm sản phẩm</h2>
+                </div>
+                <button class="modal-close" type="button" data-close-modal="product-modal" aria-label="Đóng cửa sổ">×</button>
+            </div>
+            <form id="product-form" novalidate>
+                <div class="form-error-summary" id="product-form-error" role="alert" hidden></div>
+                <div class="form-grid">
+                    <div class="field field--wide" data-field="name">
+                        <label for="product-name">Tên sản phẩm <span>*</span></label>
+                        <input id="product-name" name="name" type="text" required maxlength="200" autocomplete="off">
+                        <small class="field-error" data-error-for="name"></small>
+                    </div>
+                    <div class="field" data-field="sku">
+                        <label for="product-sku">SKU <span>*</span> <span class="lock-mark" id="sku-lock" hidden aria-label="SKU bị khóa">⌁</span></label>
+                        <input id="product-sku" name="sku" type="text" required maxlength="80" autocomplete="off" spellcheck="false">
+                        <small class="field-hint" id="sku-hint">Mã duy nhất, ví dụ IP16PM-256</small>
+                        <small class="field-error" data-error-for="sku"></small>
+                    </div>
+                    <div class="field" data-field="categoryId">
+                        <label for="product-category">Danh mục <span>*</span></label>
+                        <select id="product-category" name="categoryId" required>
+                            <option value="">Chọn danh mục</option>
+                        </select>
+                        <small class="field-error" data-error-for="categoryId"></small>
+                    </div>
+                    <div class="field" data-field="price">
+                        <label for="product-price">Giá bán (₫) <span>*</span></label>
+                        <input id="product-price" name="price" type="number" min="1" step="1" required inputmode="numeric">
+                        <small class="field-error" data-error-for="price"></small>
+                    </div>
+                    <div class="field" data-field="stock">
+                        <label for="product-stock">Tồn kho <span>*</span></label>
+                        <input id="product-stock" name="stock" type="number" min="0" step="1" required inputmode="numeric">
+                        <small class="field-error" data-error-for="stock"></small>
+                    </div>
+                    <div class="field field--wide" data-field="image">
+                        <label for="product-image">Ảnh sản phẩm (URL) <span>*</span></label>
+                        <input id="product-image" name="image" type="url" required placeholder="https://…">
+                        <small class="field-error" data-error-for="image"></small>
+                    </div>
+                    <div class="field field--wide" data-field="description">
+                        <label for="product-description">Mô tả <span>*</span></label>
+                        <textarea id="product-description" name="description" rows="4" required maxlength="2000"></textarea>
+                        <small class="field-error" data-error-for="description"></small>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn--secondary" type="button" data-close-modal="product-modal">Hủy</button>
+                    <button class="btn btn--primary" id="product-submit-btn" type="submit">Thêm sản phẩm</button>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="category-modal" hidden>
+        <section class="modal modal--small" role="dialog" aria-modal="true" aria-labelledby="category-modal-title">
+            <div class="modal-header">
+                <div>
+                    <p class="panel-kicker">CATEGORY</p>
+                    <h2 id="category-modal-title">Thêm danh mục</h2>
+                </div>
+                <button class="modal-close" type="button" data-close-modal="category-modal" aria-label="Đóng cửa sổ">×</button>
+            </div>
+            <form id="category-form" novalidate>
+                <div class="form-error-summary" id="category-form-error" role="alert" hidden></div>
+                <div class="field" data-field="category-name">
+                    <label for="category-name">Tên danh mục <span>*</span></label>
+                    <input id="category-name" type="text" required maxlength="100" autocomplete="off">
+                    <small class="field-error" data-error-for="category-name"></small>
+                </div>
+                <div class="field" data-field="category-description">
+                    <label for="category-description">Mô tả</label>
+                    <textarea id="category-description" rows="3" maxlength="500"></textarea>
+                    <small class="field-error" data-error-for="category-description"></small>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn--secondary" type="button" data-close-modal="category-modal">Hủy</button>
+                    <button class="btn btn--primary" id="category-submit-btn" type="submit">Lưu danh mục</button>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="confirm-modal" hidden>
+        <section class="modal modal--small" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+            <div class="confirm-icon" id="confirm-icon" aria-hidden="true">!</div>
+            <h2 id="confirm-title">Xác nhận thao tác</h2>
+            <p id="confirm-message" class="modal-copy"></p>
+            <div id="restore-category-field" class="field" hidden>
+                <label for="restore-category">Danh mục thay thế <span>*</span></label>
+                <select id="restore-category"><option value="">Chọn danh mục mới</option></select>
+                <small class="field-error" data-error-for="restore-category"></small>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn--secondary" type="button" data-close-modal="confirm-modal">Hủy</button>
+                <button class="btn btn--primary" id="confirm-action-btn" type="button">Xác nhận</button>
+            </div>
+        </section>
+    </div>
+
+    <div id="toast-container" class="admin-toasts" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="/js/admin.js"></script>
+</body>
+</html>
