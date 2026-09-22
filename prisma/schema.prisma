@@ -1,0 +1,204 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+}
+
+model Category {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.NVarChar(100)
+  slug        String    @unique(map: "categories_slug_key") @db.NVarChar(160)
+  description String?   @db.NVarChar(1000)
+  createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          Int       @id @default(autoincrement())
+  categoryId  Int       @map("category_id")
+  name        String    @db.NVarChar(200)
+  slug        String    @unique(map: "products_slug_key") @db.NVarChar(240)
+  sku         String    @unique(map: "products_sku_key") @db.NVarChar(100)
+  stock       Int
+  price       Decimal   @db.Decimal(18, 2)
+  image       String    @db.NVarChar(500)
+  description String    @db.NVarChar(Max)
+  isDeleted   Boolean   @default(false) @map("is_deleted")
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime2
+  createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  orderItems  OrderItem[]
+  cartItems   CartItem[]
+
+  @@index([categoryId, isDeleted], map: "products_category_id_is_deleted_idx")
+  @@index([isDeleted, updatedAt], map: "products_is_deleted_updated_at_idx")
+  @@map("products")
+}
+
+model User {
+  id                     String                   @id @db.NVarChar(36)
+  email                  String?                  @db.NVarChar(320)
+  username               String?                  @db.NVarChar(64)
+  passwordHash           String?                  @map("password_hash") @db.NVarChar(255)
+  role                   String                   @default("user") @db.NVarChar(16)
+  status                 String                   @default("UNVERIFIED") @db.NVarChar(20)
+  emailVerifiedAt        DateTime?                @map("email_verified_at") @db.DateTime2
+  failedPasswordAttempts Int                      @default(0) @map("failed_password_attempts")
+  passwordLockedAt       DateTime?                @map("password_locked_at") @db.DateTime2
+  forcePasswordChange    Boolean                  @default(false) @map("force_password_change")
+  authVersion            Int                      @default(1) @map("auth_version")
+  createdAt              DateTime                 @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt              DateTime                 @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  oauthIdentities        OAuthIdentity[]
+  refreshSessions        RefreshSession[]
+  emailVerificationTokens EmailVerificationToken[]
+  cart                   Cart?
+  cartMergeOperations    CartMergeOperation[]
+  orders                 Order[]
+
+  @@map("users")
+}
+
+model OAuthIdentity {
+  id              String   @id @db.NVarChar(36)
+  userId          String   @map("user_id") @db.NVarChar(36)
+  provider        String   @db.NVarChar(32)
+  providerSubject String   @map("provider_subject") @db.NVarChar(255)
+  emailSnapshot   String   @map("email_snapshot") @db.NVarChar(320)
+  createdAt       DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt       DateTime @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([provider, providerSubject], map: "oauth_identities_provider_subject_key")
+  @@unique([userId, provider], map: "oauth_identities_user_id_provider_key")
+  @@index([userId], map: "oauth_identities_user_id_idx")
+  @@map("oauth_identities")
+}
+
+model RefreshSession {
+  id          String          @id @db.NVarChar(36)
+  userId      String          @map("user_id") @db.NVarChar(36)
+  familyId    String          @map("family_id") @db.NVarChar(36)
+  tokenHash   String          @unique(map: "refresh_sessions_token_hash_key") @map("token_hash") @db.Char(64)
+  replacedById String?        @map("replaced_by_id") @db.NVarChar(36)
+  remembered  Boolean         @default(false)
+  expiresAt   DateTime        @map("expires_at") @db.DateTime2
+  revokedAt   DateTime?       @map("revoked_at") @db.DateTime2
+  createdAt   DateTime        @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  lastUsedAt  DateTime        @default(dbgenerated("SYSUTCDATETIME()")) @map("last_used_at") @db.DateTime2
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  replacedBy  RefreshSession? @relation("RefreshSessionReplacement", fields: [replacedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replaces    RefreshSession[] @relation("RefreshSessionReplacement")
+
+  @@index([userId, revokedAt], map: "refresh_sessions_user_id_revoked_at_idx")
+  @@index([familyId, revokedAt], map: "refresh_sessions_family_id_revoked_at_idx")
+  @@index([expiresAt], map: "refresh_sessions_expires_at_idx")
+  @@map("refresh_sessions")
+}
+
+model EmailVerificationToken {
+  id        String   @id @db.NVarChar(36)
+  userId    String   @map("user_id") @db.NVarChar(36)
+  tokenHash String   @unique(map: "email_verification_tokens_token_hash_key") @map("token_hash") @db.Char(64)
+  expiresAt DateTime @map("expires_at") @db.DateTime2
+  usedAt    DateTime? @map("used_at") @db.DateTime2
+  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, usedAt, expiresAt], map: "email_verification_tokens_user_id_used_at_expires_at_idx")
+  @@map("email_verification_tokens")
+}
+
+model Cart {
+  id        String     @id @db.NVarChar(36)
+  userId    String     @unique(map: "carts_user_id_key") @map("user_id") @db.NVarChar(36)
+  createdAt DateTime   @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt DateTime   @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  items     CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        BigInt   @id @default(autoincrement())
+  cartId    String   @map("cart_id") @db.NVarChar(36)
+  productId Int      @map("product_id")
+  quantity  Int
+  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([cartId, productId], map: "cart_items_cart_id_product_id_key")
+  @@map("cart_items")
+}
+
+model CartMergeOperation {
+  operationId String    @id @map("operation_id") @db.NVarChar(64)
+  userId      String    @map("user_id") @db.NVarChar(36)
+  requestHash String    @map("request_hash") @db.Char(64)
+  status      String    @db.NVarChar(16)
+  resultJson  String?   @map("result_json") @db.NVarChar(Max)
+  createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  completedAt DateTime? @map("completed_at") @db.DateTime2
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, createdAt], map: "cart_merge_operations_user_id_created_at_idx")
+  @@map("cart_merge_operations")
+}
+
+model Order {
+  id              String      @id @db.NVarChar(64)
+  userId          String?     @map("user_id") @db.NVarChar(36)
+  subtotal        Decimal     @db.Decimal(18, 2)
+  shippingFee     Decimal     @map("shipping_fee") @db.Decimal(18, 2)
+  discount        Decimal     @db.Decimal(18, 2)
+  totalPrice      Decimal     @map("total_price") @db.Decimal(18, 2)
+  customerName    String      @map("customer_name") @db.NVarChar(200)
+  customerPhone   String      @map("customer_phone") @db.NVarChar(32)
+  customerAddress String      @map("customer_address") @db.NVarChar(500)
+  customerNote    String?     @map("customer_note") @db.NVarChar(1000)
+  paymentMethod   String      @map("payment_method") @db.NVarChar(64)
+  orderStatus     String      @map("order_status") @db.NVarChar(32)
+  paymentStatus   String      @map("payment_status") @db.NVarChar(32)
+  createdAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  user            User?       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  items           OrderItem[]
+
+  @@index([userId, createdAt], map: "orders_user_id_created_at_idx")
+  @@map("orders")
+}
+
+model OrderItem {
+  id            BigInt  @id @default(autoincrement())
+  orderId       String  @map("order_id") @db.NVarChar(64)
+  productId     Int     @map("product_id")
+  nameSnapshot  String  @map("name_snapshot") @db.NVarChar(200)
+  imageSnapshot String  @map("image_snapshot") @db.NVarChar(500)
+  unitPrice     Decimal @map("unit_price") @db.Decimal(18, 2)
+  quantity      Int
+  lineTotal     Decimal @map("line_total") @db.Decimal(18, 2)
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product       Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@map("order_items")
+}
+
+model AuditLog {
+  id          String   @id @db.NVarChar(80)
+  actor       String   @db.NVarChar(120)
+  action      String   @db.NVarChar(40)
+  entity      String   @db.NVarChar(40)
+  entityId    String   @map("entity_id") @db.NVarChar(80)
+  changesJson String   @map("changes_json") @db.NVarChar(Max)
+  timestamp   DateTime @default(dbgenerated("SYSUTCDATETIME()")) @db.DateTime2
+
+  @@map("audit_logs")
+}

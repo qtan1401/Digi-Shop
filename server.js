@@ -1,13 +1,12 @@
-// ===== SERVER ENTRY POINT =====
-// File này là điểm khởi chạy ứng dụng
-// Tách riêng server.js và app.js để dễ testing
-
 require("dotenv").config();
 
 const app = require("./src/app");
+const { runServer } = require("./src/server-lifecycle");
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-    console.log(`✅ Server đang chạy tại: http://localhost:${PORT}`);
-});
+if (require.main === module) {
+    void runServer({ app, port: PORT });
+}
+
+module.exports = { runServer };
