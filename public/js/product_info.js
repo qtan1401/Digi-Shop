@@ -41,6 +41,8 @@ const loadProductInfo = async () => {
 
         const product = data.data;
         const outOfStock = product.stock <= 0;
+        const authState = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false }));
+        const canPurchase = authState.user?.role !== "admin";
 
         container.innerHTML = `
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
@@ -52,14 +54,16 @@ const loadProductInfo = async () => {
                     ${createStockInfo(product.stock)}
                     <p class="product-info__description">${product.description}</p>
                     <div class="product-info__actions">
-                        ${outOfStock
-                            ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
-                               <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm vào giỏ</button>`
-                            : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
-                               <button class="btn btn--secondary btn--add-cart" id="btn-add-cart"
-                                   onclick="handleAddToCart()">
-                                   Thêm vào giỏ
-                               </button>`
+                        ${!canPurchase
+                            ? `<span class="product-card__role-note">Tài khoản Admin chỉ xem catalog.</span>`
+                            : outOfStock
+                                ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
+                                   <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm vào giỏ</button>`
+                                : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
+                                   <button class="btn btn--secondary btn--add-cart" id="btn-add-cart"
+                                       onclick="handleAddToCart()">
+                                       Thêm vào giỏ
+                                   </button>`
                         }
                     </div>
                     <div class="product-info__meta">
@@ -76,7 +80,7 @@ const loadProductInfo = async () => {
             </div>`;
 
         // Gắn handler sau khi DOM render xong (product đã có trong closure)
-        if (!outOfStock) {
+        if (!outOfStock && canPurchase) {
             window.handleAddToCart = () => {
                 const btn = document.getElementById("btn-add-cart");
                 const result = CartService.addItem(product);

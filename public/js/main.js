@@ -10,8 +10,18 @@ const createStockBadge = (stock) => {
     return `<span class="product-card__badge">Còn ${stock}</span>`;
 };
 
-const createProductCard = (product) => {
+const createProductCard = (product, canPurchase = true) => {
     const outOfStock = product.stock <= 0;
+    const controls = !canPurchase
+        ? `<span class="product-card__role-note">Tài khoản Admin chỉ xem catalog.</span>`
+        : outOfStock
+            ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
+               <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm giỏ hàng</button>`
+            : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
+               <button class="btn btn--secondary btn--add-cart"
+                   onclick="handleAddToCart(${product.id}, '${product.name.replace(/'/g, "\\'")}', ${product.price}, ${product.stock}, this)">
+                   Thêm vào giỏ
+               </button>`;
     return `
     <div class="product-card">
         <div class="product-card__image-wrapper">
@@ -22,17 +32,7 @@ const createProductCard = (product) => {
             <h3 class="product-card__name">${product.name}</h3>
             <p class="product-card__description">${product.description}</p>
             <span class="product-card__price">${formatPrice(product.price)}</span>
-            <div class="product-card__footer">
-                ${outOfStock
-                    ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
-                       <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm giỏ hàng</button>`
-                    : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
-                       <button class="btn btn--secondary btn--add-cart"
-                           onclick="handleAddToCart(${product.id}, '${product.name.replace(/'/g, "\\'")}', ${product.price}, ${product.stock}, this)">
-                           Thêm vào giỏ
-                       </button>`
-                }
-            </div>
+            <div class="product-card__footer">${controls}</div>
         </div>
     </div>
     `;
@@ -61,15 +61,17 @@ function handleAddToCart(id, name, price, stock, btnEl) {
 
 const loadProducts = async () => {
     try {
+        const authState = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false }));
+        const canPurchase = authState.user?.role !== "admin";
         const res = await fetch("/api/products");
         const data = await res.json();
         const grid = document.getElementById("product-grid");
-        grid.innerHTML = data.data.map(createProductCard).join("");
+        grid.innerHTML = data.data.map((product) => createProductCard(product, canPurchase)).join("");
     } catch (error) {
         document.getElementById("product-grid").innerHTML = `
         <div class="error-message">
             <h2>Không thể tải sản phẩm</h2>
-            <p>${error.message}</p>
+            <p>Vui lòng thử lại sau.</p>
         </div>`;
     }
 };
