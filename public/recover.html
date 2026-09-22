@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Phục hồi mật khẩu Digi-Shop">
+    <title>Phục hồi mật khẩu | Digi-Shop</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+    <nav class="navbar" aria-label="Điều hướng chính"><a href="/" class="navbar-brand">Digi-Shop</a><ul class="navbar-links"><li><a href="/">Trang chủ</a></li><li class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></li></ul></nav>
+    <main class="state-main">
+        <section class="state-card" aria-labelledby="recover-title">
+            <div class="state-card__mark" aria-hidden="true">↺</div>
+            <p class="auth-kicker">Account recovery</p>
+            <h1 id="recover-title">Phục hồi quyền truy cập</h1>
+            <p>Nhập email đã đăng ký. Nếu thông tin hợp lệ, chúng tôi sẽ gửi hướng dẫn và mật khẩu tạm thời.</p>
+            <div class="auth-message" data-auth-message role="status" aria-live="polite" hidden></div>
+            <form class="auth-form" id="recovery-form" novalidate style="max-width:430px;margin:26px auto 0;text-align:left;">
+                <div class="auth-field"><label for="recovery-email">Email</label><input id="recovery-email" name="email" type="email" autocomplete="email" required aria-describedby="recovery-email-error"><span class="auth-field__error" data-field-error="email" id="recovery-email-error" aria-live="polite"></span></div>
+                <button class="auth-submit" type="submit">Gửi hướng dẫn phục hồi</button>
+            </form>
+            <div class="state-card__actions"><a class="secondary" href="/auth.html">Quay lại đăng nhập</a></div>
+        </section>
+    </main>
+    <script src="/js/auth.js"></script>
+</body>
+</html>

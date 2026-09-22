@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Khu vực không được phép truy cập">
+    <title>Không có quyền | Digi-Shop</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+    <nav class="navbar" aria-label="Điều hướng chính"><a href="/" class="navbar-brand">Digi-Shop</a><ul class="navbar-links"><li><a href="/">Trang chủ</a></li><li class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></li></ul></nav>
+    <main class="state-main" data-forbidden-page>
+        <section class="state-card" aria-labelledby="forbidden-title">
+            <div class="state-card__mark" aria-hidden="true">403</div>
+            <p class="auth-kicker">Access denied</p>
+            <h1 id="forbidden-title" data-forbidden-title>Không có quyền truy cập</h1>
+            <p id="forbidden-copy" data-forbidden-copy>Bạn không có quyền cho khu vực này. Dữ liệu và phiên của bạn vẫn được giữ an toàn.</p>
+            <div class="state-card__actions"><a class="primary" href="/" aria-label="Về trang cửa hàng">Về cửa hàng</a><a class="secondary" href="/admin.html" data-forbidden-admin hidden>Về quản trị</a></div>
+        </section>
+    </main>
+    <script src="/js/auth.js"></script>
+</body>
+</html>

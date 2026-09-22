@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Hồ sơ và bảo mật tài khoản Digi-Shop">
+    <title>Hồ sơ | Digi-Shop</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+    <nav class="navbar" aria-label="Điều hướng chính"><a href="/" class="navbar-brand">Digi-Shop</a><ul class="navbar-links"><li><a href="/">Trang chủ</a></li><li><a href="/cart.html">Giỏ hàng</a></li><li class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></li></ul></nav>
+    <main class="profile-main">
+        <section class="profile-card" aria-labelledby="profile-title">
+            <p class="auth-kicker">Account security</p>
+            <h1 id="profile-title">Hồ sơ của bạn</h1>
+            <p class="profile-card__identity">Đang đăng nhập: <strong data-profile-identity>tài khoản</strong></p>
+            <div class="profile-warning" data-force-password hidden role="alert">Tài khoản quản trị mới cần đổi mật khẩu trước khi sử dụng các chức năng quản trị.</div>
+            <div class="auth-message" data-auth-message role="status" aria-live="polite" hidden></div>
+            <form class="profile-form" id="profile-password-form" novalidate>
+                <div class="auth-field"><label for="current-password">Mật khẩu hiện tại</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required aria-describedby="current-password-error"><span class="auth-field__error" data-field-error="currentPassword" id="current-password-error" aria-live="polite"></span></div>
+                <div class="auth-field"><label for="new-password">Mật khẩu mới</label><input id="new-password" name="newPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="new-password-error"><span class="auth-field__error" data-field-error="newPassword" id="new-password-error" aria-live="polite"></span></div>
+                <div class="auth-field"><label for="confirm-password">Nhập lại mật khẩu mới</label><input id="confirm-password" name="confirmPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="confirm-password-error"><span class="auth-field__error" data-field-error="confirmPassword" id="confirm-password-error" aria-live="polite"></span></div>
+                <button class="auth-submit" type="submit">Đổi mật khẩu</button>
+            </form>
+        </section>
+    </main>
+    <script src="/js/auth.js"></script>
+</body>
+</html>

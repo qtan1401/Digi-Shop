@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Đăng nhập hoặc đăng ký tài khoản Digi-Shop">
+    <meta name="google-client-id" content="1009649300078-r0kakg1obmb5cofds7v8jqatrquhpddc.apps.googleusercontent.com">
+    <title>Đăng nhập | Digi-Shop</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/auth.css">
+</head>
+<body class="auth-page">
+    <a class="auth-skip" href="#auth-card">Bỏ qua đến biểu mẫu</a>
+    <nav class="navbar" aria-label="Điều hướng chính">
+        <a href="/" class="navbar-brand">Digi-Shop</a>
+        <ul class="navbar-links">
+            <li><a href="/">Trang chủ</a></li>
+            <li><a href="/#products">Sản phẩm</a></li>
+            <li class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></li>
+        </ul>
+    </nav>
+    <main class="auth-main" id="auth-card">
+        <div class="auth-shell">
+            <section class="auth-intro" aria-labelledby="auth-intro-title">
+                <p class="auth-kicker">Digi-Shop account</p>
+                <h1 id="auth-intro-title">Mua sắm theo cách của bạn.</h1>
+                <p>Đăng nhập để tiếp tục giỏ hàng, theo dõi phiên mua sắm và nhận hỗ trợ nhanh hơn.</p>
+                <p class="auth-note">Phiên và thông tin đăng nhập được bảo vệ bằng cookie an toàn.</p>
+            </section>
+            <section class="auth-card" aria-labelledby="auth-title">
+                <h1 id="auth-title">Chào mừng trở lại</h1>
+                <p class="auth-card__lead">Chọn một cách để tiếp tục.</p>
+                <div class="auth-tabs" role="tablist" aria-label="Xác thực tài khoản">
+                    <button class="auth-tab" id="login-tab" type="button" role="tab" data-auth-tab="login" aria-controls="login-panel" aria-selected="true">Đăng nhập</button>
+                    <button class="auth-tab" id="register-tab" type="button" role="tab" data-auth-tab="register" aria-controls="register-panel" aria-selected="false">Đăng ký</button>
+                </div>
+                <div class="auth-message" data-auth-message role="alert" aria-live="polite" hidden></div>
+                <section class="auth-panel" id="login-panel" role="tabpanel" data-auth-panel="login" aria-labelledby="login-tab">
+                    <form class="auth-form" id="login-form" novalidate>
+                        <div class="auth-field">
+                            <label for="login-identifier">Email hoặc username</label>
+                            <input id="login-identifier" name="identifier" type="text" autocomplete="username" required aria-describedby="identifier-error">
+                            <span class="auth-field__error" id="identifier-error" data-field-error="identifier" aria-live="polite"></span>
+                        </div>
+                        <div class="auth-field">
+                            <label for="login-password">Mật khẩu</label>
+                            <input id="login-password" name="password" type="password" autocomplete="current-password" minlength="6" required aria-describedby="password-error">
+                            <span class="auth-field__error" id="password-error" data-field-error="password" aria-live="polite"></span>
+                        </div>
+                        <div class="auth-options">
+                            <label class="auth-check"><input id="remember-me" name="remember" type="checkbox"> <span>Ghi nhớ tôi</span></label>
+                            <a class="auth-link" href="/recover.html">Quên mật khẩu?</a>
+                        </div>
+                        <button class="auth-submit" type="submit">Đăng nhập</button>
+                        <button class="auth-link" type="button" data-resend-login hidden>Gửi lại email xác minh</button>
+                    </form>
+                    <div class="auth-google">
+                        <div class="auth-divider"><span>hoặc</span></div>
+                        <div data-google-button aria-label="Đăng nhập bằng Google"></div>
+                        <div class="auth-proof" id="google-password-proof" hidden>
+                            <p>Email Google đã tồn tại. Xác nhận mật khẩu hiện tại để liên kết an toàn.</p>
+                            <label class="auth-field" for="google-password-proof-input"><span class="auth-field__label">Mật khẩu hiện tại</span><input id="google-password-proof-input" type="password" autocomplete="current-password"></label>
+                            <button type="button" data-google-proof-submit>Liên kết và tiếp tục</button>
+                        </div>
+                    </div>
+                </section>
+                <section class="auth-panel" id="register-panel" role="tabpanel" data-auth-panel="register" aria-labelledby="register-tab" hidden>
+                    <form class="auth-form" id="register-form" novalidate>
+                        <div class="auth-field">
+                            <label for="register-email">Email</label>
+                            <input id="register-email" name="email" type="email" autocomplete="email" required aria-describedby="register-email-error">
+                            <span class="auth-field__error" id="register-email-error" data-field-error="email" aria-live="polite"></span>
+                        </div>
+                        <div class="auth-field">
+                            <label for="register-password">Mật khẩu</label>
+                            <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="6" required aria-describedby="register-password-error">
+                            <span class="auth-field__error" id="register-password-error" data-field-error="password" aria-live="polite"></span>
+                        </div>
+                        <div class="auth-field">
+                            <label for="register-confirm-password">Nhập lại mật khẩu</label>
+                            <input id="register-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="6" required aria-describedby="confirm-password-error">
+                            <span class="auth-field__error" id="confirm-password-error" data-field-error="confirmPassword" aria-live="polite"></span>
+                        </div>
+                        <button class="auth-submit" type="submit">Tạo tài khoản</button>
+                    </form>
+                    <div class="auth-google">
+                        <div class="auth-divider"><span>hoặc</span></div>
+                        <div data-google-button aria-label="Đăng ký bằng Google"></div>
+                    </div>
+                    <p class="auth-footer">Sau khi đăng ký, hãy xác minh email trước khi đăng nhập.</p>
+                </section>
+            </section>
+        </div>
+    </main>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/cart.js"></script>
+</body>
+</html>
