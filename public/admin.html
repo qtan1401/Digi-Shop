@@ -151,8 +151,9 @@
                         <small class="field-error" data-error-for="stock"></small>
                     </div>
                     <div class="field field--wide" data-field="image">
-                        <label for="product-image">Ảnh sản phẩm (URL) <span>*</span></label>
-                        <input id="product-image" name="image" type="url" required placeholder="https://…">
+                        <label for="product-image">Ảnh sản phẩm (PNG, tối đa 5 MiB)</label>
+                        <input id="product-image" name="image" type="file" accept="image/png,.png">
+                        <small class="field-hint" id="product-image-current" hidden></small>
                         <small class="field-error" data-error-for="image"></small>
                     </div>
                     <div class="field field--wide" data-field="description">

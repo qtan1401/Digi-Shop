@@ -1,3 +1,4 @@
+const { storageDirectory } = require("./services/product-image-storage");
 const express = require("express");
 const path = require("path");
 
@@ -18,6 +19,7 @@ app.use(express.json());
 app.use(parseCookies);
 app.use(ensureCsrfCookie);
 app.use(attachUser);
+app.use("/uploads/products", express.static(storageDirectory(), { fallthrough: false, index: false }));
 app.use(express.static(path.join(__dirname, "../public")));
 
 

@@ -2,6 +2,46 @@
 // HTTP orchestration for the protected catalog administration boundary.
 
 const adminService = require("../services/admin.service");
+const productImageStorage = require("../services/product-image-storage");
+
+const productMutationInput = (req) => {
+    const input = { ...(req.body || {}) };
+    if (req.file) input.image = req.file;
+    if (req.is("multipart/form-data")) {
+        for (const field of ["price", "stock"]) {
+            if (input[field] !== undefined && input[field] !== "") input[field] = Number(input[field]);
+        }
+    }
+    return input;
+};
+
+
+const missingProductImage = () => ({
+    statusCode: 400,
+    message: "Ảnh sản phẩm là trường bắt buộc",
+    errors: [{ field: "image", message: "Ảnh sản phẩm là trường bắt buộc" }]
+});
+
+const updateInput = (req) => {
+    const input = productMutationInput(req);
+    if (!req.file) delete input.image;
+    return input;
+};
+
+const createWithImage = async (req, operation) => {
+    if (!req.file) throw missingProductImage();
+    return await withStoredImage(req, operation);
+};
+const withStoredImage = async (req, operation) => {
+    if (!req.file) return await operation(productMutationInput(req));
+    const stored = await productImageStorage.saveProductImage(req.file);
+    try {
+        return await operation({ ...productMutationInput(req), image: stored.publicPath });
+    } catch (error) {
+        await productImageStorage.removeProductImage(stored);
+        throw error;
+    }
+};
 
 const errorStatus = (error) => {
     if (error && Number.isInteger(error.statusCode)) return error.statusCode;
@@ -63,7 +103,7 @@ const getProduct = async (req, res) => {
 
 const createProduct = async (req, res) => {
     try {
-        const product = await adminService.createProduct(req.body || {}, actor(req));
+        const product = await createWithImage(req, (input) => adminService.createProduct(input, actor(req)));
         return res.status(201).json({
             success: true,
             message: "Thêm sản phẩm thành công",
@@ -76,7 +116,9 @@ const createProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
     try {
-        const product = await adminService.updateProduct(req.params.id, req.body || {}, actor(req));
+        const product = req.file
+            ? await withStoredImage(req, (input) => adminService.updateProduct(req.params.id, input, actor(req)))
+            : await adminService.updateProduct(req.params.id, updateInput(req), actor(req));
         return res.json({
             success: true,
             message: "Cập nhật sản phẩm thành công",

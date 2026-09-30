@@ -185,7 +185,7 @@
         const fields = {
             name: $("#product-name").value.trim(), sku: $("#product-sku").value.trim(),
             brand: $("#product-brand").value, deviceType: $("#product-device-type").value,
-            price: $("#product-price").value, stock: $("#product-stock").value, image: $("#product-image").value.trim(), description: $("#product-description").value.trim()
+            price: $("#product-price").value, stock: $("#product-stock").value, image: $("#product-image").files[0] || null, description: $("#product-description").value.trim()
         };
         const errors = {};
         if (!fields.name) errors.name = "Vui lòng nhập tên sản phẩm.";
@@ -193,8 +193,7 @@
         if (!fields.deviceType) errors.deviceType = "Vui lòng chọn loại thiết bị.";
         if (!fields.price || Number(fields.price) <= 0 || !Number.isInteger(Number(fields.price))) errors.price = "Giá bán phải là số nguyên dương.";
         if (fields.stock === "" || Number(fields.stock) < 0 || !Number.isInteger(Number(fields.stock))) errors.stock = "Tồn kho phải là số nguyên không âm.";
-        if (!fields.image) errors.image = "Vui lòng nhập URL ảnh.";
-        else { try { new URL(fields.image); } catch (_) { errors.image = "URL ảnh không hợp lệ."; } }
+        if (!state.editingId && !fields.image) errors.image = "Vui lòng chọn ảnh PNG sản phẩm.";
         if (!fields.description) errors.description = "Vui lòng nhập mô tả.";
         Object.entries(errors).forEach(([field, message]) => setFormError(form, field, message));
         if (Object.keys(errors).length) {
@@ -218,6 +217,8 @@
         const form = $("#product-form");
         form.reset();
         clearFormErrors(form);
+        $("#product-image-current").textContent = "";
+        $("#product-image-current").hidden = true;
         const submitButton = $("#product-submit-btn");
         submitButton.disabled = Boolean(id);
         submitButton.textContent = id ? "Đang tải…" : "Thêm sản phẩm";
@@ -238,7 +239,8 @@
             $("#product-device-type").value = product.deviceType || "";
             $("#product-price").value = product.price ?? "";
             $("#product-stock").value = product.stock ?? "";
-            $("#product-image").value = product.image || "";
+            $("#product-image-current").textContent = product.image ? "Đang giữ ảnh hiện tại nếu bạn không chọn ảnh thay thế." : "";
+            $("#product-image-current").hidden = !product.image;
             $("#product-description").value = product.description || "";
         } catch (error) {
             closeModal("product-modal");
@@ -258,8 +260,12 @@
         const button = $("#product-submit-btn");
         const original = state.editingId ? "Cập nhật" : "Thêm sản phẩm";
         setSubmitBusy(button, true, original);
-        const body = { name: values.name, brand: values.brand, deviceType: values.deviceType, price: Number(values.price), stock: Number(values.stock), image: values.image, description: values.description };
-        if (!state.editingId) body.sku = values.sku;
+        const body = new FormData();
+        for (const [field, value] of Object.entries({ name: values.name, brand: values.brand, deviceType: values.deviceType, price: Number(values.price), stock: Number(values.stock), description: values.description })) {
+            body.append(field, String(value));
+        }
+        if (values.image) body.append("image", values.image);
+        if (!state.editingId) body.append("sku", $("#product-sku").value.trim());
         try {
             const endpoint = state.editingId ? `/api/admin/products/${encodeURIComponent(state.editingId)}` : "/api/admin/products";
             await api(endpoint, { method: state.editingId ? "PUT" : "POST", body });
