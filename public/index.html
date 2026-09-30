@@ -16,7 +16,6 @@
         <a href="/" class="navbar-brand">NodeShop</a>
         <ul class="navbar-links">
             <li><a href="/">Trang chủ</a></li>
-            <li><a href="/#products">Sản phẩm</a></li>
             <li>
                 <a href="/cart.html" class="cart-nav-link">
                     🛒 <span class="cart-badge cart-badge--hidden" id="cart-badge">0</span>
@@ -40,6 +39,26 @@
                     <span class="catalog-field__label">Tìm kiếm sản phẩm</span>
                     <input id="catalog-search" type="search" maxlength="120" autocomplete="off" aria-describedby="catalog-search-hint" placeholder="Bạn muốn mua gì hôm nay?">
                 </label>
+                <div class="catalog-filter-menu">
+                    <button class="btn btn--secondary catalog-filter-menu__trigger" id="catalog-filter-trigger" type="button" aria-expanded="false" aria-controls="catalog-filter-popover">
+                        <span aria-hidden="true">☰</span> Lọc sản phẩm
+                    </button>
+                    <div class="catalog-filter-popover" id="catalog-filter-popover" hidden>
+                        <fieldset>
+                            <legend>Thương hiệu</legend>
+                            <label><input type="checkbox" name="brand" value="Apple"> Apple</label>
+                            <label><input type="checkbox" name="brand" value="Samsung"> Samsung</label>
+                            <label><input type="checkbox" name="brand" value="MSI"> MSI</label>
+                        </fieldset>
+                        <fieldset>
+                            <legend>Loại thiết bị</legend>
+                            <label><input type="checkbox" name="deviceType" value="phone"> Điện thoại</label>
+                            <label><input type="checkbox" name="deviceType" value="tablet"> Máy tính bảng</label>
+                            <label><input type="checkbox" name="deviceType" value="laptop"> Laptop</label>
+                        </fieldset>
+                        <button class="btn btn--secondary catalog-filter-menu__close" id="catalog-filter-close" type="button">Đóng bộ lọc</button>
+                    </div>
+                </div>
                 <fieldset class="catalog-price-filter">
                     <legend>Lọc theo giá (₫)</legend>
                     <div class="catalog-price-filter__fields">
