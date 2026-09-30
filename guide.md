@@ -434,3 +434,13 @@ Tất cả các hàm xử lý chính trong project đều **để trống body**
    - `loadProductInfo()` — fetch API + render chi tiết
 
 > **💡 Mẹo:** Sau khi hoàn thành mỗi bước, chạy `node server.js` để test. Nếu lỗi, đọc error message trong terminal sẽ biết lỗi ở đâu!
+
+## Product image storage
+
+Product PNG uploads are saved under `PRODUCT_IMAGE_STORAGE_DIR` (default: `./data/product-images`). Set this variable to the path of a mounted durable host volume in each deployment and ensure the application user can create and read files there. For example, mount a persistent volume at `/var/lib/digi-shop/product-images` and configure:
+
+```env
+PRODUCT_IMAGE_STORAGE_DIR=/var/lib/digi-shop/product-images
+```
+
+The application serves these files from `/uploads/products/<generated-name>.png`; product records store this stable public path. Do not use ephemeral container storage for this directory: uploaded images must survive application restarts and redeployments.

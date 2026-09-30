@@ -4,6 +4,7 @@
 const express = require("express");
 const { requireRole, requireCsrf } = require("../middlewares/auth");
 const adminController = require("../controllers/admin.controller");
+const { uploadProductImage } = require("../middlewares/product-image-upload");
 
 const router = express.Router();
 
@@ -19,8 +20,8 @@ router.post("/products/:id/restore", requireCsrf, adminController.restoreProduct
 // Product endpoints.
 router.get("/products", adminController.listProducts);
 router.get("/products/:id", adminController.getProduct);
-router.post("/products", requireCsrf, adminController.createProduct);
-router.put("/products/:id", requireCsrf, adminController.updateProduct);
+router.post("/products", requireCsrf, uploadProductImage, adminController.createProduct);
+router.put("/products/:id", requireCsrf, uploadProductImage, adminController.updateProduct);
 router.delete("/products/:id", requireCsrf, adminController.deleteProduct);
 
 // Audit trail.

@@ -1,9 +1,13 @@
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
 const { after, before, beforeEach, test } = require("node:test");
 
 process.env.APP_ORIGIN = "https://catalog.example.test";
 process.env.JWT_ACCESS_SECRET = "integration-test-secret-that-is-more-than-thirty-two-bytes";
+process.env.PRODUCT_IMAGE_STORAGE_DIR = path.join(os.tmpdir(), `digi-shop-taxonomy-images-${process.pid}`);
 
 let products;
 let audits;
@@ -74,6 +78,22 @@ const productInput = (overrides = {}) => ({
     description: "A new phone",
     ...overrides
 });
+const createProduct = (input) => {
+    const body = new FormData();
+    for (const [field, value] of Object.entries(input)) {
+        if (field !== "image" && value !== undefined && value !== null) body.append(field, String(value));
+    }
+    body.append("image", new Blob([Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/eWQAAAAASUVORK5CYII=", "base64")], { type: "image/png" }), "product.png");
+    return fetch(`${baseUrl}/api/admin/products`, {
+        method: "POST",
+        headers: {
+            Cookie: `__Host-access_token=${accessToken}; __Host-csrf_token=catalog-csrf`,
+            Origin: process.env.APP_ORIGIN,
+            "X-CSRF-Token": "catalog-csrf"
+        },
+        body
+    });
+};
 const adminHeaders = {
     Cookie: `__Host-access_token=${accessToken}; __Host-csrf_token=catalog-csrf`,
     Origin: process.env.APP_ORIGIN,
@@ -89,6 +109,7 @@ before(async () => {
 
 after(async () => {
     if (server) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await fs.rm(process.env.PRODUCT_IMAGE_STORAGE_DIR, { recursive: true, force: true });
 });
 
 beforeEach(() => {
@@ -98,9 +119,7 @@ beforeEach(() => {
 });
 
 test("admin creates supported taxonomy and public listing returns both fields", async () => {
-    const created = await fetch(`${baseUrl}/api/admin/products`, {
-        method: "POST", headers: adminHeaders, body: JSON.stringify(productInput())
-    });
+    const created = await createProduct(productInput());
     assert.equal(created.status, 201);
     const createdPayload = await created.json();
     assert.equal(createdPayload.data.brand, "Apple");
@@ -122,9 +141,7 @@ test("product create reports missing and unsupported taxonomy with field errors"
         [productInput({ brand: undefined }), "brand"],
         [productInput({ deviceType: undefined }), "deviceType"]
     ]) {
-        const response = await fetch(`${baseUrl}/api/admin/products`, {
-            method: "POST", headers: adminHeaders, body: JSON.stringify(input)
-        });
+        const response = await createProduct(input);
         assert.equal(response.status, 400);
         const payload = await response.json();
         assert.ok(payload.errors.some((error) => error.field === field));
@@ -164,15 +181,12 @@ test("product update accepts a different supported brand and device type", async
 });
 
 test("the remaining supported Samsung and tablet values persist through HTTP", async () => {
-    const response = await fetch(`${baseUrl}/api/admin/products`, {
-        method: "POST", headers: adminHeaders,
-        body: JSON.stringify(productInput({
-            name: "Samsung Galaxy Tab",
-            brand: "Samsung",
-            deviceType: "tablet",
-            sku: "SG-TAB-1"
-        }))
-    });
+    const response = await createProduct(productInput({
+        name: "Samsung Galaxy Tab",
+        brand: "Samsung",
+        deviceType: "tablet",
+        sku: "SG-TAB-1"
+    }));
     assert.equal(response.status, 201);
     const payload = await response.json();
     assert.deepEqual(

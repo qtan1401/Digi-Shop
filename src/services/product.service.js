@@ -89,12 +89,6 @@ const validateProduct = (input, { requireSku = true } = {}) => {
         }
     } else {
         data.image = data.image.trim();
-        try {
-            const imageUrl = new URL(data.image);
-            if (!["http:", "https:"].includes(imageUrl.protocol)) throw new Error("invalid protocol");
-        } catch (error) {
-            errors.push({ field: "image", message: "Ảnh sản phẩm phải là URL hợp lệ" });
-        }
     }
 
     if (typeof data.description !== "string" || isBlank(data.description)) {
