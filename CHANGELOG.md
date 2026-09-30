@@ -10,6 +10,7 @@
 - Fixed the admin catalog's persistent search spinner and aligned the Google sign-in button with the login form fields.
 - Reorganized normal seed data by administrator, catalog vocabulary, and commerce domain; regular seeding remains non-destructive and contains no sample Products.
 - Added an explicitly confirmed, local-only one-time store reset that clears commerce/authentication records atomically, recreates admin123 with a required fresh password and first-login change, and reports per-table counts.
+- Extended the explicit local reset to clear legacy category rows retained by the non-destructive Product migration; rollback verification covers their deletion and restoration.
 - Documented local seed and reset operations and their safeguards.
 
 - Replaced the product image URL field with authenticated, CSRF-protected single-PNG uploads validated by extension, MIME type, signature, and a 5 MiB server-side limit; images are stored on configurable local storage and edit forms retain the current image unless replaced.

@@ -11,7 +11,7 @@ The reset is a distinct destructive operation. It is not run by application star
 3. Set `STORE_RESET_CONFIRMATION` to the exact text `RESET LOCAL DIGISHOP`.
 4. Explicitly run `npm run db:reset:local`.
 
-The command reports the database target plus before/after counts for every cleared table; it does not print the configured password. It deletes payment attempts before Orders, order items before Orders, cart references before Products, and user-linked authentication/cart data before Users, in one serializable transaction. It nulls refresh-session replacement links before deleting sessions to satisfy the self-reference constraint. It creates the replacement `admin123` only within that transaction after clearing; its password is hashed and first login requires changing it. If any step fails, deletion and administrator creation roll back together.
+The command reports the database target plus before/after counts for every cleared table; it does not print the configured password. It deletes payment attempts before Orders, order items before Orders, cart references before Products, and user-linked authentication/cart data before Users. It also clears legacy category rows retained by the non-destructive Product migration. All clearing happens in one serializable transaction. The command nulls refresh-session replacement links before deleting sessions to satisfy the self-reference constraint. It creates the replacement `admin123` only within that transaction after clearing; its password is hashed and first login requires changing it. If any step fails, deletion and administrator creation roll back together.
 
 ## Non-destructive rollback verification
 
@@ -21,7 +21,7 @@ To exercise the exact table-clearing and administrator-creation transaction with
 npm run db:reset:rollback-check
 ```
 
-This command accepts only the same `localhost:1433` / `DigiShop` target and requires `ADMIN_DEFAULT_PASSWORD`. It snapshots counts for all tables in the reset list, performs the clear and administrator creation inside a serializable transaction, then unconditionally rolls the transaction back before querying counts again. It reports before/after counts and fails unless they match. It has no option to commit; use the separately confirmed `db:reset:local` command only when an actual destructive reset is intended.
+This command accepts only the same `localhost:1433` / `DigiShop` target and requires `ADMIN_DEFAULT_PASSWORD`. It snapshots counts for all 13 tables in the reset list, performs the clear and administrator creation inside a serializable transaction, then unconditionally rolls the transaction back before querying counts again. It reports before/after counts and fails unless they match. It has no option to commit; use the separately confirmed `db:reset:local` command only when an actual destructive reset is intended.
 
 | SQL table | Entity |
 | --- | --- |
@@ -36,6 +36,7 @@ This command accepts only the same `localhost:1433` / `DigiShop` target and requ
 | `email_verification_tokens` | EmailVerificationToken |
 | `products` | Product |
 | `users` | User |
+| `categories` | Category (legacy) |
 | `audit_logs` | AuditLog |
 
 After success expect zero Products and one replacement administrator. The reset only clears records; it does not remove payment tables, schemas, provider configuration, or MoMo/VNPay runtime behavior. Uploaded files on persistent local storage are not reset by this database operation.

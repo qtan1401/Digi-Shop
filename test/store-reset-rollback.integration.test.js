@@ -5,7 +5,7 @@ const { verifyResetRollback } = require("../prisma/seed");
 
 const clearedTables = [
     "payment_attempts", "order_items", "orders", "cart_items", "carts", "cart_merge_operations",
-    "oauth_identities", "refresh_sessions", "email_verification_tokens", "products", "users", "audit_logs"
+    "oauth_identities", "refresh_sessions", "email_verification_tokens", "products", "users", "categories", "audit_logs"
 ];
 const initialTables = Object.fromEntries(clearedTables.map((table) => [table, [{ marker: `${table}-legacy-a` }, { marker: `${table}-legacy-b` }]]));
 let poolInstance;
@@ -104,4 +104,5 @@ test("rollback verification clears every required table in order, then proves no
     assert.deepEqual(result.after, result.before);
     assert.deepEqual(poolInstance.deletes, clearedTables);
     assert.equal(poolInstance.tables.users.length, 2);
+    assert.deepEqual(poolInstance.tables.categories, initialTables.categories);
 });

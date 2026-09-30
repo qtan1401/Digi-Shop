@@ -74,6 +74,7 @@ const CLEAR_TABLES = [
     ["email_verification_tokens", "EmailVerificationToken"],
     ["products", "Product"],
     ["users", "User"],
+    ["categories", "Category"],
     ["audit_logs", "AuditLog"]
 ];
 const {
