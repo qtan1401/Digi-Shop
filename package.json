@@ -9,6 +9,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:seed": "node prisma/seed.js",
+    "db:reset:local": "node prisma/seed.js reset",
+    "db:reset:rollback-check": "node prisma/seed.js rollback-check",
     "db:setup": "npm run db:create && npm run db:migrate && npm run db:generate && npm run db:seed",
     "test": "node --test"
   },

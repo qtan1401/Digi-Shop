@@ -6,7 +6,7 @@ const sql = require("mssql");
 const seedData = require("./seed-data");
 const { readDatabaseConfig } = require("../src/db/config");
 
-const DEFAULT_ADMIN_USERNAME = "admin123";
+const DEFAULT_ADMIN_USERNAME = seedData.administrator.username;
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD;
 
 const requiredDefaultAdminPassword = () => {
@@ -16,7 +16,7 @@ const requiredDefaultAdminPassword = () => {
     return DEFAULT_ADMIN_PASSWORD;
 };
 
-async function ensureDefaultAdmin(transaction) {
+async function ensureDefaultAdmin(transaction, password = requiredDefaultAdminPassword()) {
     const lookup = transaction.request();
     lookup.input("username", sql.NVarChar(64), DEFAULT_ADMIN_USERNAME);
     const result = await lookup.query(`
@@ -30,7 +30,7 @@ async function ensureDefaultAdmin(transaction) {
     const existing = result.recordset[0];
 
     if (!existing) {
-        const passwordHash = await argon2.hash(requiredDefaultAdminPassword(), { type: argon2.argon2id });
+        const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
         const insert = transaction.request();
         insert.input("id", sql.NVarChar(36), crypto.randomUUID());
         insert.input("username", sql.NVarChar(64), DEFAULT_ADMIN_USERNAME);
@@ -39,7 +39,7 @@ async function ensureDefaultAdmin(transaction) {
             INSERT INTO [dbo].[users]
                 ([id], [username], [password_hash], [role], [status], [force_password_change])
             VALUES
-                (@id, @username, @passwordHash, N'admin', N'ACTIVE', 0);
+                (@id, @username, @passwordHash, N'admin', N'ACTIVE', 1);
         `);
         return;
     }
@@ -49,7 +49,7 @@ async function ensureDefaultAdmin(transaction) {
     }
 
     if (existing.passwordHash === null) {
-        const passwordHash = await argon2.hash(requiredDefaultAdminPassword(), { type: argon2.argon2id });
+        const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
         const update = transaction.request();
         update.input("id", sql.NVarChar(36), existing.id);
         update.input("passwordHash", sql.NVarChar(255), passwordHash);
@@ -61,6 +61,21 @@ async function ensureDefaultAdmin(transaction) {
         `);
     }
 }
+
+const CLEAR_TABLES = [
+    ["payment_attempts", "PaymentAttempt"],
+    ["order_items", "OrderItem"],
+    ["orders", "Order"],
+    ["cart_items", "CartItem"],
+    ["carts", "Cart"],
+    ["cart_merge_operations", "CartMergeOperation"],
+    ["oauth_identities", "OAuthIdentity"],
+    ["refresh_sessions", "RefreshSession"],
+    ["email_verification_tokens", "EmailVerificationToken"],
+    ["products", "Product"],
+    ["users", "User"],
+    ["audit_logs", "AuditLog"]
+];
 const {
     SeedDataError,
     decimalToCents,
@@ -429,7 +444,17 @@ async function insertAudits(transaction, records) {
 }
 
 async function seedDatabase() {
-    const normalized = normalizeSeedData(seedData);
+    if (!Array.isArray(seedData.commerce.products) || seedData.commerce.products.length !== 0) {
+        throw new Error("Normal seed data must not include Products");
+    }
+    if (!Array.isArray(seedData.commerce.orders) || !Array.isArray(seedData.commerce.audits)) {
+        throw new Error("Normal seed data must export commerce entity arrays");
+    }
+    const normalized = normalizeSeedData({
+        products: seedData.commerce.products,
+        orders: seedData.commerce.orders,
+        audits: seedData.commerce.audits
+    });
     const summary = createSummary(normalized);
     const { mssql } = readDatabaseConfig();
     const pool = new sql.ConnectionPool({
@@ -495,6 +520,165 @@ async function seedDatabase() {
     }
 }
 
+const countRecords = async (transaction, table) => {
+    const result = await transaction.request().query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[${table}];`);
+    return Number(result.recordset[0].count);
+};
+
+async function clearStore(transaction, password) {
+    for (const [table] of CLEAR_TABLES) {
+        if (table === "refresh_sessions") {
+            await transaction.request().query("UPDATE [dbo].[refresh_sessions] SET [replaced_by_id] = NULL;");
+        }
+        await transaction.request().query(`DELETE FROM [dbo].[${table}];`);
+    }
+    await ensureDefaultAdmin(transaction, password);
+    const after = {};
+    for (const [table] of CLEAR_TABLES) after[table] = await countRecords(transaction, table);
+    const adminResult = await transaction.request().query(`
+        SELECT [username], [role], [force_password_change]
+        FROM [dbo].[users];
+    `);
+    if (
+        adminResult.recordset.length !== 1
+        || adminResult.recordset[0].username !== DEFAULT_ADMIN_USERNAME
+        || adminResult.recordset[0].role !== "admin"
+        || !adminResult.recordset[0].force_password_change
+    ) {
+        throw new Error("Reset did not produce exactly one first-login administrator");
+    }
+    return after;
+}
+
+const requireLocalTarget = (environment) => {
+    const config = readDatabaseConfig(environment);
+    if (!/^localhost$/i.test(config.mssql.server) || config.mssql.port !== 1433 || config.databaseName !== "DigiShop") {
+        throw new Error("Store reset is restricted to localhost:1433 database DigiShop");
+    }
+    return config;
+};
+
+const requireResetPassword = (environment) => {
+    const password = environment.ADMIN_DEFAULT_PASSWORD;
+    if (typeof password !== "string" || password.length < 16) {
+        throw new Error("ADMIN_DEFAULT_PASSWORD must be freshly configured and at least 16 characters");
+    }
+    return password;
+};
+
+async function resetDatabase({ environment = process.env, confirmation = environment.STORE_RESET_CONFIRMATION } = {}) {
+    const config = requireLocalTarget(environment);
+    if (confirmation !== "RESET LOCAL DIGISHOP") {
+        throw new Error("Set STORE_RESET_CONFIRMATION=RESET LOCAL DIGISHOP to confirm the destructive reset");
+    }
+    const password = requireResetPassword(environment);
+
+    const pool = new sql.ConnectionPool({
+        ...config.mssql,
+        pool: { ...config.mssql.pool },
+        options: { ...config.mssql.options }
+    });
+    let transaction;
+    let transactionOpen = false;
+    try {
+        await pool.connect();
+        transaction = new sql.Transaction(pool);
+        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transactionOpen = true;
+        const before = {};
+        for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
+        const after = await clearStore(transaction, password);
+        await transaction.commit();
+        transactionOpen = false;
+        return { database: config.databaseName, server: `${config.mssql.server}:${config.mssql.port}`, before, after };
+    } catch (error) {
+        if (transactionOpen) {
+            try {
+                await transaction.rollback();
+            } catch {
+                // Preserve the triggering error.
+            }
+        }
+        throw error;
+    } finally {
+        if (pool.connected || pool.connecting) await pool.close();
+    }
+}
+
+async function verifyResetRollback({
+    environment = process.env,
+    confirmation = environment.STORE_RESET_ROLLBACK_CONFIRMATION
+} = {}) {
+    const config = requireLocalTarget(environment);
+    if (confirmation !== "ROLLBACK CHECK LOCAL DIGISHOP") {
+        throw new Error("Set STORE_RESET_ROLLBACK_CONFIRMATION=ROLLBACK CHECK LOCAL DIGISHOP to confirm rollback check");
+    }
+    const password = requireResetPassword(environment);
+    const pool = new sql.ConnectionPool({
+        ...config.mssql,
+        pool: { ...config.mssql.pool },
+        options: { ...config.mssql.options }
+    });
+    let transaction;
+    let transactionOpen = false;
+    try {
+        await pool.connect();
+        transaction = new sql.Transaction(pool);
+        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transactionOpen = true;
+        const before = {};
+        for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
+        await clearStore(transaction, password);
+        await transaction.rollback();
+        transactionOpen = false;
+        const after = {};
+        for (const [table] of CLEAR_TABLES) after[table] = await countRecords(pool, table);
+        if (CLEAR_TABLES.some(([table]) => before[table] !== after[table])) {
+            throw new Error("Rollback verification failed: one or more table counts changed");
+        }
+        return {
+            database: config.databaseName,
+            server: `${config.mssql.server}:${config.mssql.port}`,
+            outcome: "rolled back; no changes committed",
+            before,
+            after
+        };
+    } catch (error) {
+        if (transactionOpen) {
+            try {
+                await transaction.rollback();
+            } catch {
+                // Preserve the triggering error.
+            }
+        }
+        throw error;
+    } finally {
+        if (pool.connected || pool.connecting) await pool.close();
+    }
+}
+
+async function resetMain() {
+    try {
+        const summary = await resetDatabase();
+        console.log("Store reset committed:");
+        console.log(JSON.stringify(summary, null, 2));
+    } catch (error) {
+        console.error(`Store reset failed: ${error.message}`);
+        process.exitCode = 1;
+    }
+}
+
+async function rollbackCheckMain() {
+    try {
+        const summary = await verifyResetRollback();
+        console.log("Store reset rollback verified; no changes committed:");
+        console.log(JSON.stringify(summary, null, 2));
+    } catch (error) {
+        console.error(`Store reset rollback check failed: ${error.message}`);
+        process.exitCode = 1;
+    }
+}
+
 async function main() {
     try {
         const summary = await seedDatabase();
@@ -516,10 +700,19 @@ async function main() {
 }
 
 if (require.main === module) {
-    main();
+    const command = process.argv[2];
+    if (command === "reset") resetMain();
+    else if (command === "rollback-check") rollbackCheckMain();
+    else if (!command) main();
+    else {
+        console.error("Usage: node prisma/seed.js [reset|rollback-check]");
+        process.exitCode = 2;
+    }
 }
 
 module.exports = {
     SeedConflictError,
-    seedDatabase
+    seedDatabase,
+    resetDatabase,
+    verifyResetRollback
 };
