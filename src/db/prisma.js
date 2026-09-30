@@ -3,7 +3,6 @@ require("dotenv").config();
 const { readDatabaseConfig } = require("./config");
 const REQUIRED_TABLES = [
     "_prisma_migrations",
-    "categories",
     "products",
     "orders",
     "order_items",
@@ -17,7 +16,7 @@ const REQUIRED_TABLES = [
     "cart_merge_operations",
     "payment_attempts"
 ];
-const REQUIRED_MIGRATION = "20260930000000_payment_attempts";
+const REQUIRED_MIGRATION = "20261001000000_product_brand_device_type";
 
 class DatabaseSchemaError extends Error {
     constructor() {
@@ -57,7 +56,7 @@ async function verifyDatabaseSchema(client) {
         WHERE [TABLE_SCHEMA] = N'dbo'
           AND [TABLE_TYPE] = N'BASE TABLE'
           AND [TABLE_NAME] IN (
-              N'_prisma_migrations', N'categories', N'products', N'orders', N'order_items', N'audit_logs',
+              N'_prisma_migrations', N'products', N'orders', N'order_items', N'audit_logs',
               N'users', N'oauth_identities', N'refresh_sessions', N'email_verification_tokens',
               N'carts', N'cart_items', N'cart_merge_operations', N'payment_attempts'
           );
@@ -72,7 +71,7 @@ async function verifyDatabaseSchema(client) {
     const migrations = await client.$queryRawUnsafe(`
         SELECT TOP (1) [migration_name] AS [migrationName]
         FROM [dbo].[_prisma_migrations]
-        WHERE [migration_name] = N'20260930000000_payment_attempts'
+        WHERE [migration_name] = N'20261001000000_product_brand_device_type'
           AND [finished_at] IS NOT NULL
           AND [rolled_back_at] IS NULL;
     `);

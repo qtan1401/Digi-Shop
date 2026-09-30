@@ -233,16 +233,6 @@ function stableJson(value, identity, path = "changes") {
     throw new SeedDataError(identity, `${path} must contain only JSON-safe values`);
 }
 
-function normalizeCategory(record, index, changes) {
-    const identity = requireRecord("category", record, index);
-    return {
-        id: normalizeInteger(record.id, "id", identity, changes, { minimum: 1, maximum: 2147483647 }),
-        name: requiredText(record.name, "name", identity, changes, 100),
-        slug: normalizeSlug(record.slug, "slug", identity, changes, 160),
-        description: optionalText(record.description, "description", identity, changes, 1000),
-        createdAt: normalizeDate(record.createdAt, "createdAt", identity, changes)
-    };
-}
 
 function normalizeProduct(record, index, changes) {
     const identity = requireRecord("product", record, index);
@@ -251,10 +241,19 @@ function normalizeProduct(record, index, changes) {
     if (isDeleted !== Boolean(deletedAt)) {
         throw new SeedDataError(identity, "isDeleted and deletedAt must either both indicate deletion or both indicate an active product");
     }
+    const brand = requiredText(record.brand, "brand", identity, changes, 16);
+    const deviceType = requiredText(record.deviceType, "deviceType", identity, changes, 16);
+    if (!["Apple", "Samsung", "MSI"].includes(brand)) {
+        throw new SeedDataError(identity, "brand must be Apple, Samsung, or MSI");
+    }
+    if (!["phone", "tablet", "laptop"].includes(deviceType)) {
+        throw new SeedDataError(identity, "deviceType must be phone, tablet, or laptop");
+    }
 
     return {
         id: normalizeInteger(record.id, "id", identity, changes, { minimum: 1, maximum: 2147483647 }),
-        categoryId: normalizeInteger(record.categoryId, "categoryId", identity, changes, { minimum: 1, maximum: 2147483647 }),
+        brand,
+        deviceType,
         name: requiredText(record.name, "name", identity, changes, 200),
         slug: normalizeSlug(record.slug, "slug", identity, changes, 240),
         sku: normalizeCode(record.sku, "sku", identity, changes, 100),
@@ -360,32 +359,23 @@ function normalizeSeedData(source) {
     if (!source || typeof source !== "object") {
         throw new SeedDataError("seed:root", "seed source must be an object");
     }
-    for (const entity of ["categories", "products", "orders", "audits"]) {
+    for (const entity of ["products", "orders", "audits"]) {
         if (!Array.isArray(source[entity])) {
             throw new SeedDataError(`seed:${entity}`, "source must export an array");
         }
     }
     const changes = [];
-    const categories = source.categories.map((record, index) => normalizeCategory(record, index, changes));
     const products = source.products.map((record, index) => normalizeProduct(record, index, changes));
     const orders = source.orders.map((record, index) => normalizeOrder(record, index, changes));
     const audits = source.audits.map((record, index) => normalizeAudit(record, index, changes));
 
-    assertUnique(categories, "id", "category");
-    assertUnique(categories, "slug", "category");
     assertUnique(products, "id", "product");
     assertUnique(products, "slug", "product");
     assertUnique(products, "sku", "product");
     assertUnique(orders, "id", "order");
     assertUnique(audits, "id", "audit");
 
-    const categoryIds = new Set(categories.map(({ id }) => id));
     const productIds = new Set(products.map(({ id }) => id));
-    for (const product of products) {
-        if (!categoryIds.has(product.categoryId)) {
-            throw new SeedDataError(`product:${product.id}`, `categoryId ${product.categoryId} is not present in the category seed`);
-        }
-    }
     for (const order of orders) {
         for (const [index, item] of order.items.entries()) {
             if (!productIds.has(item.productId)) {
@@ -395,7 +385,7 @@ function normalizeSeedData(source) {
     }
 
     const normalizedRecords = new Set(changes.map(({ identity }) => identity.split("/item:")[0])).size;
-    return { categories, products, orders, audits, changes, normalizedRecords };
+    return { products, orders, audits, changes, normalizedRecords };
 }
 
 function redactValue(field, value) {

@@ -26,7 +26,8 @@ const toNumber = (value) =>
 const mapProduct = (row) => row
     ? {
         id: row.id,
-        categoryId: row.categoryId,
+        brand: row.brand,
+        deviceType: row.deviceType,
         name: row.name,
         slug: row.slug,
         sku: row.sku,
@@ -97,7 +98,8 @@ const decreaseStock = async (id, quantity) =>
 
 const createProduct = async (productData = {}) => {
     const data = {
-        categoryId: productData.categoryId,
+        brand: productData.brand,
+        deviceType: productData.deviceType,
         name: productData.name,
         slug: productData.slug,
         sku: productData.sku,
@@ -118,7 +120,8 @@ const createProduct = async (productData = {}) => {
 const updateProduct = async (id, changes = {}) => {
     const data = {};
     for (const field of [
-        "categoryId",
+        "brand",
+        "deviceType",
         "name",
         "slug",
         "sku",
@@ -154,27 +157,16 @@ const restore = async (id, changes = {}) => {
         deletedAt: null,
         updatedAt: new Date()
     };
-    if (Object.prototype.hasOwnProperty.call(changes, "categoryId")) {
-        data.categoryId = changes.categoryId;
-    }
 
     return updateAndRead(id, data);
 };
 
 const restoreProduct = async (id, changes = {}) => restore(id, changes);
 
-const findWithFilter = async (q = "", categoryId, status = "active") => {
+const findWithFilter = async (q = "", status = "active") => {
     const where = {};
     if (status === "active") where.isDeleted = false;
     if (status === "deleted") where.isDeleted = true;
-
-    const hasCategoryFilter =
-        categoryId !== undefined && categoryId !== null && String(categoryId) !== "";
-    if (hasCategoryFilter) {
-        const parsedCategoryId = toId(categoryId);
-        if (parsedCategoryId === null) return [];
-        where.categoryId = parsedCategoryId;
-    }
 
     const query = typeof q === "string" ? q.trim() : "";
     if (query) {
@@ -192,7 +184,7 @@ const findWithFilter = async (q = "", categoryId, status = "active") => {
 };
 
 const getProductsByFilter = async (filters = {}) =>
-    findWithFilter(filters.q, filters.categoryId, filters.status || "active");
+    findWithFilter(filters.q, filters.status || "active");
 
 module.exports = {
     getAllProducts,

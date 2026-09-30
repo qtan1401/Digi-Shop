@@ -6,20 +6,11 @@ datasource db {
   provider = "sqlserver"
 }
 
-model Category {
-  id          Int       @id @default(autoincrement())
-  name        String    @db.NVarChar(100)
-  slug        String    @unique(map: "categories_slug_key") @db.NVarChar(160)
-  description String?   @db.NVarChar(1000)
-  createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
-  products    Product[]
-
-  @@map("categories")
-}
 
 model Product {
   id          Int       @id @default(autoincrement())
-  categoryId  Int       @map("category_id")
+  brand       String    @db.NVarChar(16)
+  deviceType  String    @map("device_type") @db.NVarChar(16)
   name        String    @db.NVarChar(200)
   slug        String    @unique(map: "products_slug_key") @db.NVarChar(240)
   sku         String    @unique(map: "products_sku_key") @db.NVarChar(100)
@@ -31,11 +22,9 @@ model Product {
   deletedAt   DateTime? @map("deleted_at") @db.DateTime2
   createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
   updatedAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
-  category    Category  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: Cascade)
   orderItems  OrderItem[]
   cartItems   CartItem[]
 
-  @@index([categoryId, isDeleted], map: "products_category_id_is_deleted_idx")
   @@index([isDeleted, updatedAt], map: "products_is_deleted_updated_at_idx")
   @@map("products")
 }

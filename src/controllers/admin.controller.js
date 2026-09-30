@@ -2,11 +2,10 @@
 // HTTP orchestration for the protected catalog administration boundary.
 
 const adminService = require("../services/admin.service");
-const categoryService = require("../services/category.service");
 
 const errorStatus = (error) => {
     if (error && Number.isInteger(error.statusCode)) return error.statusCode;
-    if (error && /Không tìm thấy (sản phẩm|danh mục)/.test(error.message || "")) return 404;
+    if (error && /Không tìm thấy sản phẩm/.test(error.message || "")) return 404;
     return 400;
 };
 
@@ -20,10 +19,6 @@ const sendError = (res, error) => {
 
 const actor = (req) => req.user && req.user.id;
 
-const withCategoryName = async (product) => {
-    const category = await categoryService.findCategoryById(product.categoryId);
-    return { ...product, categoryName: category ? category.name : null };
-};
 const createAccount = async (req, res) => {
     try {
         const account = await adminService.createAdminAccount(req.body || {}, actor(req));
@@ -45,14 +40,12 @@ const listProducts = async (req, res) => {
     try {
         const result = await adminService.getProducts({
             q: req.query.q,
-            categoryId: req.query.categoryId,
             status: req.query.status || "active"
         });
-        const data = await Promise.all(result.data.map(withCategoryName));
         return res.json({
             success: true,
             total: result.total,
-            data
+            data: result.data
         });
     } catch (error) {
         return sendError(res, error);
@@ -62,7 +55,7 @@ const listProducts = async (req, res) => {
 const getProduct = async (req, res) => {
     try {
         const product = await adminService.getProduct(req.params.id);
-        return res.json({ success: true, data: await withCategoryName(product) });
+        return res.json({ success: true, data: product });
     } catch (error) {
         return sendError(res, error);
     }
@@ -108,13 +101,10 @@ const deleteProduct = async (req, res) => {
 
 const restoreProduct = async (req, res) => {
     try {
-        const options = { ...(req.body || {}) };
         const id = req.params.id !== undefined
             ? req.params.id
-            : (options.productId !== undefined ? options.productId : options.id);
-        delete options.productId;
-        delete options.id;
-        await adminService.restoreProduct(id, options, actor(req));
+            : (req.body && (req.body.productId !== undefined ? req.body.productId : req.body.id));
+        await adminService.restoreProduct(id, actor(req));
         return res.json({
             success: true,
             message: "Khôi phục sản phẩm thành công. Sản phẩm đã hiển thị lại trên website."

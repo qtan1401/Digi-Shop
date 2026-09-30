@@ -1,34 +1,11 @@
-const now = () => new Date().toISOString();
 const seededAt = new Date().toISOString();
 
-const categories = [
-    {
-        id: 1,
-        name: "Điện thoại",
-        slug: "dien-thoai",
-        description: "Các dòng điện thoại thông minh",
-        createdAt: now()
-    },
-    {
-        id: 2,
-        name: "Laptop",
-        slug: "laptop",
-        description: "Máy tính xách tay",
-        createdAt: now()
-    },
-    {
-        id: 3,
-        name: "Phụ kiện",
-        slug: "phu-kien",
-        description: "Phụ kiện công nghệ",
-        createdAt: now()
-    }
-];
 
 const products = [
     {
         id: 1,
-        categoryId: 1,
+        brand: "Apple",
+        deviceType: "phone",
         name: "iPhone 16 Pro Max",
         slug: "iphone-16-pro-max",
         sku: "IP16PM-256",
@@ -43,7 +20,8 @@ const products = [
     },
     {
         id: 2,
-        categoryId: 1,
+        brand: "Samsung",
+        deviceType: "phone",
         name: "Samsung Galaxy S25 Ultra",
         slug: "samsung-galaxy-s25-ultra",
         sku: "SGS25U-256",
@@ -58,7 +36,8 @@ const products = [
     },
     {
         id: 3,
-        categoryId: 2,
+        brand: "Apple",
+        deviceType: "laptop",
         name: "MacBook Pro M4",
         slug: "macbook-pro-m4",
         sku: "MBP-M4-14",
@@ -74,7 +53,6 @@ const products = [
 ];
 
 module.exports = {
-    categories,
     products,
     orders: [],
     audits: []

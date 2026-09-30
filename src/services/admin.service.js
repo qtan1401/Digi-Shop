@@ -1,10 +1,8 @@
 // ===== ADMIN SERVICE =====
 // Coordinates admin-facing catalog mutations and their audit entries.
-// Domain validation and state transitions remain in the category/product services.
+// Domain validation and state transitions remain in the Product service.
 
 const productService = require("./product.service");
-const categoryService = require("./category.service");
-const productRepository = require("../repositories/product.repository");
 const auditRepository = require("../repositories/audit.repository");
 const adminAccountRepository = require("../repositories/admin-account.repository");
 const { normalizeUsername, hashPassword } = require("./auth.service");
@@ -51,26 +49,6 @@ const writeAudit = async (actor, action, entity, entityId, changes) =>
         changes
     });
 
-const createCategory = async (input, actor) => {
-    const category = await categoryService.createCategory(input);
-    await writeAudit(actor, "CREATE", "category", category.id, {
-        name: { old: undefined, new: category.name },
-        slug: { old: undefined, new: category.slug },
-        description: { old: undefined, new: category.description }
-    });
-    return category;
-};
-
-const deleteCategory = async (id, actor) => {
-    // Inject the repository at the boundary to avoid a category-service/product-
-    // repository circular import while keeping the guard on the domain service.
-    const category = await categoryService.findCategoryById(id);
-    const deleted = await categoryService.deleteCategory(id, productRepository);
-    await writeAudit(actor, "DELETE", "category", deleted.id, {
-        category: { old: category, new: undefined }
-    });
-    return deleted;
-};
 
 const getProducts = async (filters) => await productService.getAdminProducts(filters);
 const getProduct = async (id) =>
@@ -96,9 +74,9 @@ const softDeleteProduct = async (id, actor) => {
     return product;
 };
 
-const restoreProduct = async (id, options, actor) => {
+const restoreProduct = async (id, actor) => {
     const before = snapshot(await productService.getProductByID(id, { includeDeleted: true }));
-    const product = await productService.restoreProduct(id, options);
+    const product = await productService.restoreProduct(id);
     await writeAudit(actor, "RESTORE", "product", product.id, diff(before, product));
     return product;
 };
@@ -134,8 +112,6 @@ const getAuditLogs = async () => await auditRepository.getAllLogs();
 
 
 module.exports = {
-    createCategory,
-    deleteCategory,
     getProducts,
     getProduct,
     createProduct,
