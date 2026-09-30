@@ -78,6 +78,7 @@ const environment = {
     DB_PORT: "1433",
     DB_NAME: "DigiShop",
     DB_USER: "test",
+    DB_PASSWORD: "test-only",
     DB_ENCRYPT: "false",
     DB_TRUST_SERVER_CERTIFICATE: "true",
     DB_CONNECT_TIMEOUT_MS: "1000",
