@@ -1,7 +1,37 @@
 const multer = require("multer");
+const { PNG } = require("pngjs");
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_DECODED_PIXELS = 16_777_216;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+const hasCompletePngChunks = (buffer) => {
+    let offset = PNG_SIGNATURE.length;
+    while (offset + 12 <= buffer.length) {
+        const chunkLength = buffer.readUInt32BE(offset);
+        const chunkEnd = offset + chunkLength + 12;
+        if (chunkEnd > buffer.length) return false;
+        if (buffer.toString("ascii", offset + 4, offset + 8) === "IEND") {
+            return chunkLength === 0 && chunkEnd === buffer.length;
+        }
+        offset = chunkEnd;
+    }
+    return false;
+};
+
+const hasValidPngContent = (buffer) => {
+    if (buffer.length < 24 || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return false;
+    if (!hasCompletePngChunks(buffer)) return false;
+    const width = buffer.readUInt32BE(16);
+    const height = buffer.readUInt32BE(20);
+    if (!width || !height || width * height > MAX_DECODED_PIXELS) return false;
+    try {
+        PNG.sync.read(buffer);
+        return true;
+    } catch {
+        return false;
+    }
+};
 
 const imageError = (res, message) => res.status(400).json({
     success: false,
@@ -25,8 +55,8 @@ const parser = multer({
 const uploadProductImage = (req, res, next) => {
     parser(req, res, (error) => {
         if (!error) {
-            if (req.file && !req.file.buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-                return imageError(res, "Tệp ảnh không có chữ ký PNG hợp lệ");
+            if (req.file && !hasValidPngContent(req.file.buffer)) {
+                return imageError(res, "Tệp ảnh PNG không hợp lệ hoặc vượt quá giới hạn kích thước giải mã");
             }
             return next();
         }
