@@ -4,20 +4,15 @@
 const express = require("express");
 const { requireRole, requireCsrf } = require("../middlewares/auth");
 const adminController = require("../controllers/admin.controller");
-const categoryController = require("../controllers/category.controller");
 
 const router = express.Router();
 
 router.use(requireRole("admin"));
 router.post("/accounts", requireCsrf, adminController.createAccount);
 
-// Category endpoints.
-router.post("/categories", requireCsrf, categoryController.create);
-router.delete("/categories/:id", requireCsrf, categoryController.remove);
 
 // Static restore endpoint is intentionally declared before /products/:id.
-// The :id/restore form is the documented G3 contract; the static form accepts
-// { productId, newCategoryId } for clients that submit the id in the body.
+// The :id/restore form is the documented restore contract; the static form accepts { productId }.
 router.post("/products/restore", requireCsrf, adminController.restoreProduct);
 router.post("/products/:id/restore", requireCsrf, adminController.restoreProduct);
 

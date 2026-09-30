@@ -7,7 +7,14 @@ const seedData = require("./seed-data");
 const { readDatabaseConfig } = require("../src/db/config");
 
 const DEFAULT_ADMIN_USERNAME = "admin123";
-const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "admin140105";
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD;
+
+const requiredDefaultAdminPassword = () => {
+    if (typeof DEFAULT_ADMIN_PASSWORD !== "string" || !DEFAULT_ADMIN_PASSWORD) {
+        throw new Error("ADMIN_DEFAULT_PASSWORD must be configured to create the default administrator");
+    }
+    return DEFAULT_ADMIN_PASSWORD;
+};
 
 async function ensureDefaultAdmin(transaction) {
     const lookup = transaction.request();
@@ -23,7 +30,7 @@ async function ensureDefaultAdmin(transaction) {
     const existing = result.recordset[0];
 
     if (!existing) {
-        const passwordHash = await argon2.hash(DEFAULT_ADMIN_PASSWORD, { type: argon2.argon2id });
+        const passwordHash = await argon2.hash(requiredDefaultAdminPassword(), { type: argon2.argon2id });
         const insert = transaction.request();
         insert.input("id", sql.NVarChar(36), crypto.randomUUID());
         insert.input("username", sql.NVarChar(64), DEFAULT_ADMIN_USERNAME);
@@ -42,7 +49,7 @@ async function ensureDefaultAdmin(transaction) {
     }
 
     if (existing.passwordHash === null) {
-        const passwordHash = await argon2.hash(DEFAULT_ADMIN_PASSWORD, { type: argon2.argon2id });
+        const passwordHash = await argon2.hash(requiredDefaultAdminPassword(), { type: argon2.argon2id });
         const update = transaction.request();
         update.input("id", sql.NVarChar(36), existing.id);
         update.input("passwordHash", sql.NVarChar(255), passwordHash);
@@ -72,12 +79,12 @@ class SeedConflictError extends Error {
     }
 }
 
-const ENTITY_NAMES = ["categories", "products", "orders", "audits"];
+const ENTITY_NAMES = ["products", "orders", "audits"];
 
 function createSummary(normalized) {
     return {
-        inserted: { categories: 0, products: 0, orders: 0, audits: 0, total: 0 },
-        unchanged: { categories: 0, products: 0, orders: 0, audits: 0, total: 0 },
+        inserted: { products: 0, orders: 0, audits: 0, total: 0 },
+        unchanged: { products: 0, orders: 0, audits: 0, total: 0 },
         normalized: {
             records: normalized.normalizedRecords,
             fields: normalized.changes.length,
@@ -145,20 +152,6 @@ function bindList(request, prefix, type, values) {
     }).join(", ");
 }
 
-async function loadCategoryCandidates(transaction, categories) {
-    if (categories.length === 0) {
-        return [];
-    }
-    const request = transaction.request();
-    const ids = bindList(request, "categoryId", sql.Int, categories.map(({ id }) => id));
-    const slugs = bindList(request, "categorySlug", sql.NVarChar(160), categories.map(({ slug }) => slug));
-    const result = await request.query(`
-        SELECT [id], [name], [slug], [description], [created_at] AS [createdAt]
-        FROM [dbo].[categories] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [id] IN (${ids}) OR [slug] IN (${slugs});
-    `);
-    return result.recordset;
-}
 
 async function loadProductCandidates(transaction, products) {
     if (products.length === 0) {
@@ -169,7 +162,7 @@ async function loadProductCandidates(transaction, products) {
     const slugs = bindList(request, "productSlug", sql.NVarChar(240), products.map(({ slug }) => slug));
     const skus = bindList(request, "productSku", sql.NVarChar(100), products.map(({ sku }) => sku));
     const result = await request.query(`
-        SELECT [id], [category_id] AS [categoryId], [name], [slug], [sku], [stock], [price], [image],
+        SELECT [id], [brand], [device_type] AS [deviceType], [name], [slug], [sku], [stock], [price], [image],
                [description], [is_deleted] AS [isDeleted], [deleted_at] AS [deletedAt],
                [created_at] AS [createdAt], [updated_at] AS [updatedAt]
         FROM [dbo].[products] WITH (UPDLOCK, HOLDLOCK)
@@ -220,29 +213,6 @@ async function loadAuditCandidates(transaction, audits) {
     return result.recordset;
 }
 
-function classifyCategories(seedRecords, existingRecords, conflicts, summary) {
-    const byId = new Map(existingRecords.map((record) => [record.id, record]));
-    const bySlug = new Map(existingRecords.map((record) => [comparisonKey(record.slug), record]));
-    const inserts = [];
-
-    for (const seed of seedRecords) {
-        const slugOwner = bySlug.get(comparisonKey(seed.slug));
-        if (slugOwner && slugOwner.id !== seed.id) {
-            addConflict(conflicts, "category", seed.id, "slug", seed.slug, `owned by category:${slugOwner.id}`);
-        }
-        const existing = byId.get(seed.id);
-        if (!existing) {
-            inserts.push(seed);
-            continue;
-        }
-        compareFields(conflicts, "category", seed.id, seed, existing, ["name", "slug", "description"]);
-        if (!conflicts.some(({ identity }) => identity === `category:${seed.id}`)) {
-            summary.unchanged.categories += 1;
-        }
-    }
-    return inserts;
-}
-
 function classifyProducts(seedRecords, existingRecords, conflicts, summary) {
     const byId = new Map(existingRecords.map((record) => [record.id, record]));
     const bySlug = new Map(existingRecords.map((record) => [comparisonKey(record.slug), record]));
@@ -270,7 +240,7 @@ function classifyProducts(seedRecords, existingRecords, conflicts, summary) {
             isDeleted: Boolean(existing.isDeleted)
         };
         compareFields(conflicts, "product", seed.id, seed, canonical, [
-            "categoryId", "name", "slug", "sku", "stock", "price", "image", "description", "isDeleted", "deletedAt"
+            "brand", "deviceType", "name", "slug", "sku", "stock", "price", "image", "description", "isDeleted", "deletedAt"
         ]);
         if (!conflicts.some(({ identity }) => identity === `product:${seed.id}`)) {
             summary.unchanged.products += 1;
@@ -359,34 +329,13 @@ function classifyAudits(seedRecords, existingRecords, conflicts, summary) {
     return inserts;
 }
 
-async function insertCategories(transaction, records) {
-    for (const record of records) {
-        const request = transaction.request();
-        request.input("id", sql.Int, record.id);
-        request.input("name", sql.NVarChar(100), record.name);
-        request.input("slug", sql.NVarChar(160), record.slug);
-        request.input("description", sql.NVarChar(1000), record.description);
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        await request.query(`
-            SET IDENTITY_INSERT [dbo].[categories] ON;
-            BEGIN TRY
-                INSERT INTO [dbo].[categories] ([id], [name], [slug], [description], [created_at])
-                VALUES (@id, @name, @slug, @description, @createdAt);
-                SET IDENTITY_INSERT [dbo].[categories] OFF;
-            END TRY
-            BEGIN CATCH
-                SET IDENTITY_INSERT [dbo].[categories] OFF;
-                THROW;
-            END CATCH;
-        `);
-    }
-}
 
 async function insertProducts(transaction, records) {
     for (const record of records) {
         const request = transaction.request();
         request.input("id", sql.Int, record.id);
-        request.input("categoryId", sql.Int, record.categoryId);
+        request.input("brand", sql.NVarChar(16), record.brand);
+        request.input("deviceType", sql.NVarChar(16), record.deviceType);
         request.input("name", sql.NVarChar(200), record.name);
         request.input("slug", sql.NVarChar(240), record.slug);
         request.input("sku", sql.NVarChar(100), record.sku);
@@ -402,10 +351,10 @@ async function insertProducts(transaction, records) {
             SET IDENTITY_INSERT [dbo].[products] ON;
             BEGIN TRY
                 INSERT INTO [dbo].[products]
-                    ([id], [category_id], [name], [slug], [sku], [stock], [price], [image], [description],
+                    ([id], [brand], [device_type], [name], [slug], [sku], [stock], [price], [image], [description],
                      [is_deleted], [deleted_at], [created_at], [updated_at])
                 VALUES
-                    (@id, @categoryId, @name, @slug, @sku, @stock, @price, @image, @description,
+                    (@id, @brand, @deviceType, @name, @slug, @sku, @stock, @price, @image, @description,
                      @isDeleted, @deletedAt, @createdAt, @updatedAt);
                 SET IDENTITY_INSERT [dbo].[products] OFF;
             END TRY
@@ -498,13 +447,11 @@ async function seedDatabase() {
         transactionOpen = true;
         await ensureDefaultAdmin(transaction);
 
-        const existingCategories = await loadCategoryCandidates(transaction, normalized.categories);
         const existingProducts = await loadProductCandidates(transaction, normalized.products);
         const existingOrderData = await loadOrderCandidates(transaction, normalized.orders);
         const existingAudits = await loadAuditCandidates(transaction, normalized.audits);
 
         const conflicts = [];
-        const categoryInserts = classifyCategories(normalized.categories, existingCategories, conflicts, summary);
         const productInserts = classifyProducts(normalized.products, existingProducts, conflicts, summary);
         const orderInserts = classifyOrders(
             normalized.orders,
@@ -520,12 +467,10 @@ async function seedDatabase() {
             throw new SeedConflictError(conflicts, finalizeSummary(summary));
         }
 
-        await insertCategories(transaction, categoryInserts);
         await insertProducts(transaction, productInserts);
         await insertOrders(transaction, orderInserts);
         await insertAudits(transaction, auditInserts);
 
-        summary.inserted.categories = categoryInserts.length;
         summary.inserted.products = productInserts.length;
         summary.inserted.orders = orderInserts.length;
         summary.inserted.audits = auditInserts.length;

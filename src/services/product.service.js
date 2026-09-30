@@ -3,8 +3,10 @@
 
 const productRepository = require("../repositories/product.repository");
 
-const REQUIRED_FIELDS = ["name", "price", "stock", "categoryId", "sku", "image", "description"];
-const EDITABLE_FIELDS = ["name", "price", "stock", "categoryId", "image", "description"];
+const REQUIRED_FIELDS = ["name", "brand", "deviceType", "price", "stock", "sku", "image", "description"];
+const EDITABLE_FIELDS = ["name", "brand", "deviceType", "price", "stock", "image", "description"];
+const BRANDS = ["Apple", "Samsung", "MSI"];
+const DEVICE_TYPES = ["phone", "tablet", "laptop"];
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
 
 const createDomainError = (message, errors = [], statusCode = 400) => {
@@ -15,30 +17,7 @@ const createDomainError = (message, errors = [], statusCode = 400) => {
     return error;
 };
 
-const getCategoryService = () => require("./category.service");
-
-const findCategory = async (categoryId) => {
-    const categoryService = getCategoryService();
-    if (typeof categoryService.findCategoryById === "function") {
-        return await categoryService.findCategoryById(categoryId);
-    }
-    try {
-        return await categoryService.getCategoryById(categoryId);
-    } catch (error) {
-        return undefined;
-    }
-};
-
-const assertActiveCategory = async (categoryId) => {
-    const category = await findCategory(categoryId);
-    if (!category || category.isDeleted === true) {
-        throw createDomainError(
-            "Danh mục không tồn tại hoặc đã bị xóa.",
-            [{ field: "categoryId", message: "Danh mục phải đang hoạt động" }]
-        );
-    }
-    return category;
-};
+const isAllowed = (value, choices) => typeof value === "string" && choices.includes(value);
 
 const normalizeSku = (sku) => typeof sku === "string" ? sku.trim().toUpperCase() : "";
 
@@ -89,8 +68,12 @@ const validateProduct = (input, { requireSku = true } = {}) => {
         errors.push({ field: "stock", message: "Tồn kho phải là số nguyên không âm (≥ 0)" });
     }
 
-    if (typeof data.categoryId !== "number" || !Number.isInteger(data.categoryId) || data.categoryId <= 0) {
-        errors.push({ field: "categoryId", message: "categoryId phải là số nguyên dương" });
+    if (!isAllowed(data.brand, BRANDS)) {
+        errors.push({ field: "brand", message: "Thương hiệu phải là Apple, Samsung hoặc MSI" });
+    }
+
+    if (!isAllowed(data.deviceType, DEVICE_TYPES)) {
+        errors.push({ field: "deviceType", message: "Loại thiết bị phải là phone, tablet hoặc laptop" });
     }
 
     if (requireSku || !isBlank(data.sku)) {
@@ -148,12 +131,12 @@ const assertUniqueSku = async (sku, productId) => {
  */
 const getAllProducts = async (options = {}) => {
     if (options === true || options.includeDeleted === true || options.status === "all") {
-        return await productRepository.findWithFilter("", undefined, "all");
+        return await productRepository.findWithFilter("", "all");
     }
     if (options.status === "deleted") {
-        return await productRepository.findWithFilter("", undefined, "deleted");
+        return await productRepository.findWithFilter("", "deleted");
     }
-    return await productRepository.findWithFilter("", undefined, "active");
+    return await productRepository.findWithFilter("", "active");
 };
 
 /**
@@ -178,7 +161,7 @@ const findProducts = async (filters = {}) => {
             { field: "status", message: "status phải là all, active hoặc deleted" }
         ]);
     }
-    return await productRepository.findWithFilter(filters.q, filters.categoryId, status);
+    return await productRepository.findWithFilter(filters.q, status);
 };
 
 const getAdminProducts = async (filters = {}) => {
@@ -188,7 +171,6 @@ const getAdminProducts = async (filters = {}) => {
 
 const createProduct = async (input) => {
     const data = validateProduct(input);
-    await assertActiveCategory(data.categoryId);
     await assertUniqueSku(data.sku);
     const timestamp = new Date().toISOString();
     return await productRepository.createProduct({
@@ -210,7 +192,6 @@ const updateProduct = async (id, input = {}) => {
         if (Object.prototype.hasOwnProperty.call(input, field)) changes[field] = input[field];
     }
     const merged = validateProduct({ ...product, ...changes }, { requireSku: true });
-    await assertActiveCategory(merged.categoryId);
     await assertUniqueSku(product.sku, product.id);
 
     // Keep the original SKU regardless of a forged payload.
@@ -234,39 +215,23 @@ const softDeleteProduct = async (id) => {
 
 const deleteProduct = softDeleteProduct;
 
-const restoreProduct = async (id, options = {}) => {
+const restoreProduct = async (id) => {
     const product = await productRepository.getProductByID(id);
     if (!product) throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     if (product.isDeleted !== true) {
         throw createDomainError("Sản phẩm hiện không ở trạng thái đã xóa.");
     }
 
-    const newCategoryId = typeof options === "object" && options !== null
-        ? options.newCategoryId
-        : options;
-    const category = await findCategory(product.categoryId);
-    let categoryId = product.categoryId;
-    if (!category || category.isDeleted === true) {
-        if (newCategoryId === undefined || newCategoryId === null || newCategoryId === "") {
-            throw createDomainError(
-                "Danh mục gốc đã bị xóa. Vui lòng chọn danh mục mới cho sản phẩm trước khi khôi phục.",
-                [{ field: "newCategoryId", message: "Cần chọn danh mục mới hợp lệ" }]
-            );
-        }
-        categoryId = (await assertActiveCategory(newCategoryId)).id;
-    } else if (newCategoryId !== undefined && newCategoryId !== null && String(newCategoryId) !== "") {
-        categoryId = (await assertActiveCategory(newCategoryId)).id;
-    }
-
     await assertUniqueSku(product.sku, product.id);
-    return await productRepository.restoreProduct(id, { categoryId });
+    return await productRepository.restoreProduct(id);
 };
 
 const restore = restoreProduct;
 
 module.exports = {
     REQUIRED_FIELDS,
-    EDITABLE_FIELDS,
+    BRANDS,
+    DEVICE_TYPES,
     PRODUCT_STATUSES,
     normalizeSku,
     getAllProducts,
