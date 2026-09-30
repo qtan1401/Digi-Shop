@@ -14,3 +14,4 @@
 
 - Replaced the product image URL field with authenticated, CSRF-protected single-PNG uploads validated by extension, MIME type, signature, and a 5 MiB server-side limit; images are stored on configurable local storage and edit forms retain the current image unless replaced.
 - Added HTTP coverage for valid, malformed, oversized, unauthorized, CSRF-failing, replacement, and image-retention upload behavior, plus durable-volume and environment configuration guidance.
+- Added a confirmed local rollback-check command that executes the reset clear inside a transaction, always rolls back, and verifies all affected table counts are unchanged.

@@ -525,18 +525,53 @@ const countRecords = async (transaction, table) => {
     return Number(result.recordset[0].count);
 };
 
-async function resetDatabase({ environment = process.env, confirmation = environment.STORE_RESET_CONFIRMATION } = {}) {
+async function clearStore(transaction, password) {
+    for (const [table] of CLEAR_TABLES) {
+        if (table === "refresh_sessions") {
+            await transaction.request().query("UPDATE [dbo].[refresh_sessions] SET [replaced_by_id] = NULL;");
+        }
+        await transaction.request().query(`DELETE FROM [dbo].[${table}];`);
+    }
+    await ensureDefaultAdmin(transaction, password);
+    const after = {};
+    for (const [table] of CLEAR_TABLES) after[table] = await countRecords(transaction, table);
+    const adminResult = await transaction.request().query(`
+        SELECT [username], [role], [force_password_change]
+        FROM [dbo].[users];
+    `);
+    if (
+        adminResult.recordset.length !== 1
+        || adminResult.recordset[0].username !== DEFAULT_ADMIN_USERNAME
+        || adminResult.recordset[0].role !== "admin"
+        || !adminResult.recordset[0].force_password_change
+    ) {
+        throw new Error("Reset did not produce exactly one first-login administrator");
+    }
+    return after;
+}
+
+const requireLocalTarget = (environment) => {
     const config = readDatabaseConfig(environment);
     if (!/^localhost$/i.test(config.mssql.server) || config.mssql.port !== 1433 || config.databaseName !== "DigiShop") {
         throw new Error("Store reset is restricted to localhost:1433 database DigiShop");
     }
-    if (confirmation !== "RESET LOCAL DIGISHOP") {
-        throw new Error("Set STORE_RESET_CONFIRMATION=RESET LOCAL DIGISHOP to confirm the destructive reset");
-    }
+    return config;
+};
+
+const requireResetPassword = (environment) => {
     const password = environment.ADMIN_DEFAULT_PASSWORD;
     if (typeof password !== "string" || password.length < 16) {
         throw new Error("ADMIN_DEFAULT_PASSWORD must be freshly configured and at least 16 characters");
     }
+    return password;
+};
+
+async function resetDatabase({ environment = process.env, confirmation = environment.STORE_RESET_CONFIRMATION } = {}) {
+    const config = requireLocalTarget(environment);
+    if (confirmation !== "RESET LOCAL DIGISHOP") {
+        throw new Error("Set STORE_RESET_CONFIRMATION=RESET LOCAL DIGISHOP to confirm the destructive reset");
+    }
+    const password = requireResetPassword(environment);
 
     const pool = new sql.ConnectionPool({
         ...config.mssql,
@@ -551,28 +586,63 @@ async function resetDatabase({ environment = process.env, confirmation = environ
         await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
         transactionOpen = true;
         const before = {};
-        const after = {};
         for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
-        for (const [table] of CLEAR_TABLES) {
-            await transaction.request().query(`DELETE FROM [dbo].[${table}];`);
-        }
-        await ensureDefaultAdmin(transaction, password);
-        for (const [table] of CLEAR_TABLES) after[table] = await countRecords(transaction, table);
-        const adminResult = await transaction.request().query(`
-            SELECT [username], [role], [force_password_change]
-            FROM [dbo].[users];
-        `);
-        if (
-            adminResult.recordset.length !== 1
-            || adminResult.recordset[0].username !== DEFAULT_ADMIN_USERNAME
-            || adminResult.recordset[0].role !== "admin"
-            || !adminResult.recordset[0].force_password_change
-        ) {
-            throw new Error("Reset did not produce exactly one first-login administrator");
-        }
+        const after = await clearStore(transaction, password);
         await transaction.commit();
         transactionOpen = false;
         return { database: config.databaseName, server: `${config.mssql.server}:${config.mssql.port}`, before, after };
+    } catch (error) {
+        if (transactionOpen) {
+            try {
+                await transaction.rollback();
+            } catch {
+                // Preserve the triggering error.
+            }
+        }
+        throw error;
+    } finally {
+        if (pool.connected || pool.connecting) await pool.close();
+    }
+}
+
+async function verifyResetRollback({
+    environment = process.env,
+    confirmation = environment.STORE_RESET_ROLLBACK_CONFIRMATION
+} = {}) {
+    const config = requireLocalTarget(environment);
+    if (confirmation !== "ROLLBACK CHECK LOCAL DIGISHOP") {
+        throw new Error("Set STORE_RESET_ROLLBACK_CONFIRMATION=ROLLBACK CHECK LOCAL DIGISHOP to confirm rollback check");
+    }
+    const password = requireResetPassword(environment);
+    const pool = new sql.ConnectionPool({
+        ...config.mssql,
+        pool: { ...config.mssql.pool },
+        options: { ...config.mssql.options }
+    });
+    let transaction;
+    let transactionOpen = false;
+    try {
+        await pool.connect();
+        transaction = new sql.Transaction(pool);
+        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transactionOpen = true;
+        const before = {};
+        for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
+        await clearStore(transaction, password);
+        await transaction.rollback();
+        transactionOpen = false;
+        const after = {};
+        for (const [table] of CLEAR_TABLES) after[table] = await countRecords(pool, table);
+        if (CLEAR_TABLES.some(([table]) => before[table] !== after[table])) {
+            throw new Error("Rollback verification failed: one or more table counts changed");
+        }
+        return {
+            database: config.databaseName,
+            server: `${config.mssql.server}:${config.mssql.port}`,
+            outcome: "rolled back; no changes committed",
+            before,
+            after
+        };
     } catch (error) {
         if (transactionOpen) {
             try {
@@ -594,6 +664,17 @@ async function resetMain() {
         console.log(JSON.stringify(summary, null, 2));
     } catch (error) {
         console.error(`Store reset failed: ${error.message}`);
+        process.exitCode = 1;
+    }
+}
+
+async function rollbackCheckMain() {
+    try {
+        const summary = await verifyResetRollback();
+        console.log("Store reset rollback verified; no changes committed:");
+        console.log(JSON.stringify(summary, null, 2));
+    } catch (error) {
+        console.error(`Store reset rollback check failed: ${error.message}`);
         process.exitCode = 1;
     }
 }
@@ -621,9 +702,10 @@ async function main() {
 if (require.main === module) {
     const command = process.argv[2];
     if (command === "reset") resetMain();
+    else if (command === "rollback-check") rollbackCheckMain();
     else if (!command) main();
     else {
-        console.error("Usage: node prisma/seed.js [reset]");
+        console.error("Usage: node prisma/seed.js [reset|rollback-check]");
         process.exitCode = 2;
     }
 }
@@ -631,5 +713,6 @@ if (require.main === module) {
 module.exports = {
     SeedConflictError,
     seedDatabase,
-    resetDatabase
+    resetDatabase,
+    verifyResetRollback
 };
