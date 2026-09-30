@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const PNG = require("pngjs").PNG;
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -61,7 +62,24 @@ const productFields = {
     name: "iPhone 17", brand: "Apple", deviceType: "phone", sku: "IP17-256",
     price: "999", stock: "7", description: "A new phone"
 };
-const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/eWQAAAAASUVORK5CYII=", "base64");
+const createPng = (pixel) => PNG.sync.write({ width: 1, height: 1, data: Buffer.from(pixel) });
+const png = createPng([255, 0, 0, 255]);
+const crc32 = (buffer) => {
+    let crc = 0xffffffff;
+    for (const byte of buffer) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+};
+const createAncillaryChunk = (type, data) => {
+    const chunk = Buffer.alloc(data.length + 12);
+    chunk.writeUInt32BE(data.length, 0);
+    chunk.write(type, 4, 4, "ascii");
+    data.copy(chunk, 8);
+    chunk.writeUInt32BE(crc32(chunk.subarray(4, chunk.length - 4)), chunk.length - 4);
+    return chunk;
+};
 const upload = async ({ fields = productFields, file = png, filename = "phone.png", type = "image/png", headers = {} } = {}) => {
     const form = new FormData();
     for (const [key, value] of Object.entries(fields)) form.append(key, value);
@@ -106,13 +124,28 @@ test("administrator can upload one PNG and retrieve it at the persisted public i
     assert.deepEqual(Buffer.from(await publicImage.arrayBuffer()), png);
 });
 
-test("PNG images exactly 5 MiB are accepted", async () => {
-    const maximumSizePng = Buffer.alloc(5 * 1024 * 1024);
-    png.copy(maximumSizePng);
+test("PNG images exactly 5 MiB are accepted and served unchanged", async () => {
+    const data = Buffer.alloc(5 * 1024 * 1024 - png.length, 0x20);
+    Buffer.from("Padding\0").copy(data);
+    const chunk = createAncillaryChunk("tEXt", data);
+    const maximumSizePng = Buffer.concat([png.subarray(0, png.length - 12), chunk, png.subarray(png.length - 12)]);
+    assert.equal(maximumSizePng.length, 5 * 1024 * 1024);
     const response = await upload({ file: maximumSizePng });
     assert.equal(response.status, 201);
     const created = (await response.json()).data;
-    assert.equal((await fs.stat(path.join(storageDirectory, path.basename(created.image)))).size, 5 * 1024 * 1024);
+    const publicImage = await fetch(`${baseUrl}${created.image}`);
+    assert.equal(publicImage.status, 200);
+    assert.deepEqual(Buffer.from(await publicImage.arrayBuffer()), maximumSizePng);
+});
+
+test("signature-correct truncated PNG is rejected before product or file storage", async () => {
+    const malformedPng = Buffer.concat([png.subarray(0, 8), Buffer.from([0, 0, 0])]);
+    const response = await upload({ file: malformedPng });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.ok(result.errors?.some((error) => error.field === "image"));
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
 });
 
 test("non-PNG, malformed PNG, and oversized files return image field errors without storing bytes", async () => {
@@ -152,7 +185,7 @@ test("editing without a replacement retains the image and a replacement changes 
     assert.equal(retainedResponse.status, 200);
     assert.equal((await retainedResponse.json()).data.image, created.image);
 
-    const replacement = Buffer.concat([png, Buffer.from("replacement")]);
+    const replacement = createPng([0, 0, 255, 255]);
     const form = new FormData();
     for (const [key, value] of Object.entries({ ...productFields, name: "Replaced phone", price: "1000", stock: "8" })) form.append(key, value);
     form.append("image", new Blob([replacement], { type: "image/png" }), "replacement.png");

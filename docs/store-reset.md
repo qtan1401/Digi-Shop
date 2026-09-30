@@ -6,6 +6,8 @@
 
 The reset is a distinct destructive operation. It is not run by application startup, `db:seed`, `db:setup`, or database migrations. Back up and verify the intended local database before proceeding.
 
+For deployments applying the Product taxonomy migration, schedule the separately confirmed reset in a maintenance window: apply the migration first, keep the updated storefront unavailable, then run and verify `npm run db:reset:local` before exposing the updated storefront. The migration preserves legacy Product and category rows; those rows remain in the database until the explicit reset, which clears them along with the other records listed below.
+
 1. Configure the normal SQL Server environment and verify `DB_SERVER=localhost`, `DB_PORT=1433`, and `DB_NAME=DigiShop` (the command rejects all other targets).
 2. Set a fresh, private `ADMIN_DEFAULT_PASSWORD` value of at least 16 characters in the operator's environment. Do not commit it or reuse a disclosed password.
 3. Set `STORE_RESET_CONFIRMATION` to the exact text `RESET LOCAL DIGISHOP`.
