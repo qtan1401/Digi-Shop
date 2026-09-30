@@ -15,7 +15,6 @@ const productMutationInput = (req) => {
     return input;
 };
 
-
 const missingProductImage = () => ({
     statusCode: 400,
     message: "Ảnh sản phẩm là trường bắt buộc",
