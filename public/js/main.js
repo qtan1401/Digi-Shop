@@ -10,7 +10,9 @@ const catalogState = {
     appliedSearch: "",
     searchTimer: null,
     minPrice: "",
-    maxPrice: ""
+    maxPrice: "",
+    brands: new Set(),
+    deviceTypes: new Set()
 };
 const productNameCollator = new Intl.Collator("vi", { sensitivity: "accent", numeric: true });
 const formatPrice = (price) => price.toLocaleString("vi-VN") + "₫";
@@ -42,6 +44,8 @@ const getFilteredProducts = () => {
             const searchableText = normalizeCatalogText(`${product.name ?? ""} ${product.description ?? ""}`);
             if (!searchableText.includes(query)) return false;
         }
+        if (catalogState.brands.size && !catalogState.brands.has(product.brand)) return false;
+        if (catalogState.deviceTypes.size && !catalogState.deviceTypes.has(product.deviceType)) return false;
         const price = Number(product.price);
         return (minimum === null || price >= minimum) && (maximum === null || price <= maximum);
     });
@@ -139,6 +143,38 @@ const bindCatalogControls = () => {
     };
     document.getElementById("catalog-price-min").addEventListener("input", updatePriceFilter);
     document.getElementById("catalog-price-max").addEventListener("input", updatePriceFilter);
+
+    const trigger = document.getElementById("catalog-filter-trigger");
+    const popover = document.getElementById("catalog-filter-popover");
+    const closePopover = ({ returnFocus = false } = {}) => {
+        popover.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        if (returnFocus) trigger.focus();
+    };
+    const openPopover = () => {
+        popover.hidden = false;
+        trigger.setAttribute("aria-expanded", "true");
+        popover.querySelector("input")?.focus();
+    };
+    trigger.addEventListener("click", () => {
+        if (popover.hidden) openPopover();
+        else closePopover();
+    });
+    document.getElementById("catalog-filter-close").addEventListener("click", () => closePopover({ returnFocus: true }));
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !popover.hidden) closePopover({ returnFocus: true });
+    });
+    document.addEventListener("click", (event) => {
+        if (!popover.hidden && !event.target.closest(".catalog-filter-menu")) closePopover();
+    });
+    popover.addEventListener("change", (event) => {
+        if (event.target.name === "brand") {
+            event.target.checked ? catalogState.brands.add(event.target.value) : catalogState.brands.delete(event.target.value);
+        } else if (event.target.name === "deviceType") {
+            event.target.checked ? catalogState.deviceTypes.add(event.target.value) : catalogState.deviceTypes.delete(event.target.value);
+        }
+        renderProducts();
+    });
 };
 
 
@@ -168,6 +204,7 @@ const createProductCard = (product, canPurchase = true) => {
         </div>
         <div class="product-card__body">
             <h3 class="product-card__name">${product.name}</h3>
+            <p class="product-card__metadata">${product.brand} · ${product.deviceType}</p>
             <p class="product-card__description">${product.description}</p>
             <span class="product-card__price">${formatPrice(product.price)}</span>
             <div class="product-card__footer">${controls}</div>
