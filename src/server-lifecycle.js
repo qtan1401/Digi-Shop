@@ -4,6 +4,7 @@ const {
     connectPrisma,
     disconnectPrisma
 } = require("./db/prisma");
+const { startPaymentExpirationWorker } = require("./services/payment-expiration.worker");
 
 const SAFE_CODE = /^[A-Z0-9_-]+$/;
 
@@ -89,7 +90,7 @@ function closeServer(server) {
     });
 }
 
-function createShutdown({ server, disconnect = disconnectPrisma, logger = console, processRef = process }) {
+function createShutdown({ server, disconnect = disconnectPrisma, stopBackground = async () => {}, logger = console, processRef = process }) {
     let shutdownPromise;
 
     return function shutdown(signal) {
@@ -104,6 +105,12 @@ function createShutdown({ server, disconnect = disconnectPrisma, logger = consol
                 await closeServer(server);
             } catch (error) {
                 failure = error;
+            }
+
+            try {
+                await stopBackground();
+            } catch (error) {
+                failure ||= error;
             }
 
             try {
@@ -136,11 +143,18 @@ async function startServer({
     processRef = process
 }) {
     let server;
+    let stopBackground = async () => {};
 
     try {
         await connect();
+        stopBackground = startPaymentExpirationWorker({ logger });
         server = await listen(app, port);
     } catch (error) {
+        try {
+            await stopBackground();
+        } catch {
+            // Preserve the startup failure and continue cleanup.
+        }
         try {
             await disconnect();
         } catch {
@@ -149,7 +163,7 @@ async function startServer({
         throw error;
     }
 
-    const shutdown = createShutdown({ server, disconnect, logger, processRef });
+    const shutdown = createShutdown({ server, disconnect, stopBackground, logger, processRef });
     const removeSignalHandlers = () => {
         processRef.removeListener("SIGINT", signalHandlers.SIGINT);
         processRef.removeListener("SIGTERM", signalHandlers.SIGTERM);

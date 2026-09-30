@@ -1,34 +1,82 @@
 // ===== CATEGORY REPOSITORY =====
-// Tầng duy nhất được phép đọc/ghi trực tiếp vào categories[].
-// Repository chỉ truy xuất dữ liệu, không chứa validation nghiệp vụ.
+// Prisma persistence only; validation and deletion guards remain in services.
 
-const categories = require("../models/category.model");
-let nextCategoryId = categories.reduce((maxId, category) => Math.max(maxId, Number(category.id) || 0), 0) + 1;
+const { getPrismaClient } = require("../db/prisma");
 
-
-const getAllCategories = () => categories;
-
-const getCategoryById = (id) => categories.find((category) => category.id == id);
-
-const getCategoryBySlug = (slug) => categories.find((category) => category.slug === slug);
-
-const createCategory = (categoryData = {}) => {
-    const category = {
-        ...categoryData,
-        id: nextCategoryId++,
-        createdAt: categoryData.createdAt || new Date().toISOString()
-    };
-
-    categories.push(category);
-    return category;
+const toId = (id) => {
+    const value = Number(id);
+    return Number.isInteger(value) ? value : null;
 };
 
-const deleteCategory = (id) => {
-    const index = categories.findIndex((category) => category.id == id);
-    if (index === -1) return null;
+const toIsoString = (value) =>
+    value === undefined || value === null
+        ? value
+        : value instanceof Date
+            ? value.toISOString()
+            : new Date(value).toISOString();
 
-    const [deletedCategory] = categories.splice(index, 1);
-    return deletedCategory;
+const mapCategory = (row) => row
+    ? {
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        description: row.description,
+        createdAt: toIsoString(row.createdAt)
+    }
+    : undefined;
+
+const getAllCategories = async () => {
+    const rows = await getPrismaClient().category.findMany({
+        orderBy: { id: "asc" }
+    });
+    return rows.map(mapCategory);
+};
+
+const getCategoryById = async (id) => {
+    const categoryId = toId(id);
+    if (categoryId === null) return undefined;
+
+    const row = await getPrismaClient().category.findUnique({
+        where: { id: categoryId }
+    });
+    return mapCategory(row);
+};
+
+const getCategoryBySlug = async (slug) => {
+    if (typeof slug !== "string") return undefined;
+
+    const row = await getPrismaClient().category.findUnique({
+        where: { slug }
+    });
+    return mapCategory(row);
+};
+
+const createCategory = async (categoryData = {}) => {
+    const data = {
+        name: categoryData.name,
+        slug: categoryData.slug,
+        description: categoryData.description
+    };
+    if (categoryData.createdAt !== undefined) data.createdAt = categoryData.createdAt;
+
+    const row = await getPrismaClient().category.create({ data });
+    return mapCategory(row);
+};
+
+const deleteCategory = async (id) => {
+    const categoryId = toId(id);
+    if (categoryId === null) return null;
+
+    const prisma = getPrismaClient();
+    const row = await prisma.category.findUnique({
+        where: { id: categoryId }
+    });
+    if (!row) return null;
+
+    await prisma.category.delete({
+        where: { id: categoryId }
+    });
+    return mapCategory(row);
 };
 
 module.exports = {

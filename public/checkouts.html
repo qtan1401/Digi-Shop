@@ -6,35 +6,34 @@
     <meta name="description" content="Thanh toán sản phẩm — NodeShop">
     <title>Thanh toán | NodeShop</title>
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/checkout-auth.css">
 </head>
 <body>
-    <!-- NAVBAR -->
-    <nav class="navbar">
+    <nav class="navbar" aria-label="Điều hướng chính">
         <a href="/" class="navbar-brand">NodeShop</a>
         <ul class="navbar-links">
             <li><a href="/">Trang chủ</a></li>
             <li><a href="/#products">Sản phẩm</a></li>
             <li>
-                <a href="/cart.html" class="cart-nav-link">
+                <a href="/cart.html" class="cart-nav-link" aria-label="Giỏ hàng">
                     🛒 <span class="cart-badge cart-badge--hidden" id="cart-badge">0</span>
                 </a>
             </li>
         </ul>
+        <div data-auth-nav aria-live="polite"></div>
     </nav>
 
-    <!-- CHECKOUT -->
     <section class="payment-container">
-        <h1>Thanh toán</h1>
+        <h1 tabindex="-1">Thanh toán</h1>
         <div id="payment-info">
-            <div class="loading"><div class="loading-spinner"></div></div>
+            <div class="loading" role="status" aria-live="polite"><div class="loading-spinner"></div></div>
         </div>
     </section>
 
-    <!-- FOOTER -->
-    <footer class="footer">
-        © 2026 NodeShop — Dự án học Node.js MVC
-    </footer>
+    <footer class="footer">© 2026 NodeShop — Dự án học Node.js MVC</footer>
 
+    <script src="/js/checkout-state.js"></script>
+    <script src="/js/auth.js"></script>
     <script src="/js/cart.js"></script>
     <script src="/js/payment.js"></script>
 </body>

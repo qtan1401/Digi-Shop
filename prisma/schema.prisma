@@ -171,6 +171,7 @@ model Order {
   updatedAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
   user            User?       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   items           OrderItem[]
+  paymentAttempts PaymentAttempt[]
 
   @@index([userId, createdAt], map: "orders_user_id_created_at_idx")
   @@map("orders")
@@ -189,6 +190,26 @@ model OrderItem {
   product       Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@map("order_items")
+}
+model PaymentAttempt {
+  id                    String    @id @db.NVarChar(64)
+  orderId               String    @map("order_id") @db.NVarChar(64)
+  provider              String    @db.NVarChar(16)
+  amount                Decimal   @db.Decimal(18, 2)
+  status                String    @db.NVarChar(32)
+  providerTransactionId String?   @map("provider_transaction_id") @db.NVarChar(100)
+  qrPayload             String?   @map("qr_payload") @db.NVarChar(2000)
+  paymentUrl            String?   @map("payment_url") @db.NVarChar(2048)
+  expiresAt             DateTime  @map("expires_at") @db.DateTime2
+  inventoryReleasedAt   DateTime? @map("inventory_released_at") @db.DateTime2
+  completedAt           DateTime? @map("completed_at") @db.DateTime2
+  createdAt             DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.DateTime2
+  order                 Order     @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+
+  @@index([orderId, createdAt], map: "payment_attempts_order_id_created_at_idx")
+  @@index([status, expiresAt], map: "payment_attempts_status_expires_at_idx")
+  @@map("payment_attempts")
 }
 
 model AuditLog {

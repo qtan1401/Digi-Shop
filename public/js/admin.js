@@ -2,7 +2,6 @@
 (() => {
     "use strict";
 
-    const ADMIN_KEY = "dev-secret";
     const state = {
         status: "active",
         q: "",
@@ -33,18 +32,16 @@
     const formatDateTime = (value) => value ? new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—";
 
     const api = async (url, options = {}) => {
-        const headers = { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
-        if (url.startsWith("/api/admin")) headers["x-admin-key"] = ADMIN_KEY;
-        const response = await fetch(url, { ...options, headers });
-        let payload = {};
-        try { payload = await response.json(); } catch (_) { /* Keep the HTTP error below useful. */ }
-        if (!response.ok || payload.success === false) {
-            const error = new Error(payload.message || `Yêu cầu thất bại (${response.status})`);
-            error.status = response.status;
-            error.details = Array.isArray(payload.errors) ? payload.errors : [];
+        if (!window.DigiAuth || typeof window.DigiAuth.api !== "function") throw new Error("Phiên xác thực chưa sẵn sàng.");
+        try {
+            return await window.DigiAuth.api(url, options);
+        } catch (error) {
+            if (error.status === 401 || error.status === 403) {
+                const redirect = error.code === "PASSWORD_CHANGE_REQUIRED" ? "/profile.html?force=1" : `/403.html?context=admin`;
+                window.location.assign(redirect);
+            }
             throw error;
         }
-        return payload;
     };
 
     const showToast = (message, type = "success") => {
@@ -305,7 +302,7 @@
         if (!state.editingId) body.sku = values.sku;
         try {
             const endpoint = state.editingId ? `/api/admin/products/${encodeURIComponent(state.editingId)}` : "/api/admin/products";
-            await api(endpoint, { method: state.editingId ? "PUT" : "POST", body: JSON.stringify(body) });
+            await api(endpoint, { method: state.editingId ? "PUT" : "POST", body });
             closeModal("product-modal");
             showToast(state.editingId ? "Cập nhật sản phẩm thành công." : "Thêm sản phẩm thành công.");
             await Promise.all([loadProducts(), loadCategories(), renderCounts(), loadAuditLogs()]);
@@ -332,7 +329,7 @@
         const button = $("#category-submit-btn");
         setSubmitBusy(button, true, "Lưu danh mục");
         try {
-            await api("/api/admin/categories", { method: "POST", body: JSON.stringify({ name, description: $("#category-description").value.trim() }) });
+            await api("/api/admin/categories", { method: "POST", body: { name, description: $("#category-description").value.trim() } });
             closeModal("category-modal");
             form.reset();
             showToast("Thêm danh mục thành công.");
@@ -372,7 +369,7 @@
         const product = state.products.find((item) => String(item.id) === String(id));
         showConfirm("Khôi phục sản phẩm?", `“${product ? product.name : "Sản phẩm này"}” sẽ xuất hiện lại trên cửa hàng.`, async () => {
             try {
-                await api(`/api/admin/products/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({}) });
+                await api(`/api/admin/products/${encodeURIComponent(id)}/restore`, { method: "POST", body: {} });
                 closeModal("confirm-modal");
                 showToast("Khôi phục sản phẩm thành công.");
                 await Promise.all([loadProducts(), loadCategories(), renderCounts(), loadAuditLogs()]);
@@ -385,7 +382,7 @@
                             $("#restore-category").classList.add("input-error");
                             return;
                         }
-                        await api(`/api/admin/products/${encodeURIComponent(id)}/restore`, { method: "POST", body: JSON.stringify({ newCategoryId: Number(categoryId) }) });
+                        await api(`/api/admin/products/${encodeURIComponent(id)}/restore`, { method: "POST", body: { newCategoryId: Number(categoryId) } });
                         closeModal("confirm-modal");
                         showToast("Khôi phục sản phẩm thành công.");
                         await Promise.all([loadProducts(), loadCategories(), renderCounts(), loadAuditLogs()]);
@@ -421,6 +418,48 @@
         $("#category-filter").value = "";
         $("#clear-filters-btn").hidden = true;
         loadProducts();
+    };
+
+    const initAdminAccountForm = () => {
+        const form = $("#admin-account-form");
+        if (!form) return;
+        const feedback = $("#admin-account-feedback");
+        const setAccountFeedback = (message, type = "success") => {
+            feedback.textContent = message || "";
+            feedback.className = `admin-feedback admin-feedback--${type}`;
+            feedback.hidden = !message;
+        };
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            $$(".field-error", form).forEach((element) => { element.textContent = ""; });
+            $$("input", form).forEach((input) => input.setAttribute("aria-invalid", "false"));
+            const username = form.username.value.trim();
+            const temporaryPassword = form.temporaryPassword.value;
+            let invalid = false;
+            if (!/^[A-Za-z0-9_.-]{3,64}$/.test(username)) {
+                $("[data-account-error=\"username\"]", form).textContent = "Username dài 3–64 ký tự, chỉ dùng chữ, số, ., _, -.";
+                form.username.setAttribute("aria-invalid", "true");
+                invalid = true;
+            }
+            if (temporaryPassword.length < 6) {
+                $("[data-account-error=\"temporaryPassword\"]", form).textContent = "Mật khẩu tạm phải có ít nhất 6 ký tự.";
+                form.temporaryPassword.setAttribute("aria-invalid", "true");
+                invalid = true;
+            }
+            if (invalid) { form.querySelector('[aria-invalid="true"]')?.focus(); return; }
+            const button = form.querySelector("button[type=submit]");
+            button.disabled = true;
+            const original = button.textContent;
+            button.textContent = "Đang tạo…";
+            try {
+                const payload = await api("/api/admin/accounts", { method: "POST", body: { username, temporaryPassword } });
+                form.reset();
+                setAccountFeedback(`Đã tạo Admin ${payload.data?.username || username}. Tài khoản này phải đổi mật khẩu khi đăng nhập lần đầu.`, "success");
+            } catch (error) {
+                setAccountFeedback(error.code === "USERNAME_TAKEN" ? "Username đã được sử dụng." : error.message, "error");
+                form.temporaryPassword.value = "";
+            } finally { button.disabled = false; button.textContent = original; }
+        });
     };
 
     document.addEventListener("click", (event) => {
@@ -478,5 +517,14 @@
         if (event.key === "Escape") $$(".modal-backdrop:not([hidden])").forEach((modal) => closeModal(modal.id));
     });
 
-    refreshAll();
+    const bootAdmin = async () => {
+        const current = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false }));
+        if (!current.authenticated) { window.location.assign("/403.html?context=admin"); return; }
+        if (current.user?.role !== "admin") { window.location.assign("/403.html?context=admin"); return; }
+        if (current.user.forcePasswordChange) { window.location.assign("/profile.html?force=1"); return; }
+        initAdminAccountForm();
+        $(".admin-shell").hidden = false;
+        refreshAll();
+    };
+    bootAdmin();
 })();

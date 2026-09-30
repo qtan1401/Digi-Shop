@@ -1,160 +1,197 @@
 // ===== PRODUCT REPOSITORY =====
-// Đây là tầng Repository - chịu trách nhiệm truy xuất dữ liệu từ Model (Database)
-// Repository KHÔNG xử lý logic, chỉ đọc/ghi dữ liệu
+// Prisma persistence only; product validation and lifecycle rules remain in services.
 
-const products = require("../models/product.model");
+const { getPrismaClient } = require("../db/prisma");
 
-/**
- * Lấy tất cả sản phẩm từ database.
- *
- * Repository trả về bản ghi gốc để giữ tương thích với các luồng tồn kho cũ;
- * việc lọc sản phẩm đã xóa thuộc về service/filter dành cho từng boundary.
- * @returns {Array} Mảng tất cả sản phẩm
- */
-const getAllProducts = () => products;
+const toId = (id) => {
+    const value = Number(id);
+    return Number.isInteger(value) ? value : null;
+};
 
-/**
- * Tìm sản phẩm theo id.
- * @param {number|string} id
- * @returns {Object|undefined}
- */
-const getProductByID = (id) => products.find((product) => product.id == id);
+const toIsoString = (value) =>
+    value === undefined || value === null
+        ? value
+        : value instanceof Date
+            ? value.toISOString()
+            : new Date(value).toISOString();
 
-/**
- * Tìm sản phẩm theo id (tên camelCase dùng bởi các domain mới).
- * @param {number|string} id
- * @returns {Object|undefined}
- */
-const findById = (id) => getProductByID(id);
+const toDate = (value) =>
+    value === undefined || value === null || value instanceof Date
+        ? value
+        : new Date(value);
 
-/**
- * Tìm sản phẩm theo SKU đã chuẩn hóa.
- * SKU được kiểm tra trên toàn bộ lịch sử, bao gồm cả sản phẩm đã xóa mềm.
- * @param {string} sku
- * @returns {Object|undefined}
- */
-const findBySku = (sku) => {
+const toNumber = (value) =>
+    value === undefined || value === null ? value : Number(value);
+
+const mapProduct = (row) => row
+    ? {
+        id: row.id,
+        categoryId: row.categoryId,
+        name: row.name,
+        slug: row.slug,
+        sku: row.sku,
+        stock: row.stock,
+        price: toNumber(row.price),
+        image: row.image,
+        description: row.description,
+        isDeleted: row.isDeleted,
+        deletedAt: toIsoString(row.deletedAt),
+        createdAt: toIsoString(row.createdAt),
+        updatedAt: toIsoString(row.updatedAt)
+    }
+    : undefined;
+
+const getAllProducts = async () => {
+    const rows = await getPrismaClient().product.findMany({
+        orderBy: { id: "asc" }
+    });
+    return rows.map(mapProduct);
+};
+
+const getProductByID = async (id) => {
+    const productId = toId(id);
+    if (productId === null) return undefined;
+
+    const row = await getPrismaClient().product.findUnique({
+        where: { id: productId }
+    });
+    return mapProduct(row);
+};
+
+const findById = async (id) => getProductByID(id);
+
+const findBySku = async (sku) => {
     if (typeof sku !== "string") return undefined;
     const normalizedSku = sku.trim().toUpperCase();
-    return products.find((product) =>
-        typeof product.sku === "string" && product.sku.trim().toUpperCase() === normalizedSku
-    );
+    const row = await getPrismaClient().product.findUnique({
+        where: { sku: normalizedSku }
+    });
+    return mapProduct(row);
 };
 
-const isSkuTaken = (sku) => Boolean(findBySku(sku));
-const checkSku = (sku) => isSkuTaken(sku);
+const isSkuTaken = async (sku) => Boolean(await findBySku(sku));
+const checkSku = async (sku) => isSkuTaken(sku);
 
-/**
- * Cập nhật số lượng tồn kho của một sản phẩm
- * @param {number|string} id
- * @param {number} newStock
- * @returns {Object|null}
- */
-const updateStock = (id, newStock) => {
-    const product = getProductByID(id);
-    if (!product) return null;
-    product.stock = newStock;
-    product.updatedAt = new Date().toISOString();
-    return product;
+const updateAndRead = async (id, data) => {
+    const productId = toId(id);
+    if (productId === null) return null;
+
+    const prisma = getPrismaClient();
+    const result = await prisma.product.updateMany({
+        where: { id: productId },
+        data
+    });
+    if (result.count === 0) return null;
+
+    const row = await prisma.product.findUnique({
+        where: { id: productId }
+    });
+    return mapProduct(row);
 };
 
-/**
- * Giảm số lượng tồn kho khi có đơn hàng.
- * @param {number|string} id
- * @param {number} quantity
- * @returns {Object|null}
- */
-const decreaseStock = (id, quantity) => {
-    const product = getProductByID(id);
-    if (!product) return null;
-    product.stock -= quantity;
-    product.updatedAt = new Date().toISOString();
-    return product;
+const updateStock = async (id, newStock) =>
+    updateAndRead(id, { stock: newStock });
+
+const decreaseStock = async (id, quantity) =>
+    updateAndRead(id, { stock: { decrement: quantity } });
+
+const createProduct = async (productData = {}) => {
+    const data = {
+        categoryId: productData.categoryId,
+        name: productData.name,
+        slug: productData.slug,
+        sku: productData.sku,
+        stock: productData.stock,
+        price: productData.price,
+        image: productData.image,
+        description: productData.description,
+        isDeleted: productData.isDeleted
+    };
+    if (productData.deletedAt !== undefined) data.deletedAt = toDate(productData.deletedAt);
+    if (productData.createdAt !== undefined) data.createdAt = toDate(productData.createdAt);
+    if (productData.updatedAt !== undefined) data.updatedAt = toDate(productData.updatedAt);
+
+    const row = await getPrismaClient().product.create({ data });
+    return mapProduct(row);
 };
 
-const nextId = () => products.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0) + 1;
+const updateProduct = async (id, changes = {}) => {
+    const data = {};
+    for (const field of [
+        "categoryId",
+        "name",
+        "slug",
+        "sku",
+        "stock",
+        "price",
+        "image",
+        "description",
+        "isDeleted"
+    ]) {
+        if (Object.prototype.hasOwnProperty.call(changes, field)) data[field] = changes[field];
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, "deletedAt")) {
+        data.deletedAt = toDate(changes.deletedAt);
+    }
 
-/**
- * Lưu một sản phẩm mới. Validation/normalization thuộc service.
- * @param {Object} productData
- * @returns {Object}
- */
-const createProduct = (productData) => {
-    const product = { ...productData, id: nextId() };
-    products.push(product);
-    return product;
+    return updateAndRead(id, data);
 };
 
-/**
- * Cập nhật các field đã được service cho phép.
- * @param {number|string} id
- * @param {Object} changes
- * @returns {Object|null}
- */
-const updateProduct = (id, changes) => {
-    const product = getProductByID(id);
-    if (!product) return null;
-    Object.assign(product, changes, { updatedAt: new Date().toISOString() });
-    return product;
+const softDelete = async (id) => {
+    const timestamp = new Date();
+    return updateAndRead(id, {
+        isDeleted: true,
+        deletedAt: timestamp,
+        updatedAt: timestamp
+    });
 };
 
-/**
- * Đánh dấu xóa mềm, tuyệt đối không loại bỏ record khỏi mảng.
- * @param {number|string} id
- * @returns {Object|null}
- */
-const softDelete = (id) => {
-    const product = getProductByID(id);
-    if (!product) return null;
-    product.isDeleted = true;
-    product.deletedAt = new Date().toISOString();
-    product.updatedAt = product.deletedAt;
-    return product;
-};
+const deleteProduct = async (id) => softDelete(id);
 
-const deleteProduct = (id) => softDelete(id);
-
-/**
- * Khôi phục record đã xóa. Service chịu trách nhiệm kiểm tra category.
- * @param {number|string} id
- * @param {Object} changes
- * @returns {Object|null}
- */
-const restore = (id, changes = {}) => {
-    const product = getProductByID(id);
-    if (!product) return null;
-    Object.assign(product, changes, {
+const restore = async (id, changes = {}) => {
+    const data = {
         isDeleted: false,
         deletedAt: null,
-        updatedAt: new Date().toISOString()
-    });
-    return product;
+        updatedAt: new Date()
+    };
+    if (Object.prototype.hasOwnProperty.call(changes, "categoryId")) {
+        data.categoryId = changes.categoryId;
+    }
+
+    return updateAndRead(id, data);
 };
 
-const restoreProduct = (id, changes = {}) => restore(id, changes);
+const restoreProduct = async (id, changes = {}) => restore(id, changes);
 
-/**
- * Lọc sản phẩm dành cho admin. Mặc định chỉ trả active.
- * @param {string} q
- * @param {number|string} categoryId
- * @param {"all"|"active"|"deleted"} status
- * @returns {Array}
- */
-const findWithFilter = (q = "", categoryId, status = "active") => {
-    const query = typeof q === "string" ? q.trim().toLowerCase() : "";
-    return products.filter((product) => {
-        const deleted = product.isDeleted === true;
-        if (status === "active" && deleted) return false;
-        if (status === "deleted" && !deleted) return false;
-        if (categoryId !== undefined && categoryId !== null && String(categoryId) !== "" &&
-            product.categoryId != categoryId) return false;
-        if (query && !String(product.name || "").toLowerCase().includes(query) &&
-            !String(product.sku || "").toLowerCase().includes(query)) return false;
-        return true;
+const findWithFilter = async (q = "", categoryId, status = "active") => {
+    const where = {};
+    if (status === "active") where.isDeleted = false;
+    if (status === "deleted") where.isDeleted = true;
+
+    const hasCategoryFilter =
+        categoryId !== undefined && categoryId !== null && String(categoryId) !== "";
+    if (hasCategoryFilter) {
+        const parsedCategoryId = toId(categoryId);
+        if (parsedCategoryId === null) return [];
+        where.categoryId = parsedCategoryId;
+    }
+
+    const query = typeof q === "string" ? q.trim() : "";
+    if (query) {
+        where.OR = [
+            { name: { contains: query } },
+            { sku: { contains: query } }
+        ];
+    }
+
+    const rows = await getPrismaClient().product.findMany({
+        where,
+        orderBy: { id: "asc" }
     });
+    return rows.map(mapProduct);
 };
 
-const getProductsByFilter = (filters = {}) =>
+const getProductsByFilter = async (filters = {}) =>
     findWithFilter(filters.q, filters.categoryId, filters.status || "active");
 
 module.exports = {

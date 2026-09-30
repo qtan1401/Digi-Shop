@@ -17,20 +17,26 @@ const sendError = (res, error) => {
     return res.status(errorStatus(error)).json(body);
 };
 
-const getAll = (req, res) => {
-    const categories = categoryService.getAllCategories().map((category) => ({
-        ...category,
-        productCount: productRepository.getAllProducts().reduce((count, product) =>
-            product && product.isDeleted === false && String(product.categoryId) === String(category.id)
-                ? count + 1
-                : count, 0)
-    }));
-    return res.json({ success: true, data: categories });
+const getAll = async (req, res) => {
+    try {
+        const categories = await categoryService.getAllCategories();
+        const products = await productRepository.getAllProducts();
+        const data = categories.map((category) => ({
+            ...category,
+            productCount: products.reduce((count, product) =>
+                product && product.isDeleted === false && String(product.categoryId) === String(category.id)
+                    ? count + 1
+                    : count, 0)
+        }));
+        return res.json({ success: true, data });
+    } catch (error) {
+        return sendError(res, error);
+    }
 };
 
-const create = (req, res) => {
+const create = async (req, res) => {
     try {
-        const category = adminService.createCategory(req.body || {}, req.user && req.user.role);
+        const category = await adminService.createCategory(req.body || {}, req.user && req.user.role);
         return res.status(201).json({
             success: true,
             message: "Thêm danh mục thành công",
@@ -41,9 +47,9 @@ const create = (req, res) => {
     }
 };
 
-const remove = (req, res) => {
+const remove = async (req, res) => {
     try {
-        adminService.deleteCategory(req.params.id, req.user && req.user.role);
+        await adminService.deleteCategory(req.params.id, req.user && req.user.role);
         return res.json({ success: true, message: "Xóa danh mục thành công" });
     } catch (error) {
         return sendError(res, error);

@@ -4,13 +4,15 @@
 //   processCheckout()      — Mua ngay 1 sản phẩm (giữ tương thích với flow cũ)
 //   processCartCheckout()  — Thanh toán toàn bộ giỏ hàng (nhiều sản phẩm)
 
+const crypto = require("node:crypto");
 const productRepository = require("../repositories/product.repository");
-const orderRepository = require("../repositories/order.repository");
+const checkoutRepository = require("../repositories/checkout.repository");
+const paymentService = require("./payment.service");
 const { calculateShipping } = require("./cart.service");
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
-const VALID_PAYMENT_METHODS = ["COD", "BANKING"];
+const VALID_PAYMENT_METHODS = ["COD", "BANKING", "MOMO", "VNPAY"];
 
 const validateCustomer = ({ customerName, customerPhone, customerAddress }) => {
     const errors = [];
@@ -39,14 +41,46 @@ const formatPaymentMethod = (method) => {
     if (!VALID_PAYMENT_METHODS.includes(upper)) {
         throw new Error("Phương thức thanh toán không hợp lệ");
     }
+    if (upper === "MOMO" || upper === "VNPAY") return upper;
     return upper === "BANKING" ? "Chuyển khoản ngân hàng" : "Thanh toán khi nhận hàng (COD)";
 };
 
-const generateOrderId = () => "ORD-" + Date.now();
+const buildPaymentAttempt = (method, orderId, amount) => {
+    if (method !== "MOMO" && method !== "VNPAY") return undefined;
+    if (!Number.isSafeInteger(amount) || amount < 1) {
+        throw new Error("Số tiền thanh toán không hợp lệ");
+    }
+    return {
+        id: crypto.randomBytes(16).toString("hex"),
+        orderId,
+        provider: method,
+        amount,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+    };
+};
+const initializePaymentOrRetainOrder = async (order, attempt, userId, request) => {
+    try {
+        return await paymentService.initializeAttempt(order, attempt, request);
+    } catch {
+        return paymentService.getAttempt(attempt.id, { id: userId });
+    }
+};
+
+const generateOrderId = () => {
+    const ts = Date.now().toString(36).toUpperCase();
+    const rnd = Math.random().toString(36).slice(2, 7).toUpperCase();
+    return `ORD-${ts}-${rnd}`;
+};
 
 const now = () => new Date().toISOString();
 const discontinuedProductMessage = (product) =>
     `Sản phẩm '${product.name}' đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.`;
+const requireUserId = (userId) => {
+    if (typeof userId !== "string" || userId.trim().length === 0) {
+        throw new Error("Authentication is required");
+    }
+    return userId;
+};
 
 // ─── Mua ngay 1 sản phẩm ─────────────────────────────────────────────────────
 
@@ -57,7 +91,7 @@ const discontinuedProductMessage = (product) =>
 const checkProduct = async (productId, quantity = 1) => {
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua phải là số nguyên lớn hơn 0");
-    const product = productRepository.getProductByID(productId);
+    const product = await productRepository.getProductByID(productId);
     if (!product) throw new Error("Không tìm thấy sản phẩm trong hệ thống");
     if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
     if (product.stock <= 0) throw new Error("Sản phẩm hiện đã hết hàng");
@@ -73,7 +107,8 @@ const checkProduct = async (productId, quantity = 1) => {
 /**
  * Thanh toán 1 sản phẩm (Mua ngay) — giữ nguyên tương thích
  */
-const processCheckout = async (checkoutData) => {
+const processCheckout = async (userId, checkoutData, request) => {
+    userId = requireUserId(userId);
     const { productId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" } = checkoutData;
 
     if (!productId) throw new Error("Vui lòng cung cấp ID sản phẩm.");
@@ -87,60 +122,83 @@ const processCheckout = async (checkoutData) => {
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm.");
 
-    const product = productRepository.getProductByID(productId);
-    if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
-    if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-    if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
-    if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
+    const normalizedProductId = Number(productId);
+    if (!Number.isInteger(normalizedProductId)) {
+        throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+    }
 
-    // Tính tiền
-    const subtotal = product.price * qty;
-    const shippingFee = calculateShipping(subtotal);
-    const totalPrice = subtotal + shippingFee;
+    try {
+        const result = await checkoutRepository.checkout(
+            [{ productId: normalizedProductId, quantity: qty }],
+            userId,
+            ([{ product }]) => {
+                if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+                if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
+                if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
+                if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
 
-    // Trừ kho
-    productRepository.decreaseStock(productId, qty);
+                const subtotal = product.price * qty;
+                const shippingFee = calculateShipping(subtotal);
+                const timestamp = now();
+                const orderData = {
+                    id: generateOrderId(),
+                    items: [{
+                        productId: product.id,
+                        name: product.name,
+                        image: product.image,
+                        unitPrice: product.price,
+                        quantity: qty,
+                        lineTotal: subtotal
+                    }],
+                    subtotal,
+                    shippingFee,
+                    discount: 0,
+                    totalPrice: subtotal + shippingFee,
+                    customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
+                    paymentMethod: formattedPayment,
+                    orderStatus: "PENDING",
+                    paymentStatus: "UNPAID",
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                };
+                orderData.paymentAttempt = buildPaymentAttempt(formattedPayment, orderData.id, orderData.totalPrice);
+                return orderData;
+            }
+        );
 
-    // Tạo đơn — dùng cấu trúc items[] thống nhất với flow checkout giỏ hàng
-    const order = {
-        id: generateOrderId(),
-        items: [{
-            productId: product.id,
-            name: product.name,
-            image: product.image,
-            unitPrice: product.price,
-            quantity: qty,
-            lineTotal: subtotal
-        }],
-        subtotal,
-        shippingFee,
-        discount: 0,
-        totalPrice,
-        customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
-        paymentMethod: formattedPayment,
-        orderStatus: "PENDING",
-        paymentStatus: "UNPAID",
-        createdAt: now(),
-        updatedAt: now()
-    };
-
-    const savedOrder = orderRepository.createOrder(order);
-    return { order: savedOrder, remainingStock: product.stock };
+        let order = result.order;
+        if (result.paymentAttempt) {
+            order = {
+                ...order,
+                paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, userId, request)
+            };
+        }
+        return {
+            order,
+            remainingStock: result.remainingStockByProductId[normalizedProductId]
+        };
+    } catch (error) {
+        if (!(error instanceof checkoutRepository.CheckoutStockConflictError)) throw error;
+        const product = error.product;
+        if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+        if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
+        if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
+        throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
+    }
 };
 
-// ─── Thanh toán giỏ hàng (nhiều sản phẩm) ────────────────────────────────────
+// ─── Thanh toán giỏ hàng (nhiều sản phẩm) ─────────────────────────────────────
 
 /**
  * Checkout toàn bộ giỏ hàng
- * @param {Object} param
- * @param {Array<{productId, quantity}>} param.items
- * @param {string} param.customerName
- * @param {string} param.customerPhone
- * @param {string} param.customerAddress
- * @param {string} param.paymentMethod
- * @param {string} param.note
+ *
+ * Body: { items: [{ productId, quantity }], customerName, customerPhone,
+ *         customerAddress, paymentMethod, note }
+ *
+ * Returns: { order } — cùng format với processCheckout()
  */
-const processCartCheckout = async ({ items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" }) => {
+const processCartCheckout = async (userId, { items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" }, request) => {
+    userId = requireUserId(userId);
     if (!Array.isArray(items) || items.length === 0) {
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
@@ -158,56 +216,71 @@ const processCartCheckout = async ({ items, customerName, customerPhone, custome
         if (isNaN(qty) || qty <= 0) {
             throw new Error(`Số lượng không hợp lệ cho sản phẩm ID ${productId}.`);
         }
-        qtyMap.set(productId, (qtyMap.get(productId) || 0) + qty);
+
+        const normalizedProductId = Number(productId);
+        if (!Number.isInteger(normalizedProductId)) {
+            throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+        }
+        qtyMap.set(normalizedProductId, (qtyMap.get(normalizedProductId) || 0) + qty);
     }
 
-    // Validate stock trên TỔNG quantity
-    const validatedItems = [];
-    for (const [productId, totalQty] of qtyMap) {
-        const product = productRepository.getProductByID(productId);
-        if (!product) throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+    const normalizedItems = [...qtyMap.entries()]
+        .map(([productId, quantity]) => ({ productId, quantity }));
+
+    try {
+        const result = await checkoutRepository.checkout(normalizedItems, userId, (lockedItems) => {
+            const validatedItems = lockedItems.map(({ productId, quantity: qty, product }) => {
+                if (!product) throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+                if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
+                if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
+                if (product.stock < qty) throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${qty}).`);
+                return { product, qty };
+            });
+
+            const orderItems = validatedItems.map(({ product, qty }) => ({
+                productId: product.id,
+                name: product.name,
+                image: product.image,
+                unitPrice: product.price,
+                quantity: qty,
+                lineTotal: product.price * qty
+            }));
+
+            const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+            const shippingFee = calculateShipping(subtotal);
+            const timestamp = now();
+
+            const orderData = {
+                id: generateOrderId(),
+                items: orderItems,
+                subtotal,
+                shippingFee,
+                discount: 0,
+                totalPrice: subtotal + shippingFee,
+                customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
+                paymentMethod: formattedPayment,
+                orderStatus: "PENDING",
+                paymentStatus: "UNPAID",
+                createdAt: timestamp,
+                updatedAt: timestamp
+            };
+            orderData.paymentAttempt = buildPaymentAttempt(formattedPayment, orderData.id, orderData.totalPrice);
+            return orderData;
+        });
+
+        let order = result.order;
+        if (result.paymentAttempt) {
+            order = { ...order, paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, userId, request) };
+        }
+        return { order };
+    } catch (error) {
+        if (!(error instanceof checkoutRepository.CheckoutStockConflictError)) throw error;
+        const product = error.product;
+        if (!product) throw new Error("Sản phẩm không tồn tại.");
         if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
         if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
-        if (product.stock < totalQty) throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${totalQty}).`);
-        validatedItems.push({ product, qty: totalQty });
+        throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${error.quantity}).`);
     }
-
-    // Trừ kho tất cả (chỉ sau khi toàn bộ đã pass validate)
-    for (const { product, qty } of validatedItems) {
-        productRepository.decreaseStock(product.id, qty);
-    }
-
-    // Build order items & tính tiền
-    const orderItems = validatedItems.map(({ product, qty }) => ({
-        productId: product.id,
-        name: product.name,
-        image: product.image,
-        unitPrice: product.price,
-        quantity: qty,
-        lineTotal: product.price * qty
-    }));
-
-    const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
-    const shippingFee = calculateShipping(subtotal);
-    const totalPrice = subtotal + shippingFee;
-
-    const order = {
-        id: generateOrderId(),
-        items: orderItems,
-        subtotal,
-        shippingFee,
-        discount: 0,
-        totalPrice,
-        customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
-        paymentMethod: formattedPayment,
-        orderStatus: "PENDING",
-        paymentStatus: "UNPAID",
-        createdAt: now(),
-        updatedAt: now()
-    };
-
-    const savedOrder = orderRepository.createOrder(order);
-    return { order: savedOrder };
 };
 
 module.exports = { checkProduct, processCheckout, processCartCheckout };

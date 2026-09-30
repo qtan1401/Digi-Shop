@@ -20,6 +20,13 @@
 .auth-tab:focus-visible, .auth-link:focus-visible, .auth-google-fallback:focus-visible, .auth-nav a:focus-visible, .auth-nav button:focus-visible, .auth-nav summary:focus-visible { outline: 3px solid rgba(27,94,59,.25); outline-offset: 3px; }
 .auth-panel[hidden], .auth-page [hidden] { display: none !important; }
 .auth-form { display: grid; gap: 15px; }
+
+#login-form,
+#login-panel .auth-google {
+    width: 100%;
+    max-width: 360px;
+    margin-inline: auto;
+}
 .auth-field { display: grid; gap: 6px; }
 .auth-field label { color: var(--text-primary); font-size: .8rem; font-weight: 600; }
 .product-card__role-note { color: var(--text-muted); font-size: .72rem; line-height: 1.4; }

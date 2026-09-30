@@ -14,9 +14,10 @@ const REQUIRED_TABLES = [
     "email_verification_tokens",
     "carts",
     "cart_items",
-    "cart_merge_operations"
+    "cart_merge_operations",
+    "payment_attempts"
 ];
-const REQUIRED_MIGRATION = "20260922000000_auth_data_foundation";
+const REQUIRED_MIGRATION = "20260930000000_payment_attempts";
 
 class DatabaseSchemaError extends Error {
     constructor() {
@@ -58,7 +59,7 @@ async function verifyDatabaseSchema(client) {
           AND [TABLE_NAME] IN (
               N'_prisma_migrations', N'categories', N'products', N'orders', N'order_items', N'audit_logs',
               N'users', N'oauth_identities', N'refresh_sessions', N'email_verification_tokens',
-              N'carts', N'cart_items', N'cart_merge_operations'
+              N'carts', N'cart_items', N'cart_merge_operations', N'payment_attempts'
           );
     `);
     const existingTables = new Set(rows.map(({ tableName }) => tableName));
@@ -71,7 +72,7 @@ async function verifyDatabaseSchema(client) {
     const migrations = await client.$queryRawUnsafe(`
         SELECT TOP (1) [migration_name] AS [migrationName]
         FROM [dbo].[_prisma_migrations]
-        WHERE [migration_name] = N'20260922000000_auth_data_foundation'
+        WHERE [migration_name] = N'20260930000000_payment_attempts'
           AND [finished_at] IS NOT NULL
           AND [rolled_back_at] IS NULL;
     `);

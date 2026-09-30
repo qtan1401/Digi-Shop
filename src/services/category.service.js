@@ -1,5 +1,5 @@
 // ===== CATEGORY SERVICE =====
-// Category validation, slug normalization, and the active-product deletion guard.
+// Category validation, slug normalization, and product-reference deletion guards.
 // Product lookup is injected at call time so this service never imports the
 // product repository (and therefore cannot introduce a circular dependency).
 
@@ -60,16 +60,16 @@ const setProductLookup = (lookup) => {
     return lookup;
 };
 
-const resolveProductLookup = (lookup, categoryId) => {
+const resolveProductLookup = async (lookup, categoryId) => {
     const source = lookup === undefined ? defaultProductLookup : lookup;
 
     if (Array.isArray(source)) return source;
-    if (typeof source === "function") return source(categoryId);
+    if (typeof source === "function") return await source(categoryId);
     if (source && typeof source.getAllProducts === "function") {
-        return source.getAllProducts();
+        return await source.getAllProducts();
     }
     if (source && typeof source.findWithFilter === "function") {
-        return source.findWithFilter(undefined, categoryId, "active");
+        return await source.findWithFilter(undefined, categoryId, "active");
     }
 
     throw new Error(PRODUCT_LOOKUP_ERROR);
@@ -83,8 +83,8 @@ const resolveProductLookup = (lookup, categoryId) => {
  * @param {Array|Function|Object} [productLookup]
  * @returns {number}
  */
-const getActiveProductCount = (categoryId, productLookup) => {
-    const lookupResult = resolveProductLookup(productLookup, categoryId);
+const getActiveProductCount = async (categoryId, productLookup) => {
+    const lookupResult = await resolveProductLookup(productLookup, categoryId);
     if (typeof lookupResult === "number") return lookupResult;
 
     const products = Array.isArray(lookupResult)
@@ -100,49 +100,64 @@ const getActiveProductCount = (categoryId, productLookup) => {
         }
         return count;
     }, 0);
-
 };
 
-const getAllCategories = () => categoryRepository.getAllCategories();
+const getReferencedProductCount = async (categoryId, productLookup) => {
+    const lookupResult = await resolveProductLookup(productLookup, categoryId);
+    if (typeof lookupResult === "number") return lookupResult;
 
-const findCategoryById = (id) => categoryRepository.getCategoryById(id);
+    const products = Array.isArray(lookupResult)
+        ? lookupResult
+        : lookupResult && Array.isArray(lookupResult.data)
+            ? lookupResult.data
+            : null;
+    if (!products) throw new Error(PRODUCT_LOOKUP_ERROR);
 
-const getCategoryById = (id) => {
-    const category = findCategoryById(id);
+    return products.reduce((count, product) =>
+        product && String(product.categoryId) === String(categoryId) ? count + 1 : count, 0);
+};
+
+const getAllCategories = async () => await categoryRepository.getAllCategories();
+
+const findCategoryById = async (id) => await categoryRepository.getCategoryById(id);
+
+const getCategoryById = async (id) => {
+    const category = await findCategoryById(id);
     if (!category) throw new Error(CATEGORY_NOT_FOUND_ERROR);
     return category;
 };
 
-const getCategoryBySlug = (slug) => categoryRepository.getCategoryBySlug(normalizeSlug(slug));
+const getCategoryBySlug = async (slug) =>
+    await categoryRepository.getCategoryBySlug(normalizeSlug(slug));
 
-const createCategory = ({ name, description } = {}) => {
+const createCategory = async ({ name, description } = {}) => {
     const normalizedName = validateCategoryName(name);
     const slug = normalizeSlug(normalizedName);
     if (!slug) throw new Error(CATEGORY_NAME_ERROR);
 
-    if (categoryRepository.getCategoryBySlug(slug)) {
+    if (await categoryRepository.getCategoryBySlug(slug)) {
         throw new Error(DUPLICATE_SLUG_ERROR(slug));
     }
 
-    return categoryRepository.createCategory({
+    return await categoryRepository.createCategory({
         name: normalizedName,
         slug,
         description: normalizeDescription(description)
     });
 };
 
-const deleteCategory = (id, productLookup) => {
-    const category = findCategoryById(id);
+const deleteCategory = async (id, productLookup) => {
+    const category = await findCategoryById(id);
     if (!category) throw new Error(CATEGORY_NOT_FOUND_ERROR);
 
-    const activeProductCount = getActiveProductCount(category.id, productLookup);
-    if (activeProductCount > 0) {
+    const referencedProductCount = await getReferencedProductCount(category.id, productLookup);
+    if (referencedProductCount > 0) {
         throw new Error(
-            `Không thể xóa danh mục đang có ${activeProductCount} sản phẩm đang kinh doanh. Vui lòng xóa hoặc chuyển sản phẩm trước.`
+            `Không thể xóa danh mục đang có ${referencedProductCount} sản phẩm liên kết. Vui lòng chuyển sản phẩm sang danh mục khác trước.`
         );
     }
 
-    return categoryRepository.deleteCategory(category.id);
+    return await categoryRepository.deleteCategory(category.id);
 };
 
 module.exports = {
@@ -153,6 +168,7 @@ module.exports = {
     createCategory,
     deleteCategory,
     getActiveProductCount,
+    getReferencedProductCount,
     setProductLookup,
     normalizeSlug,
     validateCategoryName,

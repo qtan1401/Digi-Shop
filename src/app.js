@@ -9,6 +9,7 @@ const cartRoutes = require("./routes/cart.routes");
 const categoryRoutes = require("./routes/category.routes");
 const adminRoutes = require("./routes/admin.routes");
 const authRoutes = require("./routes/auth.routes");
+const paymentRoutes = require("./routes/payment.routes");
 const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/auth");
 
 const app = express();
@@ -29,6 +30,7 @@ app.use("/api", checkoutRoutes);          // Checkout domain — mua ngay + gi�
 app.use("/api/orders", orderRoutes);      // Order domain — tra cứu + quản lý
 app.use("/api/categories", categoryRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/payments", paymentRoutes); // Provider callbacks and customer payment attempts
 
 app.get("/", (req, res) => {
     res.json({ message: "Welcome to Digi-Shop API" });

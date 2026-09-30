@@ -1,0 +1,136 @@
+/* Checkout/auth integration states; visual tokens come from styles.css. */
+[data-auth-nav] {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    color: var(--text-secondary);
+    font-size: .82rem;
+}
+[data-auth-nav] a,
+[data-auth-nav] button {
+    color: inherit;
+}
+[data-auth-nav] button {
+    border: 0;
+    padding: 6px 8px;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+}
+[data-auth-nav] .auth-nav__identity { font-weight: 600; color: var(--text-primary); }
+[data-auth-nav] .auth-nav__menu { display: inline-flex; align-items: center; gap: 8px; }
+
+.checkout-merge-banner,
+.checkout-unavailable,
+.checkout-draft-expired {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px 18px;
+    margin: 0 0 20px;
+    line-height: 1.55;
+}
+.checkout-merge-banner {
+    border-color: rgba(27, 94, 59, .3);
+    background: var(--accent-light);
+    color: var(--text-primary);
+}
+.checkout-merge-banner h2 { margin: 0 0 6px; font-size: 1rem; }
+.checkout-merge-banner p { margin: 0 0 8px; color: var(--text-secondary); }
+.checkout-merge-banner ul,
+.checkout-unavailable ul { margin: 8px 0; padding-left: 20px; }
+.checkout-merge-banner__link { display: inline-flex; margin-top: 4px; font-weight: 700; color: var(--accent); text-decoration: underline; }
+.checkout-unavailable {
+    border-color: rgba(192, 57, 43, .32);
+    background: rgba(192, 57, 43, .06);
+    color: #8f2c22;
+}
+.checkout-unavailable strong { color: #7b241c; }
+.checkout-unavailable a { color: #7b241c; font-weight: 700; text-decoration: underline; }
+.checkout-draft-expired { background: rgba(192, 57, 43, .06); color: #7b241c; }
+
+.checkout-auth-forbidden {
+    max-width: 620px;
+    margin: 16px auto 24px;
+    padding: 38px 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-md);
+    text-align: center;
+}
+
+.checkout-merge-error {
+    margin: 0 0 20px;
+    padding: 16px 18px;
+    border: 1px solid rgba(192, 57, 43, .32);
+    border-radius: var(--radius-md);
+    background: rgba(192, 57, 43, .06);
+    color: #7b241c;
+}
+.checkout-merge-error p { margin: 6px 0 12px; color: #8f2c22; }
+.checkout-auth-forbidden__code {
+    color: var(--accent);
+    font: 700 2rem var(--font-mono);
+    letter-spacing: .04em;
+}
+.checkout-auth-forbidden h2 { margin: 8px 0; font-family: var(--font-display); }
+.checkout-auth-forbidden p { margin: 0 auto 22px; max-width: 480px; color: var(--text-secondary); line-height: 1.6; }
+.checkout-auth-forbidden__actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+
+.cart-item--unavailable { border-left: 3px solid #c0392b; padding-left: 12px; }
+.cart-item__stock-warning { color: #9b1c1c; line-height: 1.45; }
+
+@media (max-width: 768px) {
+    .navbar { padding: 0 16px; gap: 8px; }
+    .navbar-brand { font-size: 1rem; }
+    .navbar-links { gap: 12px; min-width: 0; }
+    .navbar-links a { font-size: .78rem; }
+    [data-auth-nav] { min-width: 0; }
+    [data-auth-nav] { gap: 4px; font-size: .76rem; }
+    .checkout-merge-banner,
+    .checkout-unavailable,
+    .checkout-draft-expired { padding: 14px; }
+    .checkout-auth-forbidden { padding: 30px 18px; }
+    .checkout-auth-forbidden__actions { flex-direction: column; }
+    .checkout-auth-forbidden__actions .btn { width: 100%; }
+}
+
+.payment-attempt {
+    margin: 24px 0;
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    text-align: center;
+}
+.payment-attempt h3 { margin: 0 0 8px; }
+.payment-attempt p { margin: 8px 0; color: var(--text-secondary); line-height: 1.5; }
+.payment-qr {
+    display: block;
+    width: min(256px, 100%);
+    height: auto;
+    margin: 18px auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+}
+.payment-attempt__reference { font-size: .85rem; }
+.payment-attempt__error { color: #8f2c22 !important; }
+.payment-retry {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 18px 0;
+}
+.payment-retry select {
+    min-height: 42px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+}

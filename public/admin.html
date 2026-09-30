@@ -7,16 +7,18 @@
     <title>NodeShop — Quản trị catalog</title>
     <link rel="stylesheet" href="/css/styles.css">
     <link rel="stylesheet" href="/css/admin.css">
+    <link rel="stylesheet" href="/css/auth.css">
 </head>
 <body class="admin-page">
     <header class="admin-header">
         <div class="admin-header__inner">
             <a class="admin-brand" href="/" aria-label="NodeShop trang chủ">NodeShop <span>Admin</span></a>
             <a class="admin-header__store-link" href="/">Xem cửa hàng <span aria-hidden="true">↗</span></a>
+            <div class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></div>
         </div>
     </header>
 
-    <main class="admin-shell">
+    <main class="admin-shell" hidden>
         <section class="admin-intro" aria-labelledby="admin-title">
             <div>
                 <p class="admin-eyebrow">CATALOG CONTROL CENTER</p>
@@ -27,6 +29,28 @@
         </section>
 
         <div class="admin-feedback" id="global-feedback" role="status" aria-live="polite" hidden></div>
+        <section class="panel admin-account-panel" aria-labelledby="admin-account-title">
+            <div class="panel-heading">
+                <div><p class="panel-kicker">Quản trị viên</p><h2 id="admin-account-title">Tạo tài khoản Admin</h2></div>
+                <span class="muted">Tài khoản mới phải đổi mật khẩu lần đầu</span>
+            </div>
+            <form id="admin-account-form" class="form-grid" novalidate>
+                <div class="field">
+                    <label for="admin-account-username">Username <span>*</span></label>
+                    <input id="admin-account-username" name="username" type="text" minlength="3" maxlength="64" autocomplete="off" required aria-describedby="admin-account-username-error">
+                    <span class="field-error" id="admin-account-username-error" data-account-error="username" aria-live="polite"></span>
+                </div>
+                <div class="field">
+                    <label for="admin-account-password">Mật khẩu tạm thời <span>*</span></label>
+                    <input id="admin-account-password" name="temporaryPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="admin-account-password-error">
+                    <span class="field-error" id="admin-account-password-error" data-account-error="temporaryPassword" aria-live="polite"></span>
+                </div>
+                <div class="field--wide modal-actions">
+                    <button class="btn btn--primary" type="submit">Tạo Admin</button>
+                </div>
+            </form>
+            <div id="admin-account-feedback" class="admin-feedback" role="status" aria-live="polite" hidden></div>
+        </section>
 
         <section class="admin-layout" aria-label="Bảng điều khiển catalog">
             <aside class="admin-sidebar">
@@ -197,6 +221,7 @@
     </div>
 
     <div id="toast-container" class="admin-toasts" role="status" aria-live="polite" aria-atomic="true"></div>
+    <script src="/js/auth.js"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

@@ -17,20 +17,20 @@ const createDomainError = (message, errors = [], statusCode = 400) => {
 
 const getCategoryService = () => require("./category.service");
 
-const findCategory = (categoryId) => {
+const findCategory = async (categoryId) => {
     const categoryService = getCategoryService();
     if (typeof categoryService.findCategoryById === "function") {
-        return categoryService.findCategoryById(categoryId);
+        return await categoryService.findCategoryById(categoryId);
     }
     try {
-        return categoryService.getCategoryById(categoryId);
+        return await categoryService.getCategoryById(categoryId);
     } catch (error) {
         return undefined;
     }
 };
 
-const assertActiveCategory = (categoryId) => {
-    const category = findCategory(categoryId);
+const assertActiveCategory = async (categoryId) => {
+    const category = await findCategory(categoryId);
     if (!category || category.isDeleted === true) {
         throw createDomainError(
             "Danh mục không tồn tại hoặc đã bị xóa.",
@@ -132,8 +132,8 @@ const validateProduct = (input, { requireSku = true } = {}) => {
     return data;
 };
 
-const assertUniqueSku = (sku, productId) => {
-    const existing = productRepository.findBySku(sku);
+const assertUniqueSku = async (sku, productId) => {
+    const existing = await productRepository.findBySku(sku);
     if (existing && String(existing.id) !== String(productId)) {
         throw createDomainError(
             `Mã SKU '${sku}' đã tồn tại trên hệ thống. SKU là duy nhất vĩnh viễn.`,
@@ -146,21 +146,21 @@ const assertUniqueSku = (sku, productId) => {
  * Public list. Deleted records are excluded by default.
  * Set includeDeleted/status explicitly for an internal/admin caller.
  */
-const getAllProducts = (options = {}) => {
+const getAllProducts = async (options = {}) => {
     if (options === true || options.includeDeleted === true || options.status === "all") {
-        return productRepository.findWithFilter("", undefined, "all");
+        return await productRepository.findWithFilter("", undefined, "all");
     }
     if (options.status === "deleted") {
-        return productRepository.findWithFilter("", undefined, "deleted");
+        return await productRepository.findWithFilter("", undefined, "deleted");
     }
-    return productRepository.findWithFilter("", undefined, "active");
+    return await productRepository.findWithFilter("", undefined, "active");
 };
 
 /**
  * Public detail lookup excludes soft-deleted products by default.
  */
-const getProductByID = (id, options = {}) => {
-    const product = productRepository.getProductByID(id);
+const getProductByID = async (id, options = {}) => {
+    const product = await productRepository.getProductByID(id);
     if (!product || (product.isDeleted === true && options.includeDeleted !== true)) {
         throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     }
@@ -168,29 +168,30 @@ const getProductByID = (id, options = {}) => {
 };
 
 const getProductById = getProductByID;
-const getAdminProductById = (id) => getProductByID(id, { includeDeleted: true });
+const getAdminProductById = async (id) =>
+    await getProductByID(id, { includeDeleted: true });
 
-const findProducts = (filters = {}) => {
+const findProducts = async (filters = {}) => {
     const status = filters.status || "active";
     if (!PRODUCT_STATUSES.includes(status)) {
         throw createDomainError("Trạng thái sản phẩm không hợp lệ.", [
             { field: "status", message: "status phải là all, active hoặc deleted" }
         ]);
     }
-    return productRepository.findWithFilter(filters.q, filters.categoryId, status);
+    return await productRepository.findWithFilter(filters.q, filters.categoryId, status);
 };
 
-const getAdminProducts = (filters = {}) => {
-    const data = findProducts(filters);
+const getAdminProducts = async (filters = {}) => {
+    const data = await findProducts(filters);
     return { data, total: data.length };
 };
 
-const createProduct = (input) => {
+const createProduct = async (input) => {
     const data = validateProduct(input);
-    assertActiveCategory(data.categoryId);
-    assertUniqueSku(data.sku);
+    await assertActiveCategory(data.categoryId);
+    await assertUniqueSku(data.sku);
     const timestamp = new Date().toISOString();
-    return productRepository.createProduct({
+    return await productRepository.createProduct({
         ...data,
         slug: slugify(data.name),
         isDeleted: false,
@@ -200,8 +201,8 @@ const createProduct = (input) => {
     });
 };
 
-const updateProduct = (id, input = {}) => {
-    const product = productRepository.getProductByID(id);
+const updateProduct = async (id, input = {}) => {
+    const product = await productRepository.getProductByID(id);
     if (!product) throw createDomainError("Không tìm thấy sản phẩm", [], 404);
 
     const changes = {};
@@ -209,8 +210,8 @@ const updateProduct = (id, input = {}) => {
         if (Object.prototype.hasOwnProperty.call(input, field)) changes[field] = input[field];
     }
     const merged = validateProduct({ ...product, ...changes }, { requireSku: true });
-    assertActiveCategory(merged.categoryId);
-    assertUniqueSku(product.sku, product.id);
+    await assertActiveCategory(merged.categoryId);
+    await assertUniqueSku(product.sku, product.id);
 
     // Keep the original SKU regardless of a forged payload.
     delete merged.sku;
@@ -219,22 +220,22 @@ const updateProduct = (id, input = {}) => {
     delete merged.isDeleted;
     delete merged.deletedAt;
     delete merged.createdAt;
-    return productRepository.updateProduct(product.id, merged);
+    return await productRepository.updateProduct(product.id, merged);
 };
 
-const softDeleteProduct = (id) => {
-    const product = productRepository.getProductByID(id);
+const softDeleteProduct = async (id) => {
+    const product = await productRepository.getProductByID(id);
     if (!product) throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     if (product.isDeleted === true) {
         throw createDomainError("Sản phẩm đã nằm trong thùng rác.");
     }
-    return productRepository.softDelete(id);
+    return await productRepository.softDelete(id);
 };
 
 const deleteProduct = softDeleteProduct;
 
-const restoreProduct = (id, options = {}) => {
-    const product = productRepository.getProductByID(id);
+const restoreProduct = async (id, options = {}) => {
+    const product = await productRepository.getProductByID(id);
     if (!product) throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     if (product.isDeleted !== true) {
         throw createDomainError("Sản phẩm hiện không ở trạng thái đã xóa.");
@@ -243,7 +244,7 @@ const restoreProduct = (id, options = {}) => {
     const newCategoryId = typeof options === "object" && options !== null
         ? options.newCategoryId
         : options;
-    const category = findCategory(product.categoryId);
+    const category = await findCategory(product.categoryId);
     let categoryId = product.categoryId;
     if (!category || category.isDeleted === true) {
         if (newCategoryId === undefined || newCategoryId === null || newCategoryId === "") {
@@ -252,13 +253,13 @@ const restoreProduct = (id, options = {}) => {
                 [{ field: "newCategoryId", message: "Cần chọn danh mục mới hợp lệ" }]
             );
         }
-        categoryId = assertActiveCategory(newCategoryId).id;
+        categoryId = (await assertActiveCategory(newCategoryId)).id;
     } else if (newCategoryId !== undefined && newCategoryId !== null && String(newCategoryId) !== "") {
-        categoryId = assertActiveCategory(newCategoryId).id;
+        categoryId = (await assertActiveCategory(newCategoryId)).id;
     }
 
-    assertUniqueSku(product.sku, product.id);
-    return productRepository.restoreProduct(id, { categoryId });
+    await assertUniqueSku(product.sku, product.id);
+    return await productRepository.restoreProduct(id, { categoryId });
 };
 
 const restore = restoreProduct;

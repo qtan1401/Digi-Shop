@@ -11,46 +11,66 @@ const errorStatus = (error) => {
 };
 
 const sendError = (res, error) => {
-    const body = { success: false, message: error.message || "Yêu cầu không hợp lệ" };
+    const message = error.message || "Yêu cầu không hợp lệ";
+    const body = { success: false, message };
+    if (error && error.code) body.error = { code: error.code, message };
     if (Array.isArray(error.errors) && error.errors.length > 0) body.errors = error.errors;
     return res.status(errorStatus(error)).json(body);
 };
 
-const actor = (req) => req.user && req.user.role;
+const actor = (req) => req.user && req.user.id;
 
-const withCategoryName = (product) => {
-    const category = categoryService.findCategoryById(product.categoryId);
+const withCategoryName = async (product) => {
+    const category = await categoryService.findCategoryById(product.categoryId);
     return { ...product, categoryName: category ? category.name : null };
 };
-
-const listProducts = (req, res) => {
+const createAccount = async (req, res) => {
     try {
-        const result = adminService.getProducts({
+        const account = await adminService.createAdminAccount(req.body || {}, actor(req));
+        return res.status(201).json({
+            success: true,
+            data: {
+                id: account.id,
+                username: account.username,
+                role: account.role,
+                forcePasswordChange: true
+            }
+        });
+    } catch (error) {
+        return sendError(res, error);
+    }
+};
+
+const listProducts = async (req, res) => {
+    try {
+        const result = await adminService.getProducts({
             q: req.query.q,
             categoryId: req.query.categoryId,
             status: req.query.status || "active"
         });
+        const data = await Promise.all(result.data.map(withCategoryName));
         return res.json({
             success: true,
             total: result.total,
-            data: result.data.map(withCategoryName)
+            data
         });
     } catch (error) {
         return sendError(res, error);
     }
 };
 
-const getProduct = (req, res) => {
+const getProduct = async (req, res) => {
     try {
-        return res.json({ success: true, data: withCategoryName(adminService.getProduct(req.params.id)) });
+        const product = await adminService.getProduct(req.params.id);
+        return res.json({ success: true, data: await withCategoryName(product) });
     } catch (error) {
         return sendError(res, error);
     }
 };
 
-const createProduct = (req, res) => {
+const createProduct = async (req, res) => {
     try {
-        const product = adminService.createProduct(req.body || {}, actor(req));
+        const product = await adminService.createProduct(req.body || {}, actor(req));
         return res.status(201).json({
             success: true,
             message: "Thêm sản phẩm thành công",
@@ -61,9 +81,9 @@ const createProduct = (req, res) => {
     }
 };
 
-const updateProduct = (req, res) => {
+const updateProduct = async (req, res) => {
     try {
-        const product = adminService.updateProduct(req.params.id, req.body || {}, actor(req));
+        const product = await adminService.updateProduct(req.params.id, req.body || {}, actor(req));
         return res.json({
             success: true,
             message: "Cập nhật sản phẩm thành công",
@@ -74,9 +94,9 @@ const updateProduct = (req, res) => {
     }
 };
 
-const deleteProduct = (req, res) => {
+const deleteProduct = async (req, res) => {
     try {
-        adminService.softDeleteProduct(req.params.id, actor(req));
+        await adminService.softDeleteProduct(req.params.id, actor(req));
         return res.json({
             success: true,
             message: "Đã xóa mềm sản phẩm thành công. Sản phẩm đã được chuyển vào thùng rác."
@@ -86,7 +106,7 @@ const deleteProduct = (req, res) => {
     }
 };
 
-const restoreProduct = (req, res) => {
+const restoreProduct = async (req, res) => {
     try {
         const options = { ...(req.body || {}) };
         const id = req.params.id !== undefined
@@ -94,7 +114,7 @@ const restoreProduct = (req, res) => {
             : (options.productId !== undefined ? options.productId : options.id);
         delete options.productId;
         delete options.id;
-        adminService.restoreProduct(id, options, actor(req));
+        await adminService.restoreProduct(id, options, actor(req));
         return res.json({
             success: true,
             message: "Khôi phục sản phẩm thành công. Sản phẩm đã hiển thị lại trên website."
@@ -104,9 +124,9 @@ const restoreProduct = (req, res) => {
     }
 };
 
-const listAuditLogs = (req, res) => {
+const listAuditLogs = async (req, res) => {
     try {
-        const data = adminService.getAuditLogs();
+        const data = await adminService.getAuditLogs();
         return res.json({ success: true, total: data.length, data });
     } catch (error) {
         return sendError(res, error);
@@ -114,6 +134,7 @@ const listAuditLogs = (req, res) => {
 };
 
 module.exports = {
+    createAccount,
     listProducts,
     getProduct,
     createProduct,

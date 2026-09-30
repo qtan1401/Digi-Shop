@@ -10,7 +10,7 @@
     "db:generate": "prisma generate",
     "db:seed": "node prisma/seed.js",
     "db:setup": "npm run db:create && npm run db:migrate && npm run db:generate && npm run db:seed",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -25,7 +25,8 @@
     "google-auth-library": "^9.15.1",
     "jsonwebtoken": "^9.0.3",
     "mssql": "12.7.2",
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^6.9.16",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "prisma": "7.10.0"

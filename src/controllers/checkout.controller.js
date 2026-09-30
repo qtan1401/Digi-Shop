@@ -34,9 +34,9 @@ const processCheckout = async (req, res) => {
         const productId = req.params.id || req.body.productId;
         const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
 
-        const result = await checkoutService.processCheckout({
+        const result = await checkoutService.processCheckout(req.user.id, {
             productId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note
-        });
+        }, req);
 
         res.status(201).json({
             success: true,
@@ -57,9 +57,9 @@ const processCheckout = async (req, res) => {
 const cartCheckout = async (req, res) => {
     try {
         const { items, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
-        const result = await checkoutService.processCartCheckout({
+        const result = await checkoutService.processCartCheckout(req.user.id, {
             items, customerName, customerPhone, customerAddress, paymentMethod, note
-        });
+        }, req);
 
         res.status(201).json({
             success: true,

@@ -1,16 +1,20 @@
 // ===== CART ROUTES =====
-// Định nghĩa các endpoint cho tính năng giỏ hàng (server-side validate & tính ship)
-// Cart state thực sự lưu ở localStorage phía client
+// Guest validation/shipping remain public; account cart state is user-scoped.
 
 const express = require("express");
 const cartController = require("../controllers/cart.controller");
+const { requireRole, requireCsrf } = require("../middlewares/auth");
 
 const router = express.Router();
 
-// [POST] /api/cart/validate → Kiểm tra stock thực tế của từng item trong giỏ
+// Guest endpoints — preserve existing validation and shipping behavior.
 router.post("/validate", cartController.validateCart);
-
-// [POST] /api/cart/shipping → Tính phí vận chuyển theo subtotal
 router.post("/shipping", cartController.getShippingFee);
+
+// Account cart endpoints derive identity exclusively from req.user.id.
+router.get("/", requireRole("user"), cartController.getAccountCart);
+router.put("/items/:productId", requireRole("user"), requireCsrf, cartController.setAccountCartQuantity);
+router.delete("/items/:productId", requireRole("user"), requireCsrf, cartController.removeAccountCartItem);
+router.post("/merge", requireRole("user"), requireCsrf, cartController.mergeGuestCart);
 
 module.exports = router;

@@ -6,36 +6,34 @@
     <meta name="description" content="Giỏ hàng của bạn — NodeShop">
     <title>Giỏ hàng | NodeShop</title>
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/checkout-auth.css">
 </head>
 <body>
-    <!-- NAVBAR -->
-    <nav class="navbar">
+    <nav class="navbar" aria-label="Điều hướng chính">
         <a href="/" class="navbar-brand">NodeShop</a>
         <ul class="navbar-links">
             <li><a href="/">Trang chủ</a></li>
             <li><a href="/#products">Sản phẩm</a></li>
             <li>
-                <a href="/cart.html" class="cart-nav-link cart-nav-link--active">
+                <a href="/cart.html" class="cart-nav-link cart-nav-link--active" aria-label="Giỏ hàng">
                     🛒 <span class="cart-badge cart-badge--hidden" id="cart-badge">0</span>
                 </a>
             </li>
         </ul>
+        <div data-auth-nav aria-live="polite"></div>
     </nav>
 
-    <!-- CART PAGE -->
     <section class="cart-page container">
         <h1 class="cart-page__title">Giỏ hàng của bạn</h1>
         <div id="cart-root">
-            <div class="loading"><div class="loading-spinner"></div></div>
+            <div class="loading" role="status" aria-live="polite"><div class="loading-spinner"></div></div>
         </div>
     </section>
 
-    <!-- FOOTER -->
-    <footer class="footer">
-        © 2026 NodeShop — Dự án học Node.js MVC
-    </footer>
+    <footer class="footer">© 2026 NodeShop — Dự án học Node.js MVC</footer>
 
-    <!-- Scripts: cart.js phải load trước cart-page.js -->
+    <script src="/js/checkout-state.js"></script>
+    <script src="/js/auth.js"></script>
     <script src="/js/cart.js"></script>
     <script src="/js/cart-page.js"></script>
 </body>

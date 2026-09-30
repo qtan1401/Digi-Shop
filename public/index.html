@@ -34,6 +34,35 @@
 
     <!-- PRODUCT GRID -->
     <main class="container" id="products">
+        <section class="catalog-controls" aria-label="Tìm kiếm, lọc và sắp xếp sản phẩm">
+            <div class="catalog-controls__filters">
+                <label class="catalog-search" for="catalog-search">
+                    <span class="catalog-field__label">Tìm kiếm sản phẩm</span>
+                    <input id="catalog-search" type="search" maxlength="120" autocomplete="off" aria-describedby="catalog-search-hint" placeholder="Bạn muốn mua gì hôm nay?">
+                </label>
+                <fieldset class="catalog-price-filter">
+                    <legend>Lọc theo giá (₫)</legend>
+                    <div class="catalog-price-filter__fields">
+                        <label class="catalog-price-filter__field" for="catalog-price-min">
+                            <span>Tối thiểu</span>
+                            <input id="catalog-price-min" type="number" min="0" step="any" inputmode="decimal" placeholder="Không giới hạn">
+                        </label>
+                        <label class="catalog-price-filter__field" for="catalog-price-max">
+                            <span>Tối đa</span>
+                            <input id="catalog-price-max" type="number" min="0" step="any" inputmode="decimal" placeholder="Không giới hạn">
+                        </label>
+                    </div>
+                </fieldset>
+            </div>
+            <p class="catalog-search__hint" id="catalog-search-hint" aria-live="polite"></p>
+            <p class="catalog-results-summary" id="catalog-results-summary" role="status" aria-live="polite"></p>
+            <div class="catalog-controls__sort" role="group" aria-label="Sắp xếp sản phẩm">
+                <button class="btn btn--secondary catalog-sort" id="sort-name" type="button" data-catalog-sort="name" aria-pressed="false">Tên A–Z</button>
+                <button class="btn btn--secondary catalog-sort" id="sort-price" type="button" data-catalog-sort="price" aria-pressed="false">Giá thấp đến cao</button>
+            </div>
+        </section>
+
+
         <div class="product-grid" id="product-grid">
             <div class="loading">
                 <div class="loading-spinner"></div>

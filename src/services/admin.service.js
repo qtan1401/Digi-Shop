@@ -6,6 +6,20 @@ const productService = require("./product.service");
 const categoryService = require("./category.service");
 const productRepository = require("../repositories/product.repository");
 const auditRepository = require("../repositories/audit.repository");
+const adminAccountRepository = require("../repositories/admin-account.repository");
+const { normalizeUsername, hashPassword } = require("./auth.service");
+
+class AdminAccountError extends Error {
+    constructor(code, message, statusCode = 400) {
+        super(message);
+        this.name = "AdminAccountError";
+        this.code = code;
+        this.statusCode = statusCode;
+    }
+}
+
+const accountUsername = (value) =>
+    typeof value === "string" ? normalizeUsername(value) : "";
 
 const actorFor = (actor) => actor || "admin";
 const snapshot = (value) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -28,8 +42,8 @@ const diff = (before, after) => {
     return changes;
 };
 
-const writeAudit = (actor, action, entity, entityId, changes) =>
-    auditRepository.createLog({
+const writeAudit = async (actor, action, entity, entityId, changes) =>
+    await auditRepository.createLog({
         actor: actorFor(actor),
         action,
         entity,
@@ -37,9 +51,9 @@ const writeAudit = (actor, action, entity, entityId, changes) =>
         changes
     });
 
-const createCategory = (input, actor) => {
-    const category = categoryService.createCategory(input);
-    writeAudit(actor, "CREATE", "category", category.id, {
+const createCategory = async (input, actor) => {
+    const category = await categoryService.createCategory(input);
+    await writeAudit(actor, "CREATE", "category", category.id, {
         name: { old: undefined, new: category.name },
         slug: { old: undefined, new: category.slug },
         description: { old: undefined, new: category.description }
@@ -47,48 +61,77 @@ const createCategory = (input, actor) => {
     return category;
 };
 
-const deleteCategory = (id, actor) => {
+const deleteCategory = async (id, actor) => {
     // Inject the repository at the boundary to avoid a category-service/product-
     // repository circular import while keeping the guard on the domain service.
-    const category = categoryService.findCategoryById(id);
-    const deleted = categoryService.deleteCategory(id, productRepository);
-    writeAudit(actor, "DELETE", "category", deleted.id, {
+    const category = await categoryService.findCategoryById(id);
+    const deleted = await categoryService.deleteCategory(id, productRepository);
+    await writeAudit(actor, "DELETE", "category", deleted.id, {
         category: { old: category, new: undefined }
     });
     return deleted;
 };
 
-const getProducts = (filters) => productService.getAdminProducts(filters);
-const getProduct = (id) => productService.getProductByID(id, { includeDeleted: true });
+const getProducts = async (filters) => await productService.getAdminProducts(filters);
+const getProduct = async (id) =>
+    await productService.getProductByID(id, { includeDeleted: true });
 
-const createProduct = (input, actor) => {
-    const product = productService.createProduct(input);
-    writeAudit(actor, "CREATE", "product", product.id, diff(undefined, product));
+const createProduct = async (input, actor) => {
+    const product = await productService.createProduct(input);
+    await writeAudit(actor, "CREATE", "product", product.id, diff(undefined, product));
     return product;
 };
 
-const updateProduct = (id, input, actor) => {
-    const before = snapshot(productService.getProductByID(id, { includeDeleted: true }));
-    const product = productService.updateProduct(id, input);
-    writeAudit(actor, "UPDATE", "product", product.id, diff(before, product));
+const updateProduct = async (id, input, actor) => {
+    const before = snapshot(await productService.getProductByID(id, { includeDeleted: true }));
+    const product = await productService.updateProduct(id, input);
+    await writeAudit(actor, "UPDATE", "product", product.id, diff(before, product));
     return product;
 };
 
-const softDeleteProduct = (id, actor) => {
-    const before = snapshot(productService.getProductByID(id, { includeDeleted: true }));
-    const product = productService.softDeleteProduct(id);
-    writeAudit(actor, "SOFT_DELETE", "product", product.id, diff(before, product));
+const softDeleteProduct = async (id, actor) => {
+    const before = snapshot(await productService.getProductByID(id, { includeDeleted: true }));
+    const product = await productService.softDeleteProduct(id);
+    await writeAudit(actor, "SOFT_DELETE", "product", product.id, diff(before, product));
     return product;
 };
 
-const restoreProduct = (id, options, actor) => {
-    const before = snapshot(productService.getProductByID(id, { includeDeleted: true }));
-    const product = productService.restoreProduct(id, options);
-    writeAudit(actor, "RESTORE", "product", product.id, diff(before, product));
+const restoreProduct = async (id, options, actor) => {
+    const before = snapshot(await productService.getProductByID(id, { includeDeleted: true }));
+    const product = await productService.restoreProduct(id, options);
+    await writeAudit(actor, "RESTORE", "product", product.id, diff(before, product));
     return product;
 };
+const createAdminAccount = async ({ username, temporaryPassword } = {}, actor) => {
+    const normalizedUsername = accountUsername(username);
+    if (!normalizedUsername || normalizedUsername.length > 64 || /\s/.test(normalizedUsername)) {
+        throw new AdminAccountError("VALIDATION_FAILED", "Username is invalid", 400);
+    }
 
-const getAuditLogs = () => auditRepository.getAllLogs();
+    const passwordHash = await hashPassword(temporaryPassword);
+    let account;
+    try {
+        account = await adminAccountRepository.createAdmin({
+            username: normalizedUsername,
+            passwordHash
+        });
+    } catch (error) {
+        if (error && error.code === "P2002") {
+            throw new AdminAccountError("USERNAME_TAKEN", "Username is already taken", 409);
+        }
+        throw error;
+    }
+
+    await writeAudit(actor, "CREATE_ADMIN", "user", account.id, {
+        username: { old: undefined, new: account.username },
+        role: { old: undefined, new: account.role },
+        forcePasswordChange: { old: undefined, new: true }
+    });
+    return account;
+};
+
+const getAuditLogs = async () => await auditRepository.getAllLogs();
+
 
 module.exports = {
     createCategory,
@@ -99,8 +142,8 @@ module.exports = {
     updateProduct,
     softDeleteProduct,
     restoreProduct,
+    createAdminAccount,
     getAuditLogs,
-    writeAudit,
     getAdminProducts: getProducts,
     getProductById: getProduct,
     getProductByID: getProduct,

@@ -1,118 +1,109 @@
 // ===== CART SERVICE =====
-// Xử lý logic nghiệp vụ của giỏ hàng: validate stock thực tế và tính phí vận chuyển
-// Cart KHÔNG trừ kho, KHÔNG tạo đơn — đó là nhiệm vụ của Checkout Service
+// Account-cart business rules plus the pre-existing Guest validation/shipping flow.
+// Cart mutations do not reserve stock; checkout revalidates stock independently.
 
+const crypto = require("crypto");
 const productRepository = require("../repositories/product.repository");
+const cartRepository = require("../repositories/cart.repository");
 
-// Phí vận chuyển mặc định (VNĐ) là 100.000đ theo yêu cầu hiển thị mặc định
 const SHIPPING_FEE_DEFAULT = 100000;
+const calculateShipping = (subtotal = 0) => SHIPPING_FEE_DEFAULT;
 
-/**
- * Tính phí vận chuyển dựa trên tổng tiền hàng
- * @param {number} subtotal - Tổng tiền hàng (chưa gồm ship)
- * @returns {number} Phí vận chuyển mặc định là 100.000 VNĐ
- */
-const calculateShipping = (subtotal = 0) => {
-    return SHIPPING_FEE_DEFAULT;
-};
-
-/**
- * Validate danh sách items trong giỏ hàng đối chiếu với tồn kho thực tế
- * Trả về trạng thái từng item + tổng tiền + phí ship
- *
- * @param {Array<{productId: number|string, quantity: number}>} items
- * @returns {Object} { validatedItems, subtotal, shippingFee, total, hasUnavailable }
- */
-const validateCartItems = (items) => {
+const validateCartItems = async (items) => {
     if (!Array.isArray(items) || items.length === 0) {
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi tiếp tục.");
     }
-
     let subtotal = 0;
     let hasUnavailable = false;
-
-    const validatedItems = items.map(({ productId, quantity }) => {
+    const validatedItems = await Promise.all(items.map(async ({ productId, quantity }) => {
         const qty = parseInt(quantity, 10);
-        const product = productRepository.getProductByID(productId);
-
-        // Sản phẩm không tồn tại
+        const product = await productRepository.getProductByID(productId);
         if (!product) {
             hasUnavailable = true;
-            return {
-                productId,
-                name: "Sản phẩm không tồn tại",
-                image: null,
-                price: 0,
-                quantity: qty || 0,
-                stock: 0,
-                available: false,
-                unavailableReason: "not_found",
-                lineTotal: 0
-            };
+            return { productId, name: "Sản phẩm không tồn tại", image: null, price: 0, quantity: qty || 0, stock: 0, available: false, unavailableReason: "not_found", lineTotal: 0 };
         }
-
-        // Sản phẩm đã bị xóa mềm — giữ lại trong kết quả để client có thể
-        // thông báo cho người dùng, nhưng không được tính vào tổng tiền.
         if (product.isDeleted === true) {
             hasUnavailable = true;
-            return {
-                productId: product.id,
-                name: product.name,
-                image: product.image,
-                description: product.description,
-                price: product.price,
-                quantity: qty,
-                stock: product.stock,
-                available: false,
-                unavailableReason: `Sản phẩm '${product.name}' đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.`,
-                lineTotal: 0
-            };
+            return { productId: product.id, name: product.name, image: product.image, description: product.description, price: product.price, quantity: qty, stock: product.stock, available: false, unavailableReason: `Sản phẩm '${product.name}' đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.`, lineTotal: 0 };
         }
-
-        // Sản phẩm hết hàng
         if (product.stock <= 0) {
             hasUnavailable = true;
-            return {
-                productId: product.id,
-                name: product.name,
-                image: product.image,
-                price: product.price,
-                quantity: qty,
-                stock: 0,
-                available: false,
-                unavailableReason: "out_of_stock",
-                lineTotal: 0
-            };
+            return { productId: product.id, name: product.name, image: product.image, price: product.price, quantity: qty, stock: 0, available: false, unavailableReason: "out_of_stock", lineTotal: 0 };
         }
-
-        // Số lượng yêu cầu vượt tồn kho — điều chỉnh xuống max stock
         const effectiveQty = Math.min(qty, product.stock);
         const lineTotal = product.price * effectiveQty;
         subtotal += lineTotal;
-
-        return {
-            productId: product.id,
-            name: product.name,
-            image: product.image,
-            description: product.description,
-            price: product.price,
-            quantity: effectiveQty,
-            requestedQuantity: qty,
-            stock: product.stock,
-            available: true,
-            quantityAdjusted: effectiveQty !== qty,
-            lineTotal
-        };
-    });
-
+        return { productId: product.id, name: product.name, image: product.image, description: product.description, price: product.price, quantity: effectiveQty, requestedQuantity: qty, stock: product.stock, available: true, quantityAdjusted: effectiveQty !== qty, lineTotal };
+    }));
     const shippingFee = calculateShipping(subtotal);
-    const total = subtotal + shippingFee;
-
-    return { validatedItems, subtotal, shippingFee, total, hasUnavailable };
+    return { validatedItems, subtotal, shippingFee, total: subtotal + shippingFee, hasUnavailable };
 };
 
-module.exports = {
-    validateCartItems,
-    calculateShipping,
-    SHIPPING_FEE_DEFAULT
+class CartDomainError extends Error {
+    constructor(code, message, statusCode = 400, fields) {
+        super(message);
+        this.name = "CartDomainError";
+        this.code = code;
+        this.statusCode = statusCode;
+        if (fields) this.fields = fields;
+    }
+}
+
+const normalizeUserId = (userId) => {
+    if (typeof userId !== "string" || userId.trim() === "") throw new CartDomainError("AUTH_REQUIRED", "Yêu cầu đăng nhập", 401);
+    return userId;
 };
+const normalizeProductId = (productId) => {
+    const value = cartRepository.toProductId(productId);
+    if (value === null) throw new CartDomainError("VALIDATION_FAILED", "productId không hợp lệ", 400, { productId: "invalid" });
+    return value;
+};
+const normalizeQuantity = (quantity) => {
+    const value = cartRepository.toQuantity(quantity);
+    if (value === null) throw new CartDomainError("VALIDATION_FAILED", "quantity phải là số nguyên dương", 400, { quantity: "invalid" });
+    return value;
+};
+const normalizeOperationId = (operationId) => {
+    if (typeof operationId !== "string" || operationId.trim() === "" || operationId.length > 64) throw new CartDomainError("VALIDATION_FAILED", "operationId không hợp lệ", 400, { operationId: "invalid" });
+    return operationId;
+};
+const normalizeMergeItems = (items) => {
+    if (!Array.isArray(items)) throw new CartDomainError("VALIDATION_FAILED", "items phải là một mảng", 400, { items: "invalid" });
+    const quantities = new Map();
+    for (const item of items) {
+        if (!item || typeof item !== "object") throw new CartDomainError("VALIDATION_FAILED", "item không hợp lệ", 400, { items: "invalid" });
+        const productId = normalizeProductId(item.productId);
+        const quantity = normalizeQuantity(item.quantity);
+        const total = (quantities.get(productId) || 0) + quantity;
+        if (!Number.isSafeInteger(total)) throw new CartDomainError("VALIDATION_FAILED", "quantity vượt giới hạn", 400, { quantity: "invalid" });
+        quantities.set(productId, total);
+    }
+    return [...quantities.entries()].map(([productId, quantity]) => ({ productId, quantity })).sort((a, b) => a.productId - b.productId);
+};
+const requestHash = (items) => crypto.createHash("sha256").update(JSON.stringify({ items })).digest("hex");
+
+const getAccountCart = async (userId) => {
+    normalizeUserId(userId);
+    const cart = await cartRepository.getCart(userId);
+    return { items: cart.items };
+};
+const setAccountCartQuantity = async (userId, productId, quantity) => {
+    normalizeUserId(userId);
+    const normalizedProductId = normalizeProductId(productId);
+    const normalizedQuantity = normalizeQuantity(quantity);
+    const result = await cartRepository.setQuantity(userId, normalizedProductId, normalizedQuantity);
+    if (result.kind === "not_found") throw new CartDomainError("PRODUCT_NOT_FOUND", "Sản phẩm không tồn tại", 404);
+    if (result.kind === "unavailable") throw new CartDomainError("CART_ITEM_UNAVAILABLE", "Sản phẩm hiện không khả dụng", 409, { productId: normalizedProductId });
+    return { items: result.cart.items, adjustments: result.adjustment ? [result.adjustment] : [] };
+};
+const removeAccountCartItem = async (userId, productId) => {
+    normalizeUserId(userId);
+    return { items: (await cartRepository.removeItem(userId, normalizeProductId(productId))).items };
+};
+const mergeGuestCart = async (userId, operationId, items) => {
+    normalizeUserId(userId);
+    const normalizedItems = normalizeMergeItems(items);
+    return cartRepository.mergeGuestCart(userId, normalizeOperationId(operationId), requestHash(normalizedItems), normalizedItems);
+};
+
+module.exports = { validateCartItems, calculateShipping, SHIPPING_FEE_DEFAULT, getAccountCart, setAccountCartQuantity, removeAccountCartItem, mergeGuestCart, CartDomainError };

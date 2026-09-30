@@ -20,6 +20,13 @@
 .admin-header__store-link { color: var(--text-secondary); font-size: .82rem; transition: color .2s; }
 .admin-header__store-link:hover { color: var(--accent); }
 .admin-header__store-link span { color: var(--accent); font-size: 1rem; }
+.admin-header__inner > .auth-nav { margin-left: auto; margin-right: 20px; }
+.admin-account-panel { margin-bottom: 24px; padding: 20px 22px; }
+.admin-account-panel .panel-heading { align-items: center; margin-bottom: 15px; }
+.admin-account-panel .panel-heading .muted { text-align: right; }
+.admin-account-panel .form-grid { align-items: start; }
+.admin-account-panel .modal-actions { justify-content: flex-start; margin-top: 0; }
+.admin-account-panel .field-error { min-height: 15px; }
 
 .admin-shell { width: min(1440px, calc(100% - 64px)); margin: 0 auto; padding: 46px 0 80px; }
 .admin-intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
@@ -61,6 +68,7 @@
 .mini-spinner { width: 12px; height: 12px; }
 .button-spinner { width: 13px; height: 13px; }
 .filter-spinner { width: 14px; height: 14px; color: var(--accent); }
+.filter-spinner[hidden] { display: none; }
 @keyframes admin-spin { to { transform: rotate(360deg); } }
 .muted { color: var(--text-muted); font-size: .76rem; }
 

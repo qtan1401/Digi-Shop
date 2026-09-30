@@ -1,29 +1,18 @@
 // ===== CART CONTROLLER =====
-// Tiếp nhận request từ frontend liên quan đến giỏ hàng
-// Cart controller KHÔNG thực hiện trừ kho hay tạo đơn — chỉ đọc & tính toán
+// Guest validation/shipping remain backwards compatible; account operations use session identity.
 
 const cartService = require("../services/cart.service");
 
-/**
- * [POST] /api/cart/validate
- * Kiểm tra tồn kho thực tế của tất cả items trong giỏ hàng
- * Body: { items: [{ productId, quantity }] }
- */
-const validateCart = (req, res) => {
+const validateCart = async (req, res) => {
     try {
         const { items } = req.body;
-        const result = cartService.validateCartItems(items);
+        const result = await cartService.validateCartItems(items);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(400).json({ success: false, message: error.message });
     }
 };
 
-/**
- * [POST] /api/cart/shipping
- * Lấy phí vận chuyển mặc định (100.000 VNĐ)
- * Body: { subtotal: number }
- */
 const getShippingFee = (req, res) => {
     try {
         const subtotal = Number(req.body.subtotal) || 0;
@@ -31,16 +20,68 @@ const getShippingFee = (req, res) => {
             return res.status(400).json({ success: false, message: "subtotal không hợp lệ" });
         }
         const shippingFee = cartService.calculateShipping(subtotal);
-        res.status(200).json({
-            success: true,
-            data: {
-                subtotal,
-                shippingFee
-            }
-        });
+        res.status(200).json({ success: true, data: { subtotal, shippingFee } });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 };
 
-module.exports = { validateCart, getShippingFee };
+const sendAccountError = (res, error) => {
+    const knownCodes = new Set([
+        "AUTH_REQUIRED",
+        "VALIDATION_FAILED",
+        "PRODUCT_NOT_FOUND",
+        "CART_ITEM_UNAVAILABLE",
+        "IDEMPOTENCY_CONFLICT"
+    ]);
+    const knownError = error && knownCodes.has(error.code);
+    const status = knownError && Number.isInteger(error.statusCode) ? error.statusCode : 500;
+    const body = {
+        success: false,
+        error: {
+            code: knownError ? error.code : "CART_REQUEST_FAILED",
+            message: knownError ? error.message : "Không thể cập nhật giỏ hàng"
+        }
+    };
+    if (knownError && error.fields) body.error.fields = error.fields;
+    return res.status(status).json(body);
+};
+
+const accountUserId = (req) => req.user && req.user.id;
+
+const getAccountCart = async (req, res) => {
+    try {
+        return res.json({ success: true, data: await cartService.getAccountCart(accountUserId(req)) });
+    } catch (error) {
+        return sendAccountError(res, error);
+    }
+};
+
+const setAccountCartQuantity = async (req, res) => {
+    try {
+        const result = await cartService.setAccountCartQuantity(accountUserId(req), req.params.productId, req.body && req.body.quantity);
+        return res.json({ success: true, data: result });
+    } catch (error) {
+        return sendAccountError(res, error);
+    }
+};
+
+const removeAccountCartItem = async (req, res) => {
+    try {
+        const result = await cartService.removeAccountCartItem(accountUserId(req), req.params.productId);
+        return res.json({ success: true, data: result });
+    } catch (error) {
+        return sendAccountError(res, error);
+    }
+};
+
+const mergeGuestCart = async (req, res) => {
+    try {
+        const result = await cartService.mergeGuestCart(accountUserId(req), req.body && req.body.operationId, req.body && req.body.items);
+        return res.json({ success: true, data: result });
+    } catch (error) {
+        return sendAccountError(res, error);
+    }
+};
+
+module.exports = { validateCart, getShippingFee, getAccountCart, setAccountCartQuantity, removeAccountCartItem, mergeGuestCart };
