@@ -3,6 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
+const PNG = require("pngjs").PNG;
 const { after, before, beforeEach, test } = require("node:test");
 
 process.env.APP_ORIGIN = "https://catalog.example.test";
@@ -78,12 +79,15 @@ const productInput = (overrides = {}) => ({
     description: "A new phone",
     ...overrides
 });
+
+const productPng = PNG.sync.write({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) });
+
 const createProduct = (input) => {
     const body = new FormData();
     for (const [field, value] of Object.entries(input)) {
         if (field !== "image" && value !== undefined && value !== null) body.append(field, String(value));
     }
-    body.append("image", new Blob([Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/eWQAAAAASUVORK5CYII=", "base64")], { type: "image/png" }), "product.png");
+    body.append("image", new Blob([productPng], { type: "image/png" }), "product.png");
     return fetch(`${baseUrl}/api/admin/products`, {
         method: "POST",
         headers: {

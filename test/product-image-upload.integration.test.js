@@ -125,7 +125,7 @@ test("administrator can upload one PNG and retrieve it at the persisted public i
 });
 
 test("PNG images exactly 5 MiB are accepted and served unchanged", async () => {
-    const data = Buffer.alloc(5 * 1024 * 1024 - png.length, 0x20);
+    const data = Buffer.alloc(5 * 1024 * 1024 - png.length - 12, 0x20);
     Buffer.from("Padding\0").copy(data);
     const chunk = createAncillaryChunk("tEXt", data);
     const maximumSizePng = Buffer.concat([png.subarray(0, png.length - 12), chunk, png.subarray(png.length - 12)]);
