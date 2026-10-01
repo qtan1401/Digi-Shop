@@ -444,3 +444,5 @@ PRODUCT_IMAGE_STORAGE_DIR=/var/lib/digi-shop/product-images
 ```
 
 The application serves these files from `/uploads/products/<generated-name>.png`; product records store this stable public path. Do not use ephemeral container storage for this directory: uploaded images must survive application restarts and redeployments.
+
+Product uploads must be PNG, no larger than 5 MiB, with each side at most 8,192 px and no more than 25 MP total. The server validates PNG structure and CRC, and reports corrupt content, excessive resolution, and file-size violations separately. This bounds a decoded RGBA image to about 100 MiB.

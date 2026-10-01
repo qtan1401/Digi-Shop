@@ -113,7 +113,7 @@ beforeEach(async () => {
 });
 
 test("administrator can upload one PNG and retrieve it at the persisted public image path", async () => {
-    const response = await upload();
+    const response = await upload({ filename: "iphone-duo.PNG" });
     assert.equal(response.status, 201);
     const result = await response.json();
     assert.match(result.data.image, /^\/uploads\/products\/[a-f0-9-]+\.png$/);
@@ -143,7 +143,45 @@ test("signature-correct truncated PNG is rejected before product or file storage
     const response = await upload({ file: malformedPng });
     assert.equal(response.status, 400);
     const result = await response.json();
-    assert.ok(result.errors?.some((error) => error.field === "image"));
+    assert.equal(result.errors?.[0]?.message, "PNG bị hỏng hoặc không hợp lệ.");
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
+});
+
+test("PNG with invalid CRC is reported as corrupt before storage", async () => {
+    const corruptPng = Buffer.from(png);
+    corruptPng.writeUInt32BE(corruptPng.readUInt32BE(29) ^ 1, 29);
+    const response = await upload({ file: corruptPng, filename: "corrupt.PNG" });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.errors?.[0]?.message, "PNG bị hỏng hoặc không hợp lệ.");
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
+});
+
+test("PNG beyond the product dimension boundary returns a resolution error", async () => {
+    const tooWidePng = PNG.sync.write({
+        width: 8_193,
+        height: 1,
+        data: Buffer.alloc(8_193 * 4, 0)
+    });
+    const response = await upload({ file: tooWidePng, filename: "wide.PNG" });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.errors?.[0]?.message, "Ảnh vượt giới hạn độ phân giải (tối đa 8.192 px mỗi cạnh và 25 MP).");
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
+});
+
+test("PNG declaring more pixels than the decoded budget gets a resolution error", async () => {
+    const tooManyPixelsPng = Buffer.from(png);
+    tooManyPixelsPng.writeUInt32BE(5_000, 16);
+    tooManyPixelsPng.writeUInt32BE(5_001, 20);
+    tooManyPixelsPng.writeUInt32BE(crc32(tooManyPixelsPng.subarray(12, 29)), 29);
+    const response = await upload({ file: tooManyPixelsPng, filename: "large-dimensions.PNG" });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.errors?.[0]?.message, "Ảnh vượt giới hạn độ phân giải (tối đa 8.192 px mỗi cạnh và 25 MP).");
     assert.equal(products.length, 0);
     assert.deepEqual(await uploadedNames(), []);
 });

@@ -2,8 +2,11 @@ const multer = require("multer");
 const { PNG } = require("pngjs");
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_DECODED_PIXELS = 16_777_216;
+const MAX_IMAGE_DIMENSION = 8_192;
+const MAX_DECODED_PIXELS = 25_000_000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const INVALID_PNG_MESSAGE = "PNG bị hỏng hoặc không hợp lệ.";
+const IMAGE_DIMENSION_ERROR = "Ảnh vượt giới hạn độ phân giải (tối đa 8.192 px mỗi cạnh và 25 MP).";
 
 const hasCompletePngChunks = (buffer) => {
     let offset = PNG_SIGNATURE.length;
@@ -19,17 +22,29 @@ const hasCompletePngChunks = (buffer) => {
     return false;
 };
 
-const hasValidPngContent = (buffer) => {
-    if (buffer.length < 24 || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return false;
-    if (!hasCompletePngChunks(buffer)) return false;
+const getPngContentError = (buffer) => {
+    if (
+        buffer.length < 33
+        || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+        || buffer.readUInt32BE(8) !== 13
+        || buffer.toString("ascii", 12, 16) !== "IHDR"
+        || !hasCompletePngChunks(buffer)
+    ) return INVALID_PNG_MESSAGE;
+
     const width = buffer.readUInt32BE(16);
     const height = buffer.readUInt32BE(20);
-    if (!width || !height || width * height > MAX_DECODED_PIXELS) return false;
+    if (!width || !height) return INVALID_PNG_MESSAGE;
+    if (
+        width > MAX_IMAGE_DIMENSION
+        || height > MAX_IMAGE_DIMENSION
+        || width * height > MAX_DECODED_PIXELS
+    ) return IMAGE_DIMENSION_ERROR;
+
     try {
         PNG.sync.read(buffer);
-        return true;
+        return null;
     } catch {
-        return false;
+        return INVALID_PNG_MESSAGE;
     }
 };
 
@@ -55,8 +70,9 @@ const parser = multer({
 const uploadProductImage = (req, res, next) => {
     parser(req, res, (error) => {
         if (!error) {
-            if (req.file && !hasValidPngContent(req.file.buffer)) {
-                return imageError(res, "Tệp ảnh PNG không hợp lệ hoặc vượt quá giới hạn kích thước giải mã");
+            if (req.file) {
+                const contentError = getPngContentError(req.file.buffer);
+                if (contentError) return imageError(res, contentError);
             }
             return next();
         }

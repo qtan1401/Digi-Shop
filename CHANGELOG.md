@@ -14,6 +14,6 @@
 - Documented local seed and reset operations and their safeguards.
 
 - Replaced the product image URL field with authenticated, CSRF-protected single-PNG uploads validated by extension, MIME type, signature, and a 5 MiB server-side limit; images are stored on configurable local storage and edit forms retain the current image unless replaced.
-- Replaced signature-only product image acceptance with full PNG decoding and CRC/content validation; uploads still preserve original bytes and are limited to 5 MiB and 16,777,216 decoded pixels.
-- Added HTTP coverage for valid, malformed, oversized, unauthorized, CSRF-failing, replacement, and image-retention upload behavior, plus durable-volume and environment configuration guidance.
+- Added complete PNG/CRC validation with separate corruption and resolution errors; uploads remain capped at 5 MiB and now allow up to 8,192 px per side and 25 MP decoded pixels.
+- Added HTTP coverage for uppercase `.PNG`, malformed/CRC-invalid files, byte and resolution boundaries, unauthorized requests, and image replacement/retention; documented durable storage and image limits.
 - Added a confirmed local rollback-check command that executes the reset clear inside a transaction, always rolls back, and verifies all affected table counts are unchanged.
