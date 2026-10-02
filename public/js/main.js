@@ -198,17 +198,23 @@ const createProductCard = (product, canPurchase = true) => {
                </button>`;
     return `
     <div class="product-card">
-        <div class="product-card__image-wrapper">
-            <img src="${product.image}" alt="${product.name}" class="product-card__image">
-            ${createStockBadge(product.stock)}
-        </div>
-        <div class="product-card__body">
-            <h3 class="product-card__name">${product.name}</h3>
-            <p class="product-card__metadata">${product.brand} · ${product.deviceType}</p>
-            <p class="product-card__description">${product.description}</p>
-            <span class="product-card__price">${formatPrice(product.price)}</span>
-            <div class="product-card__footer">${controls}</div>
-        </div>
+        <a
+            class="product-card__details-link"
+            href="/product_info.html?id=${encodeURIComponent(product.id)}"
+            aria-label="Xem chi tiết ${product.name}"
+        >
+            <div class="product-card__image-wrapper">
+                <img src="${product.image}" alt="${product.name}" class="product-card__image">
+                ${createStockBadge(product.stock)}
+            </div>
+            <div class="product-card__body">
+                <h3 class="product-card__name">${product.name}</h3>
+                <p class="product-card__metadata">${product.brand} · ${product.deviceType}</p>
+                <p class="product-card__description">${product.description}</p>
+                <span class="product-card__price">${formatPrice(product.price)}</span>
+            </div>
+        </a>
+        <div class="product-card__footer">${controls}</div>
     </div>
     `;
 };

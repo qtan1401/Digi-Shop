@@ -8,6 +8,7 @@
 - Added homepage product search from three characters, inclusive minimum/maximum price filters, and toggleable name/price sorting.
 - Added an accessible hamburger filter popover with multi-select Brand and Device type filters that compose with search and inclusive price bounds; catalog cards now show taxonomy metadata and the empty state remains clear.
 - Set the storefront Product catalog to a four-column desktop grid (12 Products across three rows), responsive 3/2/1-column breakpoints, and consistent 4:3 image frames using `object-fit: contain`.
+- Linked each catalog card's image and product information to its detail page using Product ID; purchase and add-to-cart controls remain separate. Added HTTP coverage for the public Product detail API.
 - Fixed the admin catalog's persistent search spinner and aligned the Google sign-in button with the login form fields.
 - Reorganized normal seed data by administrator, catalog vocabulary, and commerce domain; regular seeding remains non-destructive and contains no sample Products.
 - Added an explicitly confirmed, local-only one-time store reset that clears commerce/authentication records atomically, recreates admin123 with a required fresh password and first-login change, and reports per-table counts.

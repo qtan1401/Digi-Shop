@@ -138,6 +138,38 @@ test("admin creates supported taxonomy and public listing returns both fields", 
     );
 });
 
+test("public product detail API returns the product identified by its numeric ID", async () => {
+    const createResponse = await createProduct(productInput());
+    assert.equal(createResponse.status, 201);
+
+    const response = await fetch(`${baseUrl}/api/products/info/1`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(
+        {
+            id: payload.data.id,
+            slug: payload.data.slug,
+            name: payload.data.name,
+            brand: payload.data.brand,
+            deviceType: payload.data.deviceType,
+            price: payload.data.price,
+            stock: payload.data.stock,
+            description: payload.data.description
+        },
+        {
+            id: 1,
+            slug: "iphone-17",
+            name: "iPhone 17",
+            brand: "Apple",
+            deviceType: "phone",
+            price: 999,
+            stock: 7,
+            description: "A new phone"
+        }
+    );
+    assert.match(payload.data.image, /^\/uploads\/products\/[a-f0-9-]+\.png$/);
+});
+
 test("product create reports missing and unsupported taxonomy with field errors", async () => {
     for (const [input, field] of [
         [productInput({ brand: "Google" }), "brand"],

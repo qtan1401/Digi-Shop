@@ -10,8 +10,7 @@ const router = express.Router();
 // GET /api/products → Lấy danh sách tất cả sản phẩm
 router.get("/", productController.getAll);
 
-// GET /api/products/info/:slug → Lấy chi tiết sản phẩm theo slug
-// :slug là Route Parameter - giá trị động truyền qua URL
-// Ví dụ: /api/products/info/iphone-16-pro-max → req.params.slug = "iphone-16-pro-max"
+// GET /api/products/info/:id → Lấy thông tin sản phẩm theo ID
+// Trang product_info.html đọc `id` từ query string rồi gọi endpoint này.
 router.get("/info/:id", productController.getProductID);
 module.exports = router;
