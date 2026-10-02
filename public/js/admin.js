@@ -193,7 +193,7 @@
         if (!fields.deviceType) errors.deviceType = "Vui lòng chọn loại thiết bị.";
         if (!fields.price || Number(fields.price) <= 0 || !Number.isInteger(Number(fields.price))) errors.price = "Giá bán phải là số nguyên dương.";
         if (fields.stock === "" || Number(fields.stock) < 0 || !Number.isInteger(Number(fields.stock))) errors.stock = "Tồn kho phải là số nguyên không âm.";
-        if (!state.editingId && !fields.image) errors.image = "Vui lòng chọn ảnh PNG sản phẩm.";
+        if (!state.editingId && !fields.image) errors.image = "Vui lòng chọn ảnh PNG hoặc WebP sản phẩm.";
         if (!fields.description) errors.description = "Vui lòng nhập mô tả.";
         Object.entries(errors).forEach(([field, message]) => setFormError(form, field, message));
         if (Object.keys(errors).length) {

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const PNG = require("pngjs").PNG;
+const sharp = require("sharp");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -124,6 +125,50 @@ test("administrator can upload one PNG and retrieve it at the persisted public i
     assert.deepEqual(Buffer.from(await publicImage.arrayBuffer()), png);
 });
 
+test("administrator can upload a WebP image mislabeled with a PNG filename", async () => {
+    const webp = await fs.readFile(path.join(__dirname, "..", "iphone_duo.png"));
+    const response = await upload({ file: webp, filename: "iphone_duo.png", type: "image/png" });
+    assert.equal(response.status, 201);
+    const result = await response.json();
+    assert.match(result.data.image, /^\/uploads\/products\/[a-f0-9-]+\.webp$/);
+    assert.deepEqual(await fs.readFile(path.join(storageDirectory, path.basename(result.data.image))), webp);
+    const publicImage = await fetch(`${baseUrl}${result.data.image}`);
+    assert.equal(publicImage.status, 200);
+    assert.equal(publicImage.headers.get("content-type"), "image/webp");
+    assert.deepEqual(Buffer.from(await publicImage.arrayBuffer()), webp);
+});
+
+test("malformed WebP is rejected before product or file storage", async () => {
+    const webp = await fs.readFile(path.join(__dirname, "..", "iphone_duo.png"));
+    const response = await upload({
+        file: webp.subarray(0, 20),
+        filename: "truncated.webp",
+        type: "image/webp"
+    });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.errors?.[0]?.message, "Ảnh bị hỏng hoặc không đúng định dạng.");
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
+});
+
+test("WebP beyond the product dimension boundary returns a resolution error", async () => {
+    const tooWideWebP = await sharp({
+        create: {
+            width: 8_193,
+            height: 1,
+            channels: 3,
+            background: { r: 0, g: 0, b: 0 }
+        }
+    }).webp().toBuffer();
+    const response = await upload({ file: tooWideWebP, filename: "wide.webp", type: "image/webp" });
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.errors?.[0]?.message, "Ảnh vượt giới hạn độ phân giải (tối đa 8.192 px mỗi cạnh và 25 MP).");
+    assert.equal(products.length, 0);
+    assert.deepEqual(await uploadedNames(), []);
+});
+
 test("PNG images exactly 5 MiB are accepted and served unchanged", async () => {
     const data = Buffer.alloc(5 * 1024 * 1024 - png.length - 12, 0x20);
     Buffer.from("Padding\0").copy(data);
@@ -143,7 +188,7 @@ test("signature-correct truncated PNG is rejected before product or file storage
     const response = await upload({ file: malformedPng });
     assert.equal(response.status, 400);
     const result = await response.json();
-    assert.equal(result.errors?.[0]?.message, "PNG bị hỏng hoặc không hợp lệ.");
+    assert.equal(result.errors?.[0]?.message, "Ảnh bị hỏng hoặc không đúng định dạng.");
     assert.equal(products.length, 0);
     assert.deepEqual(await uploadedNames(), []);
 });
@@ -154,7 +199,7 @@ test("PNG with invalid CRC is reported as corrupt before storage", async () => {
     const response = await upload({ file: corruptPng, filename: "corrupt.PNG" });
     assert.equal(response.status, 400);
     const result = await response.json();
-    assert.equal(result.errors?.[0]?.message, "PNG bị hỏng hoặc không hợp lệ.");
+    assert.equal(result.errors?.[0]?.message, "Ảnh bị hỏng hoặc không đúng định dạng.");
     assert.equal(products.length, 0);
     assert.deepEqual(await uploadedNames(), []);
 });
@@ -186,7 +231,7 @@ test("PNG declaring more pixels than the decoded budget gets a resolution error"
     assert.deepEqual(await uploadedNames(), []);
 });
 
-test("non-PNG, malformed PNG, and oversized files return image field errors without storing bytes", async () => {
+test("unsupported formats, malformed images, and oversized files return image field errors without storing bytes", async () => {
     const invalidUploads = [
         { file: Buffer.from("GIF89a"), filename: "phone.gif", type: "image/gif" },
         { file: png, filename: "phone.png", type: "image/jpeg" },

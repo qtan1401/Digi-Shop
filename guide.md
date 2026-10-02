@@ -437,12 +437,12 @@ Tất cả các hàm xử lý chính trong project đều **để trống body**
 
 ## Product image storage
 
-Product PNG uploads are saved under `PRODUCT_IMAGE_STORAGE_DIR` (default: `./data/product-images`). Set this variable to the path of a mounted durable host volume in each deployment and ensure the application user can create and read files there. For example, mount a persistent volume at `/var/lib/digi-shop/product-images` and configure:
+Product PNG and WebP uploads are saved under `PRODUCT_IMAGE_STORAGE_DIR` (default: `./data/product-images`). Set this variable to the path of a mounted durable host volume in each deployment and ensure the application user can create and read files there. For example, mount a persistent volume at `/var/lib/digi-shop/product-images` and configure:
 
 ```env
 PRODUCT_IMAGE_STORAGE_DIR=/var/lib/digi-shop/product-images
 ```
 
-The application serves these files from `/uploads/products/<generated-name>.png`; product records store this stable public path. Do not use ephemeral container storage for this directory: uploaded images must survive application restarts and redeployments.
+The application serves these files from `/uploads/products/<generated-name>.png` or `.webp`, matching the detected image format; product records store this stable public path. Do not use ephemeral container storage for this directory: uploaded images must survive application restarts and redeployments.
 
-Product uploads must be PNG, no larger than 5 MiB, with each side at most 8,192 px and no more than 25 MP total. The server validates PNG structure and CRC, and reports corrupt content, excessive resolution, and file-size violations separately. This bounds a decoded RGBA image to about 100 MiB.
+Product uploads must be PNG or static WebP, no larger than 5 MiB, with each side at most 8,192 px and no more than 25 MP total. The server checks PNG structure and CRC and fully decodes WebP, and reports corrupt content, excessive resolution, and file-size violations separately. This limits decoded RGBA data to about 100 MB.

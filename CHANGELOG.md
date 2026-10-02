@@ -13,7 +13,7 @@
 - Extended the explicit local reset to clear legacy category rows retained by the non-destructive Product migration; rollback verification covers their deletion and restoration.
 - Documented local seed and reset operations and their safeguards.
 
-- Replaced the product image URL field with authenticated, CSRF-protected single-PNG uploads validated by extension, MIME type, signature, and a 5 MiB server-side limit; images are stored on configurable local storage and edit forms retain the current image unless replaced.
-- Added complete PNG/CRC validation with separate corruption and resolution errors; uploads remain capped at 5 MiB and now allow up to 8,192 px per side and 25 MP decoded pixels.
-- Added HTTP coverage for uppercase `.PNG`, malformed/CRC-invalid files, byte and resolution boundaries, unauthorized requests, and image replacement/retention; documented durable storage and image limits.
+- Replaced the product image URL field with authenticated, CSRF-protected PNG or WebP uploads validated by detected content, extension, media type, and a 5 MiB server-side limit; static images are stored with their correct `.png` or `.webp` extension on configurable local storage.
+- Added full PNG signature/chunk/CRC validation and full WebP decoding; uploads remain capped at 5 MiB, 8,192 px per side, and 25 MP, with distinct corruption and resolution errors.
+- Added HTTP coverage for uppercase `.PNG`, actual WebP content named `.png`, malformed images, byte and resolution boundaries, unauthorized requests, and image replacement/retention; documented durable storage and supported formats.
 - Added a confirmed local rollback-check command that executes the reset clear inside a transaction, always rolls back, and verifies all affected table counts are unchanged.

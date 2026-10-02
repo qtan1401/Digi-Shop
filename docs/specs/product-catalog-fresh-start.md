@@ -6,7 +6,7 @@ Digi-Shop products are currently organized by a generic category and name. Custo
 
 Replace the generic category dimension with a fixed catalog vocabulary: brands Apple, Samsung, and MSI; device types phone, tablet, and laptop. Add multi-select brand and device filters in a hamburger-triggered popover while preserving the current price controls, search, and sorting. Show each product's brand and device type beneath its name, and remove the “Sản phẩm” navbar link.
 
-Allow administrators to upload one validated PNG image per product, up to 5 MiB, with each side at most 8,192 px and a total decoded resolution of at most 25 MP. Images are stored on a persistent local filesystem. Provide a separate, explicitly invoked one-time database reset for the current local Digi-Shop database. It removes all existing catalog, order, payment-attempt, user, cart, and audit records, then initializes an empty catalog and a replacement administrator. Normal seeding remains idempotent and non-destructive.
+Allow administrators to upload one validated PNG or WebP image per product, up to 5 MiB, with each side at most 8,192 px and a total decoded resolution of at most 25 MP. Identify the actual format from file content, fully decode WebP before storage, and preserve its detected `.png` or `.webp` extension. Reject animated WebP. Images are stored on a persistent local filesystem. Provide a separate, explicitly invoked one-time database reset for the current local Digi-Shop database. It removes all existing catalog, order, payment-attempt, user, cart, and audit records, then initializes an empty catalog and a replacement administrator. Normal seeding remains idempotent and non-destructive.
 
 ## User Stories
 
@@ -30,8 +30,8 @@ Allow administrators to upload one validated PNG image per product, up to 5 MiB,
 18. As an administrator, I want to choose one of the supported brands when creating a product, so that each product has a consistent brand value.
 19. As an administrator, I want to choose one of the supported device types when creating a product, so that every product is organized consistently.
 20. As an administrator, I want to update a product's brand and device type, so that its catalog classification stays accurate.
-21. As an administrator, I want to upload a PNG file instead of entering an image URL, so that I can manage product images from the catalog form.
-22. As an administrator, I want non-PNG and malformed image files rejected, so that only valid PNG images enter the catalog.
+21. As an administrator, I want to upload a PNG or WebP file instead of entering an image URL, so that I can manage product images from the catalog form.
+22. As an administrator, I want unsupported or malformed image files rejected, so that only valid PNG and WebP images enter the catalog.
 23. As an administrator, I want uploads larger than 5 MiB or beyond the decoded resolution limits rejected with a clear field error, so that I can correct the image without guessing why it failed.
 24. As an administrator, I want an existing product image retained when I edit other fields without selecting a replacement, so that an unrelated edit does not remove its image.
 25. As an administrator, I want an uploaded image to remain available after the application restarts or redeploys, so that products do not lose images when the host restarts.
@@ -55,7 +55,7 @@ Allow administrators to upload one validated PNG image per product, up to 5 MiB,
 - Include Brand and Device type in public product responses. Apply their filters in the existing client-side catalog pipeline, alongside the existing search, minimum/maximum price filters, and sorting.
 - Implement the hamburger control as a popover containing multi-select Brand and Device type choices. Multiple values within one facet use OR; separate facets, price, and search combine with AND. Keep the current price controls in their existing location and preserve their behavior.
 - Remove the “Sản phẩm” link from the navbar. Keep the catalog on the home page, show Brand and Device type as compact metadata beneath each product name, and retain the stock badge.
-- Replace URL entry in the administrator product form with one image-file upload for create and edit. Accept only PNG, enforce a 5 MiB file-size limit, an 8,192 px maximum edge, and a 25 MP decoded-pixel limit. Validate the signature, complete PNG structure, and CRC as well as extension and media type. A browser `accept` attribute is only a convenience, not a security check; return distinct field errors for corrupt content, excessive dimensions, and byte size.
+- Replace URL entry in the administrator product form with one image-file upload for create and edit. Accept PNG and WebP, enforce a 5 MiB file-size limit, an 8,192 px maximum edge, and a 25 MP decoded-pixel limit. Detect actual format from file content so valid WebP bytes are accepted even when the filename ends in `.png`; validate PNG signature, complete chunk structure, and CRC, and fully decode WebP. Reject animated WebP. A browser `accept` attribute is only a convenience, not a security check; return distinct field errors for corrupt content, excessive dimensions, and byte size.
 - Store uploaded image bytes on a configurable persistent local filesystem directory and persist only a stable public image path in the Product record. The deployment must mount durable storage at that directory. Do not add a cloud object-storage dependency in this scope.
 - Keep existing administrator authentication and CSRF requirements for product mutations. Reject unauthorized uploads and invalid images without persisting files; return field-level errors through the existing form contract. When editing, keep the current image if no replacement file is provided.
 - Add a separate, explicitly invoked one-time reset operation. It is not part of application startup, the regular seed command, or an automatic deployment migration. It targets the current local SQL Server database (`localhost:1433`, database `DigiShop`) and requires a clear operator confirmation.
@@ -67,9 +67,9 @@ Allow administrators to upload one validated PNG image per product, up to 5 MiB,
 ## Testing Decisions
 
 - Good tests assert externally visible behavior through the highest practical public seam. They describe customer or administrator outcomes, not private helpers, internal call counts, copied payloads, or incidental markup.
-- Test product create/update and public listing through HTTP requests to the real Express application. Use the existing in-memory Prisma test boundary and a temporary upload directory; assert persisted product behavior, allowlist validation, PNG validation, size boundaries, image replacement/retention, and authorization/CSRF failures.
+- Test product create/update and public listing through HTTP requests to the real Express application. Use the existing in-memory Prisma test boundary and a temporary upload directory; assert persisted product behavior, allowlist validation, PNG and WebP validation, size boundaries, image replacement/retention, and authorization/CSRF failures.
 - Exercise the storefront in a real browser smoke run: open/close the popover, select multiple values, combine brand/device/search/price, verify matching cards and empty results, and verify navbar and card metadata.
-- Exercise the administrator upload surface in a real browser with valid lowercase and uppercase `.PNG` files, malformed/corrupt PNGs, a file over 5 MiB, and an image beyond each resolution limit. Verify distinct visible errors and that invalid uploads never create records or files.
+- Exercise the administrator upload surface in a real browser with valid PNG and WebP files, including WebP bytes named `.png`, malformed/corrupt images, a file over 5 MiB, and images beyond each resolution limit. Verify distinct visible errors and that invalid uploads never create records or files.
 - Verify the one-time reset against the explicitly targeted local SQL Server database: report row counts before and after for every cleared table, confirm the sole replacement administrator and empty Product catalog, and confirm that a failed transaction does not leave partial deletion. Do not run this verification against production.
 - Run the existing `npm test` suite to protect payment and application behavior. Prior art is the HTTP integration suite that starts the Express application on a loopback port and substitutes an in-memory Prisma client at the database boundary.
 - The user approved this seam: HTTP integration tests with in-memory persistence and temporary file storage, plus browser smoke checks for the user-facing catalog and upload flow.
@@ -78,7 +78,7 @@ Allow administrators to upload one validated PNG image per product, up to 5 MiB,
 
 - Additional Brands or Device types, and administrator-managed taxonomy editing.
 - Keeping a separate generic category dimension or retaining the old “Phụ kiện” category.
-- Image formats other than PNG, multiple images per Product, image resizing, thumbnails, or an image CDN.
+- Other image formats, animated WebP, multiple images per Product, image resizing, thumbnails, or an image CDN.
 - Cloud/object storage or cross-region/distributed file replication.
 - Importing or inventing a replacement sample catalog; the new Product catalog starts empty.
 - A destructive reset during normal seed runs, app startup, or every deployment.
