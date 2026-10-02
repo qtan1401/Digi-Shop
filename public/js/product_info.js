@@ -4,6 +4,47 @@
 
 const getUrlParam = (param) => new URLSearchParams(window.location.search).get(param);
 const formatPrice = (price) => price.toLocaleString("vi-VN") + "₫";
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+})[character]);
+
+const createDescriptionRows = (description) => {
+    const text = String(description ?? "").trim();
+    if (!text) return "";
+
+    const entries = text
+        .split(/(?:\s*•\s*|\r?\n)+/u)
+        .flatMap((entry) => {
+            const section = entry.match(/([.!?])\s+((?:\p{Lu}\p{Ll}+\s+){1,5}\p{Lu}\p{Ll}+)$/u);
+            return section && entry.includes(":")
+                ? [entry.slice(0, section.index).trim() + section[1], section[2]]
+                : [entry];
+        })
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+    if (!entries.some((entry) => entry.includes(":"))) {
+        return `<tr><th scope="row">Mô tả</th><td>${escapeHtml(text)}</td></tr>`;
+    }
+
+    return entries.map((entry, index) => {
+        const separator = entry.indexOf(":");
+        if (separator > 0) {
+            const label = entry.slice(0, separator).trim();
+            const value = entry.slice(separator + 1).trim();
+            return `<tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
+        }
+
+        const hasFieldsAfter = entries.slice(index + 1).some((nextEntry) => nextEntry.includes(":"));
+        return hasFieldsAfter
+            ? `<tr class="product-info__specification-section"><th colspan="2">${escapeHtml(entry)}</th></tr>`
+            : `<tr><th scope="row">Mô tả</th><td>${escapeHtml(entry)}</td></tr>`;
+    }).join("");
+};
 
 const createStockInfo = (stock) => {
     if (stock <= 0) {
@@ -44,6 +85,7 @@ const loadProductInfo = async () => {
         const authState = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false }));
         const canPurchase = authState.user?.role !== "admin";
 
+        const descriptionRows = createDescriptionRows(product.description);
         container.innerHTML = `
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="product-info__card">
@@ -52,7 +94,6 @@ const loadProductInfo = async () => {
                     <h1 class="product-info__name">${product.name}</h1>
                     <div class="product-info__price">${formatPrice(product.price)}</div>
                     ${createStockInfo(product.stock)}
-                    <p class="product-info__description">${product.description}</p>
                     <div class="product-info__actions">
                         ${!canPurchase
                             ? `<span class="product-card__role-note">Tài khoản Admin chỉ xem catalog.</span>`
@@ -66,18 +107,18 @@ const loadProductInfo = async () => {
                                    </button>`
                         }
                     </div>
-                    <div class="product-info__meta">
-                        <div class="product-info__meta-item">
-                            <span class="product-info__meta-label">ID</span>
-                            <span class="product-info__meta-value">#${product.id}</span>
-                        </div>
-                        <div class="product-info__meta-item">
-                            <span class="product-info__meta-label">Slug</span>
-                            <span class="product-info__meta-value">${product.slug}</span>
-                        </div>
-                    </div>
                 </div>
-            </div>`;
+            </div>
+            ${descriptionRows ? `
+                <section class="product-info__specifications" aria-labelledby="product-info-specifications-title">
+                    <h2 class="product-info__specifications-title" id="product-info-specifications-title">Thông số kỹ thuật</h2>
+                    <div class="product-info__specifications-table-wrapper">
+                        <table class="product-info__specifications-table">
+                            <tbody>${descriptionRows}</tbody>
+                        </table>
+                    </div>
+                </section>
+            ` : ""}`;
 
         // Gắn handler sau khi DOM render xong (product đã có trong closure)
         if (!outOfStock && canPurchase) {
