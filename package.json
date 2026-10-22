@@ -35,5 +35,10 @@
   },
   "devDependencies": {
     "prisma": "7.10.0"
+  },
+  "allowScripts": {
+    "prisma@7.10.0": true,
+    "@prisma/engines@7.10.0": true,
+    "argon2@0.31.2": true
   }
 }
