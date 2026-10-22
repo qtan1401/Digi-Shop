@@ -243,24 +243,76 @@ function normalizeProduct(record, index, changes) {
     }
     const brand = requiredText(record.brand, "brand", identity, changes, 16);
     const deviceType = requiredText(record.deviceType, "deviceType", identity, changes, 16);
-    if (!["Apple", "Samsung", "MSI"].includes(brand)) {
-        throw new SeedDataError(identity, "brand must be Apple, Samsung, or MSI");
-    }
-    if (!["phone", "tablet", "laptop"].includes(deviceType)) {
-        throw new SeedDataError(identity, "deviceType must be phone, tablet, or laptop");
+    if (!["Apple", "Samsung", "MSI"].includes(brand)) throw new SeedDataError(identity, "brand must be Apple, Samsung, or MSI");
+    if (!["phone", "tablet", "laptop"].includes(deviceType)) throw new SeedDataError(identity, "deviceType must be phone, tablet, or laptop");
+    if (!Array.isArray(record.options) || !Array.isArray(record.variants) || record.variants.length === 0) {
+        throw new SeedDataError(identity, "options and non-empty variants arrays are required");
     }
 
+    const HEX_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+    const options = record.options.map((option, optionIndex) => {
+        const optionIdentity = `${identity}/option:${optionIndex}`;
+        if (!option || typeof option !== "object" || Array.isArray(option) || !Array.isArray(option.values) || option.values.length === 0) {
+            throw new SeedDataError(optionIdentity, "option must contain a non-empty values array");
+        }
+        const name = requiredText(option.name, "name", optionIdentity, changes, 100);
+        const values = option.values.map((rawEntry, valueIndex) => {
+            const valueIdentity = `${optionIdentity}/value:${valueIndex}`;
+            const entry = (rawEntry && typeof rawEntry === "object" && !Array.isArray(rawEntry)) ? rawEntry : { value: rawEntry };
+            const value = requiredText(entry.value, "value", valueIdentity, changes, 100);
+            const colorHex = optionalText(entry.colorHex, "colorHex", valueIdentity, changes, 7);
+            if (colorHex !== null && !HEX_COLOR_PATTERN.test(colorHex)) {
+                throw new SeedDataError(valueIdentity, "colorHex must match #RRGGBB");
+            }
+            return { value, colorHex: colorHex ? colorHex.toUpperCase() : null };
+        });
+        assertUnique(values.map((entry, id) => ({ id, value: entry.value })), "value", `product:${identity}/option:${name}`);
+        return { name, values };
+    });
+    assertUnique(options.map((option, id) => ({ id, name: option.name })), "name", `product:${identity}/option`);
+    const optionKeys = new Map(options.map(({ name, values }) => [name.normalize("NFKC").toLowerCase(),
+        new Set(values.map(({ value }) => value.normalize("NFKC").toLowerCase()))]));
+    const variants = record.variants.map((variant, variantIndex) => {
+        const variantIdentity = `${identity}/variant:${variantIndex}`;
+        if (!variant || typeof variant !== "object" || Array.isArray(variant) ||
+            !variant.optionValues || typeof variant.optionValues !== "object" || Array.isArray(variant.optionValues)) {
+            throw new SeedDataError(variantIdentity, "variant optionValues must be an object");
+        }
+        const optionValues = {};
+        for (const [name, value] of Object.entries(variant.optionValues)) {
+            const normalizedName = name.normalize("NFKC").toLowerCase();
+            const normalizedValue = typeof value === "string" ? value.normalize("NFKC").toLowerCase() : "";
+            if (!optionKeys.has(normalizedName) || !optionKeys.get(normalizedName).has(normalizedValue)) {
+                throw new SeedDataError(variantIdentity, `optionValues contains unknown option or value ${name}`);
+            }
+            const canonicalName = options.find((option) => option.name.normalize("NFKC").toLowerCase() === normalizedName).name;
+            optionValues[canonicalName] = options.find((option) => option.name === canonicalName).values.find((candidate) =>
+                candidate.value.normalize("NFKC").toLowerCase() === normalizedValue).value;
+        }
+        if (Object.keys(optionValues).length !== options.length) {
+            throw new SeedDataError(variantIdentity, "optionValues must specify exactly one value for each product option");
+        }
+        return {
+            sku: normalizeCode(variant.sku, "sku", variantIdentity, changes, 100),
+            price: normalizeMoney(variant.price, "price", variantIdentity, changes, { positive: true }),
+            stock: normalizeInteger(variant.stock, "stock", variantIdentity, changes, { minimum: 0, maximum: 2147483647 }),
+            image: optionalText(variant.image, "image", variantIdentity, changes, 500),
+            optionValues
+        };
+    });
+    assertUnique(variants, "sku", `product:${identity}/variant`);
+    const combinations = variants.map(({ optionValues }) => stableJson(optionValues, identity));
+    if (new Set(combinations).size !== combinations.length) throw new SeedDataError(identity, "variant option combinations must be unique");
     return {
         id: normalizeInteger(record.id, "id", identity, changes, { minimum: 1, maximum: 2147483647 }),
         brand,
         deviceType,
         name: requiredText(record.name, "name", identity, changes, 200),
         slug: normalizeSlug(record.slug, "slug", identity, changes, 240),
-        sku: normalizeCode(record.sku, "sku", identity, changes, 100),
-        stock: normalizeInteger(record.stock, "stock", identity, changes, { minimum: 0, maximum: 2147483647 }),
-        price: normalizeMoney(record.price, "price", identity, changes, { positive: true }),
         image: requiredText(record.image, "image", identity, changes, 500),
         description: requiredText(record.description, "description", identity, changes, 2147483647),
+        options,
+        variants,
         isDeleted,
         deletedAt,
         createdAt: normalizeDate(record.createdAt, "createdAt", identity, changes),
@@ -273,10 +325,7 @@ function normalizeOrder(record, index, changes) {
     if (!record.customer || typeof record.customer !== "object" || Array.isArray(record.customer)) {
         throw new SeedDataError(identity, "customer must be an object");
     }
-    if (!Array.isArray(record.items) || record.items.length === 0) {
-        throw new SeedDataError(identity, "items must be a non-empty array");
-    }
-
+    if (!Array.isArray(record.items) || record.items.length === 0) throw new SeedDataError(identity, "items must be a non-empty array");
     const order = {
         id: requiredText(record.id, "id", identity, changes, 64),
         subtotal: normalizeMoney(record.subtotal, "subtotal", identity, changes),
@@ -300,29 +349,16 @@ function normalizeOrder(record, index, changes) {
             if (decimalToCents(unitPrice, "unitPrice", itemIdentity) * BigInt(quantity) !== decimalToCents(lineTotal, "lineTotal", itemIdentity)) {
                 throw new SeedDataError(itemIdentity, "lineTotal must equal unitPrice multiplied by quantity");
             }
-            return {
-                productId: normalizeInteger(item.productId, "productId", itemIdentity, changes, { minimum: 1, maximum: 2147483647 }),
-                name: requiredText(item.name, "name", itemIdentity, changes, 200),
-                image: requiredText(item.image, "image", itemIdentity, changes, 500),
-                unitPrice,
-                quantity,
-                lineTotal
-            };
+            return { variantSku: normalizeCode(item.variantSku, "variantSku", itemIdentity, changes, 100), unitPrice, quantity, lineTotal };
         })
     };
-
     const itemSubtotal = order.items.reduce((sum, item) => sum + decimalToCents(item.lineTotal, "lineTotal", identity), 0n);
-    const subtotal = decimalToCents(order.subtotal, "subtotal", identity);
-    const expectedTotal = subtotal + decimalToCents(order.shippingFee, "shippingFee", identity) - decimalToCents(order.discount, "discount", identity);
-    if (itemSubtotal !== subtotal) {
-        throw new SeedDataError(identity, "subtotal must equal the sum of item line totals");
-    }
-    if (expectedTotal !== decimalToCents(order.totalPrice, "totalPrice", identity)) {
-        throw new SeedDataError(identity, "totalPrice must equal subtotal plus shippingFee minus discount");
-    }
-
+    const expectedTotal = decimalToCents(order.subtotal, "subtotal", identity) + decimalToCents(order.shippingFee, "shippingFee", identity) - decimalToCents(order.discount, "discount", identity);
+    if (itemSubtotal !== decimalToCents(order.subtotal, "subtotal", identity)) throw new SeedDataError(identity, "subtotal must equal the sum of item line totals");
+    if (expectedTotal !== decimalToCents(order.totalPrice, "totalPrice", identity)) throw new SeedDataError(identity, "totalPrice must equal subtotal plus shippingFee minus discount");
     return order;
 }
+
 
 function normalizeAudit(record, index, changes) {
     const identity = requireRecord("audit", record, index);
@@ -371,15 +407,20 @@ function normalizeSeedData(source) {
 
     assertUnique(products, "id", "product");
     assertUnique(products, "slug", "product");
-    assertUnique(products, "sku", "product");
     assertUnique(orders, "id", "order");
     assertUnique(audits, "id", "audit");
-
-    const productIds = new Set(products.map(({ id }) => id));
+    const variantsBySku = new Map();
+    for (const product of products) {
+        for (const variant of product.variants) {
+            const sku = variant.sku.normalize("NFKC").toLowerCase();
+            if (variantsBySku.has(sku)) throw new SeedDataError(`product:${product.id}`, `sku duplicates variant ${variantsBySku.get(sku)}`);
+            variantsBySku.set(sku, product.id);
+        }
+    }
     for (const order of orders) {
         for (const [index, item] of order.items.entries()) {
-            if (!productIds.has(item.productId)) {
-                throw new SeedDataError(`order:${order.id}/item:${index}`, `productId ${item.productId} is not present in the product seed`);
+            if (!variantsBySku.has(item.variantSku.normalize("NFKC").toLowerCase())) {
+                throw new SeedDataError(`order:${order.id}/item:${index}`, `variantSku ${item.variantSku} is not present in the product seed`);
             }
         }
     }

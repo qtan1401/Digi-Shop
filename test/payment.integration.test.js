@@ -42,9 +42,23 @@ const withRelations = (row, args, current) => {
 
 const makeClient = () => {
     const client = {
-        $queryRaw: async (_strings, key) => {
-            const product = state.products.get(key);
-            if (product && typeof key === "number") return [clone(product)];
+        $queryRaw: async (strings, key) => {
+            const query = strings.join("");
+            if (query.includes("[dbo].[product_variants]")) {
+                const variant = state.productVariants.get(key);
+                if (!variant) return [];
+                const product = state.products.get(variant.productId);
+                return product ? [{
+                    ...clone(variant),
+                    ...clone(product),
+                    id: variant.id,
+                    productId: variant.productId,
+                    sku: variant.sku,
+                    price: variant.price,
+                    stock: variant.stock,
+                    isActive: variant.isActive
+                }] : [];
+            }
             return state.orders.has(key) ? [{ id: key }] : [];
         },
         user: {
@@ -74,17 +88,20 @@ const makeClient = () => {
         orderItem: {
             findMany: async ({ where = {} }) => state.orderItems.filter((row) => matches(row, where)).map(clone)
         },
-        product: {
+        productVariant: {
+            findUnique: async ({ where }) => clone(state.productVariants.get(where.id) || null),
             update: async ({ where, data }) => {
-                const row = state.products.get(where.id);
-                if (!row) throw new Error("product not found");
+                const row = state.productVariants.get(where.id);
+                if (!row) throw new Error("variant not found");
                 if (data.stock?.increment !== undefined) row.stock += data.stock.increment;
                 if (data.stock?.decrement !== undefined) row.stock -= data.stock.decrement;
                 return clone(row);
             },
             updateMany: async ({ where, data }) => {
-                const row = state.products.get(where.id);
-                if (!row || (where.isDeleted !== undefined && row.isDeleted !== where.isDeleted) ||
+                const row = state.productVariants.get(where.id);
+                const product = row && state.products.get(row.productId);
+                if (!row || !product || (where.isActive !== undefined && row.isActive !== where.isActive) ||
+                    (where.product?.isDeleted !== undefined && product.isDeleted !== where.product.isDeleted) ||
                     (where.stock?.gte !== undefined && row.stock < where.stock.gte)) return { count: 0 };
                 if (data.stock?.decrement !== undefined) row.stock -= data.stock.decrement;
                 if (data.stock?.increment !== undefined) row.stock += data.stock.increment;
@@ -186,8 +203,28 @@ const makeState = ({ attemptId = "a".repeat(32), expiresAt = new Date(Date.now()
     };
     return {
         orders: new Map([[order.id, order]]),
-        orderItems: [{ orderId: order.id, productId: 1, quantity: 1, nameSnapshot: "Test item", imageSnapshot: "", unitPrice: 100_000, lineTotal: 100_000 }],
-        products: new Map([[1, { id: 1, name: "Test item", image: "", price: 100_000, stock, isDeleted: false }]]),
+        orderItems: [{
+            orderId: order.id,
+            variantId: 1,
+            quantity: 1,
+            nameSnapshot: "Test item",
+            imageSnapshot: "",
+            skuSnapshot: "TEST-SKU",
+            optionsSnapshot: "[]",
+            unitPrice: 100_000,
+            lineTotal: 100_000
+        }],
+        products: new Map([[1, { id: 1, name: "Test item", image: "", isDeleted: false }]]),
+        productVariants: new Map([[1, {
+            id: 1,
+            productId: 1,
+            sku: "TEST-SKU",
+            price: 100_000,
+            stock,
+            isActive: true,
+            combinationKey: "[]",
+            optionValues: []
+        }]]),
         paymentAttempts: new Map([[attempt.id, attempt]]),
         users: new Map([
             ["user-test-01", { id: "user-test-01", status: "ACTIVE", role: "user", authVersion: 1, forcePasswordChange: false }],
@@ -324,7 +361,7 @@ test("MoMo retry API creates a unique QR attempt, confirms only a signed callbac
         assert.equal((await activeRetry.json()).error.code, "PAYMENT_ATTEMPT_ACTIVE");
         assert.equal(state.paymentAttempts.size, 2);
         assert.equal(state.paymentAttempts.get("a".repeat(32)).status, "EXPIRED");
-        assert.equal(state.products.get(1).stock, 0);
+        assert.equal(state.productVariants.get(1).stock, 0);
 
         const callback = {
             amount: 100_000,
@@ -349,7 +386,7 @@ test("MoMo retry API creates a unique QR attempt, confirms only a signed callbac
         assert.equal(paid.status, 204);
         assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "PAID");
         assert.equal(state.paymentAttempts.get(attempt.id).status, "SUCCEEDED");
-        assert.equal(state.products.get(1).stock, 0);
+        assert.equal(state.productVariants.get(1).stock, 0);
 
         const duplicate = await originalFetch(`${baseUrl}/api/payments/momo/callback`, {
             method: "POST",
@@ -357,7 +394,7 @@ test("MoMo retry API creates a unique QR attempt, confirms only a signed callbac
             body: JSON.stringify(callback)
         });
         assert.equal(duplicate.status, 204);
-        assert.equal(state.products.get(1).stock, 0);
+        assert.equal(state.productVariants.get(1).stock, 0);
     } finally {
         global.fetch = originalFetch;
     }
@@ -375,11 +412,11 @@ test("VNPay signed success after expiry releases stock once and stays in reconci
     assert.equal((await callback.json()).RspCode, "00");
     assert.equal(state.paymentAttempts.get(attemptId).status, "LATE_SUCCESS");
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 
     const duplicate = await fetch(`${baseUrl}/api/payments/vnpay/ipn?${query}`);
     assert.equal((await duplicate.json()).RspCode, "00");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 
     const reconciliation = await fetch(`${baseUrl}/api/payments/reconciliation`, {
         headers: headersFor("admin-test-01", "admin")
@@ -409,7 +446,7 @@ test("expiry racing a signed provider success releases inventory once and never 
     assert.equal(state.paymentAttempts.get(attemptId).status, "LATE_SUCCESS");
     assert.ok(state.paymentAttempts.get(attemptId).inventoryReleasedAt);
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 });
 
 test("timely signed VNPay success marks the order paid idempotently", async () => {
@@ -423,11 +460,11 @@ test("timely signed VNPay success marks the order paid idempotently", async () =
     assert.equal((await response.json()).RspCode, "00");
     assert.equal(state.paymentAttempts.get(attemptId).status, "SUCCEEDED");
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "PAID");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 
     const duplicate = await fetch(`${baseUrl}/api/payments/vnpay/ipn?${new URLSearchParams(fields)}`);
     assert.equal((await duplicate.json()).RspCode, "00");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 });
 
 test("VNPay retry API regenerates a hosted VNPAYQR payment URL for the same order", async () => {
@@ -452,7 +489,7 @@ test("VNPay retry API regenerates a hosted VNPAYQR payment URL for the same orde
     delete signedParams.vnp_SecureHash;
     assert.equal(generatedSignature, signVnPay(signedParams));
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 });
 
 test("retry rejects when inventory was sold after an expired attempt released its reservation", async () => {
@@ -462,9 +499,9 @@ test("retry rejects when inventory was sold after an expired attempt released it
     });
     assert.equal(expiredResponse.status, 200);
     assert.equal((await expiredResponse.json()).data.status, "EXPIRED");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 
-    state.products.get(1).stock = 0;
+    state.productVariants.get(1).stock = 0;
     const retry = await fetch(`${baseUrl}/api/payments/orders/ORD-TEST-01/attempts`, {
         method: "POST",
         headers: { ...headersFor("user-test-01", "user", true), "Content-Type": "application/json" },
@@ -474,7 +511,7 @@ test("retry rejects when inventory was sold after an expired attempt released it
     assert.equal((await retry.json()).error.code, "PAYMENT_STOCK_UNAVAILABLE");
     assert.equal(state.paymentAttempts.size, 1);
     assert.equal(state.paymentAttempts.get(attemptId).status, "EXPIRED");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 });
 
 test("callback rejects invalid signatures without changing order or inventory", async () => {
@@ -485,7 +522,7 @@ test("callback rejects invalid signatures without changing order or inventory", 
     assert.equal((await response.json()).RspCode, "97");
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
     assert.equal(state.paymentAttempts.get("a".repeat(32)).status, "PENDING");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 });
 
 test("signed VNPay amount mismatch and unknown attempt cannot mutate payment state", async () => {
@@ -498,14 +535,14 @@ test("signed VNPay amount mismatch and unknown attempt cannot mutate payment sta
     assert.equal((await mismatch.json()).RspCode, "04");
     assert.equal(state.paymentAttempts.get(attemptId).status, "PENDING");
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 
     const unknownAttempt = vnpayFields("b".repeat(32));
     unknownAttempt.vnp_SecureHash = signVnPay(unknownAttempt);
     const notFound = await fetch(`${baseUrl}/api/payments/vnpay/ipn?${new URLSearchParams(unknownAttempt)}`);
     assert.equal((await notFound.json()).RspCode, "01");
     assert.equal(state.paymentAttempts.get(attemptId).status, "PENDING");
-    assert.equal(state.products.get(1).stock, 0);
+    assert.equal(state.productVariants.get(1).stock, 0);
 });
 
 test("signed VNPay failure releases reserved stock once and leaves the order unpaid", async () => {
@@ -521,11 +558,11 @@ test("signed VNPay failure releases reserved stock once and leaves the order unp
     assert.equal((await failed.json()).RspCode, "00");
     assert.equal(state.paymentAttempts.get(attemptId).status, "FAILED");
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 
     const duplicate = await fetch(`${baseUrl}/api/payments/vnpay/ipn?${new URLSearchParams(fields)}`);
     assert.equal((await duplicate.json()).RspCode, "00");
-    assert.equal(state.products.get(1).stock, 1);
+    assert.equal(state.productVariants.get(1).stock, 1);
 });
 
 test("initial checkout keeps COD and BANKING compatible and passes VNPay checkout IP", async () => {
@@ -566,6 +603,51 @@ test("initial checkout keeps COD and BANKING compatible and passes VNPay checkou
     assert.equal(vnPayOrder.paymentStatus, "UNPAID");
 });
 
+test("checkout uses the selected variant price and stock and snapshots its SKU and options", async () => {
+    state = makeState({ stock: 5 });
+    state.productVariants.set(2, {
+        id: 2,
+        productId: 1,
+        sku: "TEST-BLUE",
+        price: 200_000,
+        stock: 3,
+        isActive: true,
+        combinationKey: "blue",
+        optionValues: [{
+            optionValue: {
+                value: "Blue",
+                isActive: true,
+                option: { name: "Color", isActive: true }
+            }
+        }]
+    });
+
+    const response = await fetch(`${baseUrl}/api/checkout/2`, {
+        method: "POST",
+        headers: { ...headersFor("user-test-01", "user", true), "Content-Type": "application/json" },
+        body: JSON.stringify({
+            quantity: 2,
+            customerName: "Test Buyer",
+            customerPhone: "0901234567",
+            customerAddress: "123 Test Street",
+            paymentMethod: "COD"
+        })
+    });
+
+    assert.equal(response.status, 201);
+    const order = (await response.json()).data;
+    assert.equal(order.subtotal, 400_000);
+    assert.equal(order.items[0].variantId, 2);
+    assert.equal(order.items[0].sku, "TEST-BLUE");
+    assert.deepEqual(order.items[0].options, { Color: "Blue" });
+    assert.equal(state.productVariants.get(1).stock, 5);
+    assert.equal(state.productVariants.get(2).stock, 1);
+
+    const savedItem = state.orderItems.find((item) => item.variantId === 2);
+    assert.equal(savedItem.skuSnapshot, "TEST-BLUE");
+    assert.deepEqual(JSON.parse(savedItem.optionsSnapshot), { Color: "Blue" });
+});
+
 test("provider initialization failure preserves the same unpaid order and releases its reservation", async () => {
     state = makeState({ stock: 5 });
     const originalFetch = global.fetch;
@@ -588,7 +670,7 @@ test("provider initialization failure preserves the same unpaid order and releas
         assert.equal(order.paymentStatus, "UNPAID");
         assert.equal(order.paymentAttempt.status, "FAILED");
         assert.equal(state.orders.get(order.id).paymentStatus, "UNPAID");
-        assert.equal(state.products.get(1).stock, 5);
+        assert.equal(state.productVariants.get(1).stock, 5);
     } finally {
         global.fetch = originalFetch;
     }
@@ -596,7 +678,7 @@ test("provider initialization failure preserves the same unpaid order and releas
 
 test("MoMo rejects the screenshot-sized order before HTTP and the same order retries through VNPay", async () => {
     state = makeState({ stock: 7 });
-    state.products.get(1).price = 34_990_000;
+    state.productVariants.get(1).price = 34_990_000;
     const originalFetch = global.fetch;
     let providerRequests = 0;
     global.fetch = async () => {
@@ -623,7 +705,7 @@ test("MoMo rejects the screenshot-sized order before HTTP and the same order ret
         assert.equal(order.paymentAttempt.provider, "MOMO");
         assert.equal(order.paymentAttempt.amount, 245_030_000);
         assert.equal(order.paymentAttempt.status, "FAILED");
-        assert.equal(state.products.get(1).stock, 7);
+        assert.equal(state.productVariants.get(1).stock, 7);
         assert.equal(providerRequests, 0);
 
         const retry = await originalFetch(`${baseUrl}/api/payments/orders/${encodeURIComponent(order.id)}/attempts`, {
@@ -640,7 +722,7 @@ test("MoMo rejects the screenshot-sized order before HTTP and the same order ret
         assert.equal(attempt.status, "PENDING");
         assert.equal(paymentUrl.searchParams.get("vnp_Amount"), "24503000000");
         assert.equal(state.orders.get(order.id).paymentStatus, "UNPAID");
-        assert.equal(state.products.get(1).stock, 0);
+        assert.equal(state.productVariants.get(1).stock, 0);
         assert.equal(providerRequests, 0);
     } finally {
         global.fetch = originalFetch;

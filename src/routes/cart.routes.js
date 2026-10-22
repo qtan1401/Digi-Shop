@@ -13,8 +13,8 @@ router.post("/shipping", cartController.getShippingFee);
 
 // Account cart endpoints derive identity exclusively from req.user.id.
 router.get("/", requireRole("user"), cartController.getAccountCart);
-router.put("/items/:productId", requireRole("user"), requireCsrf, cartController.setAccountCartQuantity);
-router.delete("/items/:productId", requireRole("user"), requireCsrf, cartController.removeAccountCartItem);
+router.put("/items/:variantId", requireRole("user"), requireCsrf, cartController.setAccountCartQuantity);
+router.delete("/items/:variantId", requireRole("user"), requireCsrf, cartController.removeAccountCartItem);
 router.post("/merge", requireRole("user"), requireCsrf, cartController.mergeGuestCart);
 
 module.exports = router;

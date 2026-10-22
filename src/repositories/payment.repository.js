@@ -38,16 +38,17 @@ const lockOrder = async (transaction, orderId) => {
 const restoreInventory = async (transaction, orderId) => {
     const items = await transaction.orderItem.findMany({
         where: { orderId },
-        orderBy: { productId: "asc" },
-        select: { productId: true, quantity: true }
+        orderBy: { variantId: "asc" },
+        select: { variantId: true, quantity: true }
     });
     for (const item of items) {
-        await transaction.product.update({
-            where: { id: item.productId },
+        await transaction.productVariant.update({
+            where: { id: item.variantId },
             data: { stock: { increment: item.quantity } }
         });
     }
 };
+
 
 const releaseAttempt = async (transaction, attempt, status, now) => {
     if (attempt.status !== ACTIVE) return attempt;
@@ -85,17 +86,22 @@ const failAttempt = async (id, now = new Date()) => getPrismaClient().$transacti
 const reserveInventory = async (transaction, orderId) => {
     const items = await transaction.orderItem.findMany({
         where: { orderId },
-        orderBy: { productId: "asc" },
-        select: { productId: true, quantity: true }
+        orderBy: { variantId: "asc" },
+        select: { variantId: true, quantity: true }
     });
     if (items.length === 0) throw new PaymentError("ORDER_ITEMS_MISSING", "Không thể tạo giao dịch cho đơn hàng này", 409);
     for (const item of items) {
-        const result = await transaction.product.updateMany({
-            where: { id: item.productId, isDeleted: false, stock: { gte: item.quantity } },
+        const result = await transaction.productVariant.updateMany({
+            where: {
+                id: item.variantId,
+                isActive: true,
+                product: { isDeleted: false },
+                stock: { gte: item.quantity }
+            },
             data: { stock: { decrement: item.quantity } }
         });
         if (result.count !== 1) {
-            throw new PaymentError("PAYMENT_STOCK_UNAVAILABLE", "Một số sản phẩm trong đơn không còn đủ hàng để thử thanh toán", 409);
+            throw new PaymentError("PAYMENT_STOCK_UNAVAILABLE", "Một số phiên bản trong đơn không còn đủ hàng để thử thanh toán", 409);
         }
     }
 };

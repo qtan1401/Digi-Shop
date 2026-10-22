@@ -13,25 +13,84 @@ process.env.JWT_ACCESS_SECRET = "integration-test-secret-that-is-more-than-thirt
 process.env.PRODUCT_IMAGE_STORAGE_DIR = storageDirectory;
 
 let products;
+let productOptions;
+let productOptionValues;
+let productVariants;
+let variantOptionValues;
 let audits;
 let nextProductId;
+let nextOptionId;
+let nextOptionValueId;
+let nextVariantId;
 const clone = (value) => value === undefined ? undefined : structuredClone(value);
 const matches = (row, where = {}) => Object.entries(where).every(([key, expected]) => {
     if (key === "OR") return expected.some((clause) => matches(row, clause));
     if (expected && typeof expected === "object" && "contains" in expected) return String(row[key] ?? "").includes(expected.contains);
     return row[key] === expected;
 });
+const hydrateVariant = (row, include = {}) => {
+    if (!row) return row;
+    const result = clone(row);
+    if (include.optionValues) {
+        result.optionValues = variantOptionValues
+            .filter((link) => link.variantId === row.id)
+            .map((link) => {
+                const optionValue = productOptionValues.find((value) => value.id === link.optionValueId);
+                const option = productOptions.find((candidate) => candidate.id === optionValue?.optionId);
+                return {
+                    ...clone(link),
+                    optionValue: optionValue ? { ...clone(optionValue), option: clone(option) } : null
+                };
+            });
+    }
+    if (include.product) result.product = clone(products.find((product) => product.id === row.productId));
+    return result;
+};
+const hydrateProduct = (row, include = {}) => {
+    if (!row) return row;
+    const result = clone(row);
+    if (include.options) {
+        const spec = include.options === true ? {} : include.options;
+        result.options = productOptions
+            .filter((option) => option.productId === row.id &&
+                (spec.where?.isActive === undefined || option.isActive === spec.where.isActive))
+            .map((option) => ({
+                ...clone(option),
+                values: productOptionValues
+                    .filter((value) => value.optionId === option.id &&
+                        (spec.include?.values?.where?.isActive === undefined ||
+                            value.isActive === spec.include.values.where.isActive))
+                    .map(clone)
+            }));
+    }
+    if (include.variants) {
+        const spec = include.variants === true ? {} : include.variants;
+        result.variants = productVariants
+            .filter((variant) => variant.productId === row.id &&
+                (spec.where?.isActive === undefined || variant.isActive === spec.where.isActive))
+            .map((variant) => hydrateVariant(variant, spec.include || {}));
+    }
+    return result;
+};
 const fakePrisma = {
+    $transaction: async (work) => work(fakePrisma),
     product: {
-        findMany: async ({ where = {}, orderBy } = {}) => {
-            const rows = products.filter((row) => matches(row, where)).map(clone);
+        findMany: async ({ where = {}, orderBy, include } = {}) => {
+            const rows = products.filter((row) => matches(row, where));
             if (orderBy?.id === "asc") rows.sort((a, b) => a.id - b.id);
-            return rows;
+            return rows.map((row) => hydrateProduct(row, include));
         },
-        findUnique: async ({ where }) => clone(products.find((row) => matches(row, where)) || null),
+        findUnique: async ({ where, include }) =>
+            hydrateProduct(products.find((row) => matches(row, where)), include),
         create: async ({ data }) => {
             const row = { id: nextProductId++, ...clone(data) };
             products.push(row);
+            return clone(row);
+        },
+        update: async ({ where, data }) => {
+            const row = products.find((candidate) => matches(candidate, where));
+            if (!row) throw new Error("product not found");
+            Object.assign(row, clone(data));
             return clone(row);
         },
         updateMany: async ({ where, data }) => {
@@ -39,6 +98,74 @@ const fakePrisma = {
             if (!row) return { count: 0 };
             Object.assign(row, clone(data));
             return { count: 1 };
+        }
+    },
+    productOption: {
+        findMany: async ({ where }) => productOptions
+            .filter((option) => matches(option, where))
+            .map((option) => ({
+                ...clone(option),
+                values: productOptionValues.filter((value) => value.optionId === option.id).map(clone)
+            })),
+        create: async ({ data }) => {
+            const row = { id: nextOptionId++, ...clone(data) };
+            productOptions.push(row);
+            return clone(row);
+        },
+        update: async ({ where, data }) => {
+            const row = productOptions.find((option) => matches(option, where));
+            Object.assign(row, clone(data));
+            return clone(row);
+        }
+    },
+    productOptionValue: {
+        create: async ({ data }) => {
+            const row = { id: nextOptionValueId++, ...clone(data) };
+            productOptionValues.push(row);
+            return clone(row);
+        },
+        update: async ({ where, data }) => {
+            const row = productOptionValues.find((value) => matches(value, where));
+            Object.assign(row, clone(data));
+            return clone(row);
+        }
+    },
+    productVariant: {
+        findUnique: async ({ where, include }) => {
+            const row = where.sku
+                ? productVariants.find((variant) => variant.sku === where.sku)
+                : where.productId_combinationKey
+                    ? productVariants.find((variant) =>
+                        variant.productId === where.productId_combinationKey.productId &&
+                        variant.combinationKey === where.productId_combinationKey.combinationKey)
+                    : productVariants.find((variant) => matches(variant, where));
+            return row ? hydrateVariant(row, include) : null;
+        },
+        findMany: async ({ where = {}, take }) => {
+            const rows = productVariants.filter((variant) => matches(variant, where));
+            return rows.slice(0, take).map((row) => clone(row));
+        },
+        create: async ({ data }) => {
+            const row = { id: nextVariantId++, ...clone(data) };
+            productVariants.push(row);
+            return clone(row);
+        },
+        update: async ({ where, data }) => {
+            const row = productVariants.find((variant) => matches(variant, where));
+            Object.assign(row, clone(data));
+            return clone(row);
+        }
+    },
+    productVariantOptionValue: {
+        deleteMany: async ({ where }) => {
+            const before = variantOptionValues.length;
+            variantOptionValues = variantOptionValues.filter((link) => !matches(link, where));
+            return { count: before - variantOptionValues.length };
+        },
+        create: async ({ data }) => {
+            const row = clone(data);
+            variantOptionValues.push(row);
+            return row;
         }
     },
     user: {
@@ -60,8 +187,12 @@ const accessToken = jwt.sign(
 );
 const adminCookie = `__Host-access_token=${accessToken}; __Host-csrf_token=image-upload-csrf`;
 const productFields = {
-    name: "iPhone 17", brand: "Apple", deviceType: "phone", sku: "IP17-256",
-    price: "999", stock: "7", description: "A new phone"
+    name: "iPhone 17",
+    brand: "Apple",
+    deviceType: "phone",
+    description: "A new phone",
+    options: "[]",
+    variants: JSON.stringify([{ sku: "IP17-256", price: 999, stock: 7, optionValues: {} }])
 };
 const createPng = (pixel) => PNG.sync.write({ width: 1, height: 1, data: Buffer.from(pixel) });
 const png = createPng([255, 0, 0, 255]);
@@ -107,8 +238,15 @@ after(async () => {
 
 beforeEach(async () => {
     products = [];
+    productOptions = [];
+    productOptionValues = [];
+    productVariants = [];
+    variantOptionValues = [];
     audits = [];
     nextProductId = 1;
+    nextOptionId = 1;
+    nextOptionValueId = 1;
+    nextVariantId = 1;
     await fs.rm(storageDirectory, { recursive: true, force: true });
     await fs.mkdir(storageDirectory, { recursive: true });
 });
@@ -263,14 +401,22 @@ test("editing without a replacement retains the image and a replacement changes 
     const retainedResponse = await fetch(`${baseUrl}/api/admin/products/${created.id}`, {
         method: "PUT",
         headers: { Cookie: adminCookie, Origin: process.env.APP_ORIGIN, "X-CSRF-Token": "image-upload-csrf", "Content-Type": "application/json" },
-        body: JSON.stringify({ ...productFields, name: "Updated phone", price: 1000, stock: 8 })
+        body: JSON.stringify({
+            ...productFields,
+            name: "Updated phone",
+            variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
+        })
     });
     assert.equal(retainedResponse.status, 200);
     assert.equal((await retainedResponse.json()).data.image, created.image);
 
     const replacement = createPng([0, 0, 255, 255]);
     const form = new FormData();
-    for (const [key, value] of Object.entries({ ...productFields, name: "Replaced phone", price: "1000", stock: "8" })) form.append(key, value);
+    for (const [key, value] of Object.entries({
+        ...productFields,
+        name: "Replaced phone",
+        variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
+    })) form.append(key, value);
     form.append("image", new Blob([replacement], { type: "image/png" }), "replacement.png");
     const replaceResponse = await fetch(`${baseUrl}/api/admin/products/${created.id}`, {
         method: "PUT",

@@ -1,6 +1,5 @@
 // ===== CHECKOUT REPOSITORY =====
-// Owns the SQL Server transaction that locks stock, decrements it, and writes
-// the order header plus immutable order-item snapshots atomically.
+// Locks variant inventory, decrements it, and writes immutable order snapshots atomically.
 
 const { getPrismaClient } = require("../db/prisma");
 
@@ -19,19 +18,48 @@ const toDate = (value) =>
 const toNumber = (value) =>
     value === undefined || value === null ? value : Number(value);
 
-const mapLockedProduct = (row) => row
-    ? {
-        id: toNumber(row.id),
-        name: row.name,
-        stock: toNumber(row.stock),
-        price: toNumber(row.price),
-        image: row.image,
-        isDeleted: Boolean(row.isDeleted)
+const parseOptions = (value) => {
+    if (value && typeof value === "object") return value;
+    try {
+        return JSON.parse(value || "{}");
+    } catch {
+        return {};
     }
-    : undefined;
+};
+
+const optionValuesFor = (variant) => {
+    const values = {};
+    for (const link of variant.optionValues || []) {
+        const optionValue = link.optionValue;
+        if (optionValue?.option?.isActive !== false && optionValue?.isActive !== false) {
+            values[optionValue.option.name] = optionValue.value;
+        }
+    }
+    return values;
+};
+
+const mapLockedVariant = (row, configuration) => row ? {
+    id: Number(row.id),
+    variantId: Number(row.id),
+    productId: Number(row.productId),
+    sku: row.sku,
+    stock: toNumber(row.stock),
+    price: toNumber(row.price),
+    isActive: Boolean(row.isActive),
+    name: row.name,
+    image: row.image,
+    description: row.description,
+    isDeleted: Boolean(row.isDeleted),
+    deletedAt: row.deletedAt,
+    optionValues: optionValuesFor(configuration),
+    optionsSnapshot: JSON.stringify(optionValuesFor(configuration))
+} : undefined;
 
 const mapOrderItem = (row) => ({
-    productId: toNumber(row.productId),
+    variantId: toNumber(row.variantId),
+    productId: row.variant?.productId === undefined ? undefined : toNumber(row.variant.productId),
+    sku: row.skuSnapshot,
+    options: parseOptions(row.optionsSnapshot),
     name: row.nameSnapshot,
     image: row.imageSnapshot,
     unitPrice: toNumber(row.unitPrice),
@@ -60,10 +88,10 @@ const mapOrder = (row) => ({
 });
 
 class CheckoutStockConflictError extends Error {
-    constructor(product, quantity) {
+    constructor(variant, quantity) {
         super("Checkout stock changed before it could be decremented");
         this.name = "CheckoutStockConflictError";
-        this.product = product;
+        this.variant = variant;
         this.quantity = quantity;
     }
 }
@@ -71,30 +99,43 @@ class CheckoutStockConflictError extends Error {
 const normalizeRequestedItems = (requestedItems) => {
     const quantities = new Map();
     for (const item of requestedItems) {
-        const productId = Number(item.productId);
+        const variantId = Number(item.variantId);
         const quantity = Number(item.quantity);
-        if (!Number.isInteger(productId) || !Number.isInteger(quantity) || quantity <= 0) {
-            throw new TypeError("Checkout repository requires normalized product IDs and quantities");
+        if (!Number.isInteger(variantId) || variantId <= 0 || !Number.isInteger(quantity) || quantity <= 0) {
+            throw new TypeError("Checkout repository requires normalized variant IDs and quantities");
         }
-        quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+        quantities.set(variantId, (quantities.get(variantId) || 0) + quantity);
     }
 
     return [...quantities.entries()]
-        .map(([productId, quantity]) => ({ productId, quantity }))
-        .sort((left, right) => left.productId - right.productId);
+        .map(([variantId, quantity]) => ({ variantId, quantity }))
+        .sort((left, right) => left.variantId - right.variantId);
 };
 
-const lockProduct = async (transaction, productId) => {
-    // SQL Server UPDLOCK is held until transaction completion. HOLDLOCK also
-    // protects a missing key/range, while deterministic ID order avoids the
-    // opposite lock ordering that commonly causes multi-item deadlocks.
+const lockVariant = async (transaction, variantId) => {
+    // SQL Server retains UPDLOCK/HOLDLOCK through commit. Deterministic ID order
+    // avoids opposing lock order for multi-variant carts.
     const rows = await transaction.$queryRaw`
         SELECT
-            [id], [name], [stock], [price], [image], [is_deleted] AS [isDeleted]
-        FROM [dbo].[products] WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        WHERE [id] = ${productId}
+            variant.[id], variant.[product_id] AS [productId], variant.[sku],
+            variant.[stock], variant.[price], variant.[is_active] AS [isActive],
+            product.[name], product.[image], product.[description],
+            product.[is_deleted] AS [isDeleted], product.[deleted_at] AS [deletedAt]
+        FROM [dbo].[product_variants] AS variant WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+        INNER JOIN [dbo].[products] AS product WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+            ON product.[id] = variant.[product_id]
+        WHERE variant.[id] = ${variantId}
     `;
-    return mapLockedProduct(rows[0]);
+    if (!rows[0]) return undefined;
+    const configuration = await transaction.productVariant.findUnique({
+        where: { id: variantId },
+        include: {
+            optionValues: {
+                include: { optionValue: { include: { option: true } } }
+            }
+        }
+    });
+    return mapLockedVariant(rows[0], configuration);
 };
 
 const createOrder = async (transaction, orderData) => {
@@ -115,9 +156,11 @@ const createOrder = async (transaction, orderData) => {
         paymentStatus: orderData.paymentStatus,
         items: {
             create: (orderData.items || []).map((item) => ({
-                productId: item.productId,
+                variantId: item.variantId,
                 nameSnapshot: item.name,
                 imageSnapshot: item.image,
+                skuSnapshot: item.sku,
+                optionsSnapshot: JSON.stringify(item.options || {}),
                 unitPrice: item.unitPrice,
                 quantity: item.quantity,
                 lineTotal: item.lineTotal
@@ -138,9 +181,8 @@ const createOrder = async (transaction, orderData) => {
 };
 
 /**
- * Execute one checkout as a single interactive transaction.
- * buildOrder owns business validation/calculation and runs only after every
- * product has been locked and read, but before the first mutation.
+ * Execute checkout atomically. Business validation/calculation runs after every
+ * requested variant has been locked and read, before stock mutation.
  */
 const checkout = async (requestedItems, userId, buildOrder) => {
     if (typeof userId !== "string" || userId.trim().length === 0) {
@@ -153,7 +195,7 @@ const checkout = async (requestedItems, userId, buildOrder) => {
         for (const item of normalizedItems) {
             lockedItems.push({
                 ...item,
-                product: await lockProduct(transaction, item.productId)
+                variant: await lockVariant(transaction, item.variantId)
             });
         }
 
@@ -162,12 +204,12 @@ const checkout = async (requestedItems, userId, buildOrder) => {
             userId
         };
 
-        const remainingStockByProductId = {};
-        for (const { productId, quantity, product } of lockedItems) {
-            const result = await transaction.product.updateMany({
+        const remainingStockByVariantId = {};
+        for (const { variantId, quantity, variant } of lockedItems) {
+            const result = await transaction.productVariant.updateMany({
                 where: {
-                    id: productId,
-                    isDeleted: false,
+                    id: variantId,
+                    isActive: true,
                     stock: { gte: quantity }
                 },
                 data: {
@@ -176,9 +218,9 @@ const checkout = async (requestedItems, userId, buildOrder) => {
             });
 
             if (result.count !== 1) {
-                throw new CheckoutStockConflictError(product, quantity);
+                throw new CheckoutStockConflictError(variant, quantity);
             }
-            remainingStockByProductId[productId] = product.stock - quantity;
+            remainingStockByVariantId[variantId] = variant.stock - quantity;
         }
 
         const row = await createOrder(transaction, orderData);
@@ -207,7 +249,7 @@ const checkout = async (requestedItems, userId, buildOrder) => {
         return {
             order: mapOrder(row),
             paymentAttempt,
-            remainingStockByProductId
+            remainingStockByVariantId
         };
     });
 };

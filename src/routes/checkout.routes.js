@@ -7,8 +7,8 @@ const { requireRole, requireCsrf } = require("../middlewares/auth");
 
 const router = express.Router();
 
-// [POST] /api/checkout/check-stock/:id → Kiểm tra tồn kho
-router.post("/checkout/check-stock/:id", checkoutController.checkProductinStock);
+// [POST] /api/checkout/check-stock/:id checks a ProductVariant ID.
+router.post("/checkout/check-stock/:id", checkoutController.checkVariantInStock);
 
 // [POST] /api/checkout/batch → Thanh toán giỏ hàng (nhiều sản phẩm) — phải trước /:id
 router.post("/checkout/batch", requireRole("user"), requireCsrf, checkoutController.cartCheckout);

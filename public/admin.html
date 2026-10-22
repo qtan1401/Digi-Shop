@@ -114,11 +114,25 @@
                         <input id="product-name" name="name" type="text" required maxlength="200" autocomplete="off">
                         <small class="field-error" data-error-for="name"></small>
                     </div>
-                    <div class="field" data-field="sku">
-                        <label for="product-sku">SKU <span>*</span> <span class="lock-mark" id="sku-lock" hidden aria-label="SKU bị khóa">⌁</span></label>
-                        <input id="product-sku" name="sku" type="text" required maxlength="80" autocomplete="off" spellcheck="false">
-                        <small class="field-hint" id="sku-hint">Mã duy nhất, ví dụ IP16PM-256</small>
-                        <small class="field-error" data-error-for="sku"></small>
+                    <div class="field field--wide" data-field="options">
+                        <div class="color-builder">
+                            <label>Màu sắc <span class="field-hint-inline">(tuỳ chọn)</span></label>
+                            <p class="field-hint">Thêm màu để ảnh sản phẩm đổi theo màu khách chọn. Bỏ trống nếu sản phẩm không có màu.</p>
+                            <div id="color-rows" class="color-rows"></div>
+                            <button class="btn btn--secondary btn--small" id="add-color-btn" type="button">+ Thêm màu</button>
+                            <small class="field-error" data-error-for="colorImages"></small>
+                        </div>
+                        <div class="storage-builder">
+                            <label>Dung lượng / Cấu hình <span class="field-hint-inline">(tuỳ chọn)</span></label>
+                            <p class="field-hint">Chọn nhanh hoặc nhập giá trị tuỳ chỉnh (vd: 16GB/512GB cho laptop).</p>
+                            <div id="storage-presets" class="storage-presets"></div>
+                            <div class="storage-custom">
+                                <input id="storage-custom-input" type="text" maxlength="60" placeholder="Giá trị tuỳ chỉnh…" autocomplete="off">
+                                <button class="btn btn--secondary btn--small" id="add-storage-btn" type="button">+ Thêm</button>
+                            </div>
+                            <div id="storage-chips" class="storage-chips" aria-live="polite"></div>
+                        </div>
+                        <small class="field-error" data-error-for="options"></small>
                     </div>
                     <div class="field" data-field="brand">
                         <label for="product-brand">Thương hiệu <span>*</span></label>
@@ -140,20 +154,17 @@
                         </select>
                         <small class="field-error" data-error-for="deviceType"></small>
                     </div>
-                    <div class="field" data-field="price">
-                        <label for="product-price">Giá bán (₫) <span>*</span></label>
-                        <input id="product-price" name="price" type="number" min="1" step="1" required inputmode="numeric">
-                        <small class="field-error" data-error-for="price"></small>
-                    </div>
-                    <div class="field" data-field="stock">
-                        <label for="product-stock">Tồn kho <span>*</span></label>
-                        <input id="product-stock" name="stock" type="number" min="0" step="1" required inputmode="numeric">
-                        <small class="field-error" data-error-for="stock"></small>
+                    <div class="field field--wide variant-editor" data-field="variants">
+                        <label>Các phiên bản có thể bán <span>*</span></label>
+                        <p class="field-hint">Mỗi tổ hợp tùy chọn là một phiên bản. SKU, giá và tồn kho được quản lý riêng.</p>
+                        <div id="variant-editor-rows" class="variant-editor__rows"></div>
+                        <small class="field-error" data-error-for="variants"></small>
                     </div>
                     <div class="field field--wide" data-field="image">
                         <label for="product-image">Ảnh sản phẩm (PNG hoặc WebP, tối đa 5 MiB; mỗi cạnh 8.192 px, tổng 25 MP)</label>
                         <input id="product-image" name="image" type="file" accept="image/png,.png,image/webp,.webp">
                         <small class="field-hint" id="product-image-current" hidden></small>
+                        <small class="field-hint" id="product-image-color-hint" hidden>Ảnh đại diện sẽ dùng ảnh của màu đầu tiên.</small>
                         <small class="field-error" data-error-for="image"></small>
                     </div>
                     <div class="field field--wide" data-field="description">

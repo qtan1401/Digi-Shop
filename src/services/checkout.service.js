@@ -88,65 +88,73 @@ const requireUserId = (userId) => {
  * Kiểm tra tồn kho (không trừ kho, không tạo đơn)
  * Dùng cho endpoint check-stock
  */
-const checkProduct = async (productId, quantity = 1) => {
+const checkVariant = async (variantId, quantity = 1) => {
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua phải là số nguyên lớn hơn 0");
-    const product = await productRepository.getProductByID(productId);
-    if (!product) throw new Error("Không tìm thấy sản phẩm trong hệ thống");
-    if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-    if (product.stock <= 0) throw new Error("Sản phẩm hiện đã hết hàng");
-    if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện chỉ còn ${product.stock} sản phẩm)`);
+    const variant = await productRepository.getVariantByID(variantId);
+    if (!variant) throw new Error("Không tìm thấy phiên bản sản phẩm trong hệ thống");
+    if (variant.product.isDeleted === true) throw new Error(discontinuedProductMessage(variant.product));
+    if (variant.isActive !== true) throw new Error("Phiên bản sản phẩm hiện không khả dụng");
+    if (variant.stock <= 0) throw new Error("Phiên bản sản phẩm hiện đã hết hàng");
+    if (variant.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện chỉ còn ${variant.stock} sản phẩm)`);
 
     return {
-        product: { id: product.id, name: product.name, price: product.price, stock: product.stock },
+        variant: {
+            id: variant.id,
+            productId: variant.productId,
+            name: variant.product.name,
+            sku: variant.sku,
+            optionValues: variant.optionValues,
+            price: variant.price,
+            stock: variant.stock
+        },
         requestedQuantity: qty,
         inStock: true
     };
 };
+
 
 /**
  * Thanh toán 1 sản phẩm (Mua ngay) — giữ nguyên tương thích
  */
 const processCheckout = async (userId, checkoutData, request) => {
     userId = requireUserId(userId);
-    const { productId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" } = checkoutData;
+    const { variantId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" } = checkoutData;
+    if (!variantId) throw new Error("Vui lòng cung cấp ID phiên bản sản phẩm.");
 
-    if (!productId) throw new Error("Vui lòng cung cấp ID sản phẩm.");
-
-    // Validate customer (K1)
     validateCustomer({ customerName, customerPhone, customerAddress });
-
-    // Validate paymentMethod (K2)
     const formattedPayment = formatPaymentMethod(paymentMethod);
-
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm.");
 
-    const normalizedProductId = Number(productId);
-    if (!Number.isInteger(normalizedProductId)) {
-        throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
+    const normalizedVariantId = Number(variantId);
+    if (!Number.isInteger(normalizedVariantId) || normalizedVariantId <= 0) {
+        throw new Error("Không tìm thấy phiên bản sản phẩm cần thanh toán.");
     }
 
     try {
         const result = await checkoutRepository.checkout(
-            [{ productId: normalizedProductId, quantity: qty }],
+            [{ variantId: normalizedVariantId, quantity: qty }],
             userId,
-            ([{ product }]) => {
-                if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
-                if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-                if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
-                if (product.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
+            ([{ variant }]) => {
+                if (!variant) throw new Error("Không tìm thấy phiên bản sản phẩm cần thanh toán.");
+                if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
+                if (variant.isActive !== true) throw new Error("Phiên bản sản phẩm hiện không khả dụng.");
+                if (variant.stock <= 0) throw new Error(`"${variant.name}" đã hết hàng.`);
+                if (variant.stock < qty) throw new Error(`Số lượng trong kho không đủ (Hiện còn ${variant.stock} sản phẩm).`);
 
-                const subtotal = product.price * qty;
+                const subtotal = variant.price * qty;
                 const shippingFee = calculateShipping(subtotal);
                 const timestamp = now();
                 const orderData = {
                     id: generateOrderId(),
                     items: [{
-                        productId: product.id,
-                        name: product.name,
-                        image: product.image,
-                        unitPrice: product.price,
+                        variantId: variant.id,
+                        name: variant.name,
+                        image: variant.image,
+                        sku: variant.sku,
+                        options: variant.optionValues,
+                        unitPrice: variant.price,
                         quantity: qty,
                         lineTotal: subtotal
                     }],
@@ -175,27 +183,24 @@ const processCheckout = async (userId, checkoutData, request) => {
         }
         return {
             order,
-            remainingStock: result.remainingStockByProductId[normalizedProductId]
+            remainingStock: result.remainingStockByVariantId[normalizedVariantId]
         };
     } catch (error) {
         if (!(error instanceof checkoutRepository.CheckoutStockConflictError)) throw error;
-        const product = error.product;
-        if (!product) throw new Error("Không tìm thấy sản phẩm cần thanh toán.");
-        if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-        if (product.stock <= 0) throw new Error("Sản phẩm đã hết hàng.");
-        throw new Error(`Số lượng trong kho không đủ (Hiện còn ${product.stock} sản phẩm).`);
+        const variant = error.variant;
+        if (!variant) throw new Error("Không tìm thấy phiên bản sản phẩm cần thanh toán.");
+        if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
+        if (variant.stock <= 0) throw new Error(`"${variant.name}" đã hết hàng.`);
+        throw new Error(`Số lượng trong kho không đủ (Hiện còn ${variant.stock} sản phẩm).`);
     }
 };
+
 
 // ─── Thanh toán giỏ hàng (nhiều sản phẩm) ─────────────────────────────────────
 
 /**
- * Checkout toàn bộ giỏ hàng
- *
- * Body: { items: [{ productId, quantity }], customerName, customerPhone,
+ * Body: { items: [{ variantId, quantity }], customerName, customerPhone,
  *         customerAddress, paymentMethod, note }
- *
- * Returns: { order } — cùng format với processCheckout()
  */
 const processCartCheckout = async (userId, { items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "" }, request) => {
     userId = requireUserId(userId);
@@ -203,53 +208,48 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
 
-    // Validate customer (K1)
     validateCustomer({ customerName, customerPhone, customerAddress });
-
-    // Validate paymentMethod (K2)
     const formattedPayment = formatPaymentMethod(paymentMethod);
-
-    // Gộp trùng productId trước validate (B1)
     const qtyMap = new Map();
-    for (const { productId, quantity } of items) {
+    for (const { variantId, quantity } of items) {
         const qty = parseInt(quantity, 10);
         if (isNaN(qty) || qty <= 0) {
-            throw new Error(`Số lượng không hợp lệ cho sản phẩm ID ${productId}.`);
+            throw new Error(`Số lượng không hợp lệ cho phiên bản ID ${variantId}.`);
         }
 
-        const normalizedProductId = Number(productId);
-        if (!Number.isInteger(normalizedProductId)) {
-            throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
+        const normalizedVariantId = Number(variantId);
+        if (!Number.isInteger(normalizedVariantId) || normalizedVariantId <= 0) {
+            throw new Error(`Phiên bản ID ${variantId} không tồn tại.`);
         }
-        qtyMap.set(normalizedProductId, (qtyMap.get(normalizedProductId) || 0) + qty);
+        qtyMap.set(normalizedVariantId, (qtyMap.get(normalizedVariantId) || 0) + qty);
     }
-
     const normalizedItems = [...qtyMap.entries()]
-        .map(([productId, quantity]) => ({ productId, quantity }));
+        .map(([variantId, quantity]) => ({ variantId, quantity }));
 
     try {
         const result = await checkoutRepository.checkout(normalizedItems, userId, (lockedItems) => {
-            const validatedItems = lockedItems.map(({ productId, quantity: qty, product }) => {
-                if (!product) throw new Error(`Sản phẩm ID ${productId} không tồn tại.`);
-                if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-                if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
-                if (product.stock < qty) throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${qty}).`);
-                return { product, qty };
+            const validatedItems = lockedItems.map(({ variantId, quantity: qty, variant }) => {
+                if (!variant) throw new Error(`Phiên bản ID ${variantId} không tồn tại.`);
+                if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
+                if (variant.isActive !== true) throw new Error(`"${variant.name}" hiện không khả dụng.`);
+                if (variant.stock <= 0) throw new Error(`"${variant.name}" đã hết hàng.`);
+                if (variant.stock < qty) throw new Error(`"${variant.name}" chỉ còn ${variant.stock} sản phẩm (yêu cầu ${qty}).`);
+                return { variant, qty };
             });
 
-            const orderItems = validatedItems.map(({ product, qty }) => ({
-                productId: product.id,
-                name: product.name,
-                image: product.image,
-                unitPrice: product.price,
+            const orderItems = validatedItems.map(({ variant, qty }) => ({
+                variantId: variant.id,
+                name: variant.name,
+                image: variant.image,
+                sku: variant.sku,
+                options: variant.optionValues,
+                unitPrice: variant.price,
                 quantity: qty,
-                lineTotal: product.price * qty
+                lineTotal: variant.price * qty
             }));
-
             const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
             const shippingFee = calculateShipping(subtotal);
             const timestamp = now();
-
             const orderData = {
                 id: generateOrderId(),
                 items: orderItems,
@@ -275,12 +275,12 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
         return { order };
     } catch (error) {
         if (!(error instanceof checkoutRepository.CheckoutStockConflictError)) throw error;
-        const product = error.product;
-        if (!product) throw new Error("Sản phẩm không tồn tại.");
-        if (product.isDeleted === true) throw new Error(discontinuedProductMessage(product));
-        if (product.stock <= 0) throw new Error(`"${product.name}" đã hết hàng.`);
-        throw new Error(`"${product.name}" chỉ còn ${product.stock} sản phẩm (yêu cầu ${error.quantity}).`);
+        const variant = error.variant;
+        if (!variant) throw new Error("Phiên bản sản phẩm không tồn tại.");
+        if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
+        if (variant.stock <= 0) throw new Error(`"${variant.name}" đã hết hàng.`);
+        throw new Error(`"${variant.name}" chỉ còn ${variant.stock} sản phẩm (yêu cầu ${error.quantity}).`);
     }
 };
 
-module.exports = { checkProduct, processCheckout, processCartCheckout };
+module.exports = { checkVariant, processCheckout, processCartCheckout };

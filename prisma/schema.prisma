@@ -8,25 +8,85 @@ datasource db {
 
 
 model Product {
-  id          Int       @id @default(autoincrement())
-  brand       String    @db.NVarChar(16)
-  deviceType  String    @map("device_type") @db.NVarChar(16)
-  name        String    @db.NVarChar(200)
-  slug        String    @unique(map: "products_slug_key") @db.NVarChar(240)
-  sku         String    @unique(map: "products_sku_key") @db.NVarChar(100)
-  stock       Int
-  price       Decimal   @db.Decimal(18, 2)
-  image       String    @db.NVarChar(500)
-  description String    @db.NVarChar(Max)
-  isDeleted   Boolean   @default(false) @map("is_deleted")
-  deletedAt   DateTime? @map("deleted_at") @db.DateTime2
-  createdAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
-  updatedAt   DateTime  @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
-  orderItems  OrderItem[]
-  cartItems   CartItem[]
+  id          Int              @id @default(autoincrement())
+  brand       String           @db.NVarChar(16)
+  deviceType  String           @map("device_type") @db.NVarChar(16)
+  name        String           @db.NVarChar(200)
+  slug        String           @unique(map: "products_slug_key") @db.NVarChar(240)
+  image       String           @db.NVarChar(500)
+  description String           @db.NVarChar(Max)
+  isDeleted   Boolean          @default(false) @map("is_deleted")
+  deletedAt   DateTime?        @map("deleted_at") @db.DateTime2
+  createdAt   DateTime         @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt   DateTime         @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  options     ProductOption[]
+  variants    ProductVariant[]
 
   @@index([isDeleted, updatedAt], map: "products_is_deleted_updated_at_idx")
   @@map("products")
+}
+
+model ProductOption {
+  id        Int                  @id @default(autoincrement())
+  productId Int                  @map("product_id")
+  name      String               @db.NVarChar(100)
+  position  Int
+  isActive  Boolean              @default(true) @map("is_active")
+  product   Product              @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  values    ProductOptionValue[]
+
+  @@unique([productId, name], map: "product_options_product_id_name_key")
+  @@unique([productId, position], map: "product_options_product_id_position_key")
+  @@index([productId, isActive, position], map: "product_options_product_id_is_active_position_idx")
+  @@map("product_options")
+}
+
+model ProductOptionValue {
+  id           Int                         @id @default(autoincrement())
+  optionId     Int                         @map("option_id")
+  value        String                      @db.NVarChar(100)
+  colorHex     String?                     @map("color_hex") @db.NVarChar(7)
+  position     Int
+  isActive     Boolean                     @default(true) @map("is_active")
+  option       ProductOption               @relation(fields: [optionId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  variantLinks ProductVariantOptionValue[]
+
+  @@unique([optionId, value], map: "product_option_values_option_id_value_key")
+  @@unique([optionId, position], map: "product_option_values_option_id_position_key")
+  @@index([optionId, isActive, position], map: "product_option_values_option_id_is_active_position_idx")
+  @@map("product_option_values")
+}
+
+model ProductVariant {
+  id              Int                         @id @default(autoincrement())
+  productId       Int                         @map("product_id")
+  sku             String                      @unique(map: "product_variants_sku_key") @db.NVarChar(100)
+  combinationKey  String                      @map("combination_key") @db.Char(64)
+  price           Decimal                     @db.Decimal(18, 2)
+  stock           Int
+  image           String?                     @db.NVarChar(500)
+  isActive        Boolean                     @default(true) @map("is_active")
+  createdAt       DateTime                    @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt       DateTime                    @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  product         Product                     @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  optionValues    ProductVariantOptionValue[]
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+
+  @@unique([productId, combinationKey], map: "product_variants_product_id_combination_key_key")
+  @@index([productId, isActive], map: "product_variants_product_id_is_active_idx")
+  @@map("product_variants")
+}
+
+model ProductVariantOptionValue {
+  variantId    Int            @map("variant_id")
+  optionValueId Int           @map("option_value_id")
+  variant      ProductVariant        @relation(fields: [variantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  optionValue  ProductOptionValue    @relation(fields: [optionValueId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([variantId, optionValueId], map: "product_variant_option_values_pkey")
+  @@index([optionValueId], map: "product_variant_option_values_option_value_id_idx")
+  @@map("product_variant_option_values")
 }
 
 model User {
@@ -115,16 +175,16 @@ model Cart {
 }
 
 model CartItem {
-  id        BigInt   @id @default(autoincrement())
-  cartId    String   @map("cart_id") @db.NVarChar(36)
-  productId Int      @map("product_id")
+  id        BigInt         @id @default(autoincrement())
+  cartId    String         @map("cart_id") @db.NVarChar(36)
+  variantId Int            @map("variant_id")
   quantity  Int
-  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
-  updatedAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
-  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdAt DateTime       @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt DateTime       @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@unique([cartId, productId], map: "cart_items_cart_id_product_id_key")
+  @@unique([cartId, variantId], map: "cart_items_cart_id_variant_id_key")
   @@map("cart_items")
 }
 
@@ -167,16 +227,18 @@ model Order {
 }
 
 model OrderItem {
-  id            BigInt  @id @default(autoincrement())
-  orderId       String  @map("order_id") @db.NVarChar(64)
-  productId     Int     @map("product_id")
-  nameSnapshot  String  @map("name_snapshot") @db.NVarChar(200)
-  imageSnapshot String  @map("image_snapshot") @db.NVarChar(500)
-  unitPrice     Decimal @map("unit_price") @db.Decimal(18, 2)
-  quantity      Int
-  lineTotal     Decimal @map("line_total") @db.Decimal(18, 2)
-  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  product       Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  id             BigInt         @id @default(autoincrement())
+  orderId        String         @map("order_id") @db.NVarChar(64)
+  variantId      Int            @map("variant_id")
+  nameSnapshot   String         @map("name_snapshot") @db.NVarChar(200)
+  imageSnapshot  String         @map("image_snapshot") @db.NVarChar(500)
+  skuSnapshot    String         @map("sku_snapshot") @db.NVarChar(100)
+  optionsSnapshot String        @map("options_snapshot") @db.NVarChar(Max)
+  unitPrice      Decimal        @map("unit_price") @db.Decimal(18, 2)
+  quantity       Int
+  lineTotal      Decimal        @map("line_total") @db.Decimal(18, 2)
+  order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: Cascade)
 
   @@map("order_items")
 }

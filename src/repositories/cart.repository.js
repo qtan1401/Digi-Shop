@@ -5,9 +5,9 @@
 const crypto = require("crypto");
 const { getPrismaClient } = require("../db/prisma");
 
-const toProductId = (value) => {
-    const productId = Number(value);
-    return Number.isInteger(productId) && productId > 0 ? productId : null;
+const toVariantId = (value) => {
+    const variantId = Number(value);
+    return Number.isInteger(variantId) && variantId > 0 ? variantId : null;
 };
 
 const toQuantity = (value) => {
@@ -25,50 +25,99 @@ const toIsoString = (value) =>
             ? value.toISOString()
             : new Date(value).toISOString();
 
-const mapProduct = (product) => product
-    ? {
-        id: toNumber(product.id),
-        name: product.name,
-        image: product.image,
-        description: product.description,
-        price: toNumber(product.price),
-        stock: toNumber(product.stock),
-        isDeleted: Boolean(product.isDeleted),
-        deletedAt: toIsoString(product.deletedAt)
+const optionValuesFor = (variant) => {
+    const values = {};
+    for (const link of variant.optionValues || []) {
+        const optionValue = link.optionValue;
+        if (optionValue?.option?.isActive !== false && optionValue?.isActive !== false) {
+            values[optionValue.option.name] = optionValue.value;
+        }
     }
-    : undefined;
+    return values;
+};
+
+const variantLabel = (values) => Object.entries(values)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join(" · ");
+
+const mapProduct = (product) => product ? {
+    id: toNumber(product.id),
+    name: product.name,
+    image: product.image,
+    description: product.description,
+    isDeleted: Boolean(product.isDeleted),
+    deletedAt: toIsoString(product.deletedAt)
+} : undefined;
 
 const mapCartItem = (item) => {
-    const product = mapProduct(item.product);
-    const available = Boolean(product) && !product.isDeleted && product.stock > 0;
+    const variant = item.variant;
+    const product = mapProduct(variant?.product);
+    const optionValues = variant ? optionValuesFor(variant) : {};
+    const available = Boolean(variant && product) &&
+        !product.isDeleted && Boolean(variant.isActive) && Number(variant.stock) > 0;
+    const id = toNumber(item.variantId);
+    const mappedVariant = variant ? {
+        id: toNumber(variant.id),
+        sku: variant.sku,
+        price: toNumber(variant.price),
+        stock: toNumber(variant.stock),
+        isActive: Boolean(variant.isActive),
+        optionValues
+    } : {
+        id,
+        sku: null,
+        price: 0,
+        stock: 0,
+        isActive: false,
+        optionValues: {}
+    };
     return {
-        productId: toNumber(item.productId),
+        variantId: id,
+        productId: product?.id ?? null,
         quantity: toNumber(item.quantity),
+        name: product?.name || "Sản phẩm không tồn tại",
+        variantLabel: variantLabel(optionValues),
+        sku: mappedVariant.sku,
+        optionValues,
+        image: product?.image || null,
+        description: product?.description || null,
+        price: mappedVariant.price,
+        stock: mappedVariant.stock,
         product: product || {
-            id: toNumber(item.productId),
+            id: null,
             name: "Sản phẩm không tồn tại",
             image: null,
             description: null,
-            price: 0,
-            stock: 0,
             isDeleted: true,
             deletedAt: null
         },
+        variant: mappedVariant,
         available,
         unavailableReason: available
             ? null
-            : product && product.isDeleted
+            : product?.isDeleted
                 ? "soft_deleted"
-                : product
-                    ? "out_of_stock"
+                : variant
+                    ? variant.isActive ? "out_of_stock" : "variant_unavailable"
                     : "not_found"
     };
 };
 
 const includeItems = {
     items: {
-        orderBy: { productId: "asc" },
-        include: { product: true }
+        orderBy: { variantId: "asc" },
+        include: {
+            variant: {
+                include: {
+                    product: true,
+                    optionValues: {
+                        include: {
+                            optionValue: { include: { option: true } }
+                        }
+                    }
+                }
+            }
+        }
     }
 };
 
@@ -97,8 +146,7 @@ const readCart = async (client, userId) => {
     return mapCart(cart);
 };
 
-// SQL Server keeps UPDLOCK/HOLDLOCK until the interactive transaction commits.
-// Cart is always locked before product rows; product IDs are then locked ascending.
+// SQL Server keeps UPDLOCK/HOLDLOCK until transaction completion.
 const lockCart = async (transaction, userId) => {
     const rows = await transaction.$queryRaw`
         SELECT [id], [user_id] AS [userId], [created_at] AS [createdAt], [updated_at] AS [updatedAt]
@@ -108,58 +156,62 @@ const lockCart = async (transaction, userId) => {
     return rows[0];
 };
 
-const lockProduct = async (transaction, productId) => {
+const lockVariant = async (transaction, variantId) => {
     const rows = await transaction.$queryRaw`
         SELECT
-            [id], [name], [image], [description], [price], [stock],
-            [is_deleted] AS [isDeleted], [deleted_at] AS [deletedAt]
-        FROM [dbo].[products] WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        WHERE [id] = ${productId}
+            variant.[id], variant.[product_id] AS [productId], variant.[sku],
+            variant.[price], variant.[stock], variant.[is_active] AS [isActive],
+            product.[name], product.[image], product.[description],
+            product.[is_deleted] AS [isDeleted], product.[deleted_at] AS [deletedAt]
+        FROM [dbo].[product_variants] AS variant WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+        INNER JOIN [dbo].[products] AS product WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+            ON product.[id] = variant.[product_id]
+        WHERE variant.[id] = ${variantId}
     `;
     return rows[0] || null;
 };
 
 const readLockedCartItems = async (transaction, cartId) => transaction.cartItem.findMany({
     where: { cartId },
-    orderBy: { productId: "asc" },
-    include: { product: true }
+    orderBy: { variantId: "asc" },
+    include: includeItems.items.include
 });
 
 const getCart = async (userId) => readCart(getPrismaClient(), userId);
 
-const setQuantity = async (userId, productId, quantity) => {
+const setQuantity = async (userId, variantId, quantity) => {
     const prisma = getPrismaClient();
     return prisma.$transaction(async (transaction) => {
         await ensureCart(transaction, userId);
         const cart = await lockCart(transaction, userId);
-        const product = await lockProduct(transaction, productId);
-        if (!product) return { kind: "not_found" };
-        if (Boolean(product.isDeleted) || Number(product.stock) <= 0) {
-            return { kind: "unavailable", product: mapProduct(product) };
+        const variant = await lockVariant(transaction, variantId);
+        if (!variant) return { kind: "not_found" };
+        if (Boolean(variant.isDeleted) || !Boolean(variant.isActive) || Number(variant.stock) <= 0) {
+            return { kind: "unavailable", variant };
         }
 
-        const finalQuantity = Math.min(quantity, Number(product.stock));
+        const finalQuantity = Math.min(quantity, Number(variant.stock));
         await transaction.cartItem.upsert({
-            where: { cartId_productId: { cartId: cart.id, productId } },
-            create: { cartId: cart.id, productId, quantity: finalQuantity },
+            where: { cartId_variantId: { cartId: cart.id, variantId } },
+            create: { cartId: cart.id, variantId, quantity: finalQuantity },
             update: { quantity: finalQuantity }
         });
         const items = await readLockedCartItems(transaction, cart.id);
         return {
             cart: mapCart({ ...cart, items }),
             adjustment: finalQuantity !== quantity
-                ? { productId, requestedQuantity: quantity, finalQuantity, reason: "stock_capped" }
+                ? { variantId, requestedQuantity: quantity, finalQuantity, reason: "stock_capped" }
                 : null
         };
     });
 };
 
-const removeItem = async (userId, productId) => {
+const removeItem = async (userId, variantId) => {
     const prisma = getPrismaClient();
     return prisma.$transaction(async (transaction) => {
         await ensureCart(transaction, userId);
         const cart = await lockCart(transaction, userId);
-        await transaction.cartItem.deleteMany({ where: { cartId: cart.id, productId } });
+        await transaction.cartItem.deleteMany({ where: { cartId: cart.id, variantId } });
         const items = await readLockedCartItems(transaction, cart.id);
         return mapCart({ ...cart, items });
     });
@@ -196,57 +248,47 @@ const mergeInTransaction = async (transaction, userId, operationId, requestHash,
     await ensureCart(transaction, userId);
     const cart = await lockCart(transaction, userId);
     const existingItems = await readLockedCartItems(transaction, cart.id);
-    const existingByProductId = new Map(existingItems.map((item) => [item.productId, item]));
-    const allProductIds = [...new Set([
-        ...existingItems.map((item) => item.productId),
-        ...normalizedItems.map((item) => item.productId)
+    const existingByVariantId = new Map(existingItems.map((item) => [item.variantId, item]));
+    const allVariantIds = [...new Set([
+        ...existingItems.map((item) => item.variantId),
+        ...normalizedItems.map((item) => item.variantId)
     ])].sort((left, right) => left - right);
-    const products = new Map();
-    for (const productId of allProductIds) {
-        products.set(productId, await lockProduct(transaction, productId));
+    const variants = new Map();
+    for (const variantId of allVariantIds) {
+        variants.set(variantId, await lockVariant(transaction, variantId));
     }
 
     const adjustments = [];
-    for (const { productId, quantity: requestedQuantity } of normalizedItems) {
-        const product = products.get(productId);
-        const existing = existingByProductId.get(productId);
-        if (!product) {
-            adjustments.push({
-                productId,
-                requestedQuantity: (existing ? Number(existing.quantity) : 0) + requestedQuantity,
-                finalQuantity: existing ? Number(existing.quantity) : 0,
-                reason: "not_found"
-            });
+    for (const { variantId, quantity: requestedQuantity } of normalizedItems) {
+        const variant = variants.get(variantId);
+        const existing = existingByVariantId.get(variantId);
+        const existingQuantity = existing ? Number(existing.quantity) : 0;
+        const requestedTotal = existingQuantity + requestedQuantity;
+        if (!variant) {
+            adjustments.push({ variantId, requestedQuantity: requestedTotal, finalQuantity: existingQuantity, reason: "not_found" });
             continue;
         }
-        if (Boolean(product.isDeleted)) {
-            adjustments.push({
-                productId,
-                requestedQuantity: (existing ? Number(existing.quantity) : 0) + requestedQuantity,
-                finalQuantity: existing ? Number(existing.quantity) : 0,
-                reason: "soft_deleted"
-            });
+        if (Boolean(variant.isDeleted)) {
+            adjustments.push({ variantId, requestedQuantity: requestedTotal, finalQuantity: existingQuantity, reason: "soft_deleted" });
             continue;
         }
-        if (Number(product.stock) <= 0) {
-            adjustments.push({
-                productId,
-                requestedQuantity: (existing ? Number(existing.quantity) : 0) + requestedQuantity,
-                finalQuantity: existing ? Number(existing.quantity) : 0,
-                reason: "out_of_stock"
-            });
+        if (!Boolean(variant.isActive)) {
+            adjustments.push({ variantId, requestedQuantity: requestedTotal, finalQuantity: existingQuantity, reason: "variant_unavailable" });
+            continue;
+        }
+        if (Number(variant.stock) <= 0) {
+            adjustments.push({ variantId, requestedQuantity: requestedTotal, finalQuantity: existingQuantity, reason: "out_of_stock" });
             continue;
         }
 
-        const requestedTotal = (existing ? Number(existing.quantity) : 0) + requestedQuantity;
-        const finalQuantity = Math.min(requestedTotal, Number(product.stock));
+        const finalQuantity = Math.min(requestedTotal, Number(variant.stock));
         await transaction.cartItem.upsert({
-            where: { cartId_productId: { cartId: cart.id, productId } },
-            create: { cartId: cart.id, productId, quantity: finalQuantity },
+            where: { cartId_variantId: { cartId: cart.id, variantId } },
+            create: { cartId: cart.id, variantId, quantity: finalQuantity },
             update: { quantity: finalQuantity }
         });
         if (finalQuantity !== requestedTotal) {
-            adjustments.push({ productId, requestedQuantity: requestedTotal, finalQuantity, reason: "stock_capped" });
+            adjustments.push({ variantId, requestedQuantity: requestedTotal, finalQuantity, reason: "stock_capped" });
         }
     }
 
@@ -273,9 +315,6 @@ const mergeGuestCart = async (userId, operationId, requestHash, normalizedItems)
             mergeInTransaction(transaction, userId, operationId, requestHash, normalizedItems)
         );
     } catch (error) {
-        // A concurrent request may win the operation's primary-key insert. Its
-        // transaction is rolled back here; replay against committed state then
-        // returns the canonical result instead of adding quantities twice.
         if (isUniqueViolation(error)) {
             return prisma.$transaction((transaction) =>
                 mergeInTransaction(transaction, userId, operationId, requestHash, normalizedItems)
@@ -290,6 +329,6 @@ module.exports = {
     setQuantity,
     removeItem,
     mergeGuestCart,
-    toProductId,
+    toVariantId,
     toQuantity
 };

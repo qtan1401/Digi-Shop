@@ -3,10 +3,10 @@
 // Drafts intentionally never contain passwords, access tokens, or refresh tokens.
 
 (() => {
-    const DRAFT_KEY = "digi_checkout_draft_v1";
-    const EXPIRED_KEY = "digi_checkout_draft_expired_v1";
-    const MERGE_REPORT_KEY = "digi_checkout_merge_report_v1";
-    const DRAFT_VERSION = 1;
+    const DRAFT_KEY = "digi_checkout_draft_v2";
+    const EXPIRED_KEY = "digi_checkout_draft_expired_v2";
+    const MERGE_REPORT_KEY = "digi_checkout_merge_report_v2";
+    const DRAFT_VERSION = 2;
     const DRAFT_TTL_MS = 30 * 60 * 1000;
     const ALLOWED_PAYMENT_METHODS = new Set(["COD", "BANKING", "MOMO", "VNPAY"]);
 
@@ -33,28 +33,39 @@
         if (parsed.origin !== window.location.origin || parsed.pathname !== "/checkouts.html") return null;
         const source = parsed.searchParams.get("source");
         const id = parsed.searchParams.get("id");
+        const variantId = parsed.searchParams.get("variantId");
         if (source === "cart" && parsed.searchParams.size === 1) return "/checkouts.html?source=cart";
-        if (id && /^\d+$/.test(id) && parsed.searchParams.size === 1) return `/checkouts.html?id=${Number(id)}`;
+        if (id && /^\d+$/.test(id) && variantId && /^\d+$/.test(variantId) && parsed.searchParams.size === 2) {
+            return `/checkouts.html?id=${Number(id)}&variantId=${Number(variantId)}`;
+        }
         return null;
     };
 
-    const currentReturnPath = (mode, productId) => {
+    const currentReturnPath = (mode, productId, variantId) => {
         if (mode === "cart") return "/checkouts.html?source=cart";
-        const id = toInteger(productId);
-        return id !== null && id > 0 ? `/checkouts.html?id=${id}` : null;
+        const product = toInteger(productId);
+        const variant = toInteger(variantId);
+        return product !== null && product > 0 && variant !== null && variant > 0
+            ? `/checkouts.html?id=${product}&variantId=${variant}`
+            : null;
     };
 
     const normalizeItem = (item) => {
         if (!item || typeof item !== "object") return null;
-        const productId = toInteger(item.productId ?? item.id);
+        const variantId = toInteger(item.variantId);
+        const productId = toInteger(item.productId);
         const quantity = toInteger(item.quantity);
-        if (productId === null || productId <= 0 || quantity === null || quantity <= 0) return null;
+        if (variantId === null || variantId <= 0 || quantity === null || quantity <= 0) return null;
         return {
-            productId,
+            variantId,
+            ...(productId !== null && productId > 0 ? { productId } : {}),
             quantity,
             name: typeof item.name === "string" ? item.name.slice(0, 240) : "Sản phẩm",
             image: typeof item.image === "string" ? item.image.slice(0, 1000) : "",
             description: typeof item.description === "string" ? item.description.slice(0, 1000) : "",
+            variantLabel: typeof item.variantLabel === "string" ? item.variantLabel.slice(0, 240) : "",
+            sku: typeof item.sku === "string" ? item.sku.slice(0, 100) : "",
+            optionValues: item.optionValues && typeof item.optionValues === "object" ? item.optionValues : {},
             price: Number.isFinite(Number(item.price)) ? Number(item.price) : 0,
             stock: Number.isFinite(Number(item.stock)) ? Number(item.stock) : undefined,
             available: item.available !== false,
@@ -78,15 +89,16 @@
         const expiresAt = Number(draft.expiresAt);
         if (!returnPath || !mode || !Number.isFinite(createdAt) || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
         const cartSnapshot = Array.isArray(draft.cartSnapshot) ? draft.cartSnapshot.map(normalizeItem).filter(Boolean) : [];
+        const variantId = mode === "buy-now" ? toInteger(draft.variantId) : null;
         const productId = mode === "buy-now" ? toInteger(draft.productId) : null;
-        if (mode === "buy-now" && (!productId || productId <= 0)) return null;
+        if (mode === "buy-now" && (!productId || productId <= 0 || !variantId || variantId <= 0)) return null;
         return {
             version: DRAFT_VERSION,
             createdAt,
             expiresAt,
             returnPath,
             mode,
-            ...(productId ? { productId } : {}),
+            ...(productId ? { productId, variantId } : {}),
             cartSnapshot,
             form: normalizeForm(draft.form)
         };
@@ -109,22 +121,24 @@
         }
     };
 
-    const saveDraft = ({ mode, productId, cartSnapshot, form, returnPath } = {}) => {
+    const saveDraft = ({ mode, productId, variantId, cartSnapshot, form, returnPath } = {}) => {
         const normalizedMode = normalizeMode(mode);
-        const safeReturnPath = normalizeReturnPath(returnPath) || currentReturnPath(normalizedMode, productId);
+        const safeReturnPath = normalizeReturnPath(returnPath) || currentReturnPath(normalizedMode, productId, variantId);
         if (!normalizedMode || !safeReturnPath) return null;
         const now = Date.now();
+        const normalizedVariantId = normalizedMode === "buy-now" ? toInteger(variantId) : null;
+        const normalizedProductId = normalizedMode === "buy-now" ? toInteger(productId) : null;
         const draft = {
             version: DRAFT_VERSION,
             createdAt: now,
             expiresAt: now + DRAFT_TTL_MS,
             returnPath: safeReturnPath,
             mode: normalizedMode,
-            ...(normalizedMode === "buy-now" ? { productId: toInteger(productId) } : {}),
+            ...(normalizedMode === "buy-now" ? { productId: normalizedProductId, variantId: normalizedVariantId } : {}),
             cartSnapshot: Array.isArray(cartSnapshot) ? cartSnapshot.map(normalizeItem).filter(Boolean) : [],
             form: normalizeForm(form)
         };
-        if (!draft.productId && normalizedMode === "buy-now") return null;
+        if (normalizedMode === "buy-now" && (!draft.productId || draft.productId <= 0 || !draft.variantId || draft.variantId <= 0)) return null;
         return storageSet(DRAFT_KEY, JSON.stringify(draft)) ? draft : null;
     };
 
@@ -143,19 +157,19 @@
         const adjustments = Array.isArray(report) ? report : report?.adjustments;
         if (!Array.isArray(adjustments)) return;
         const safe = adjustments.map((entry) => {
-            const productId = toInteger(entry?.productId);
+            const variantId = toInteger(entry?.variantId);
             const requestedQuantity = toInteger(entry?.requestedQuantity);
             const finalQuantity = toInteger(entry?.finalQuantity);
-            if (productId === null || requestedQuantity === null || finalQuantity === null) return null;
+            if (variantId === null || requestedQuantity === null || finalQuantity === null) return null;
             return {
-                productId,
+                variantId,
                 requestedQuantity,
                 finalQuantity,
                 reason: typeof entry.reason === "string" ? entry.reason.slice(0, 80) : "adjusted",
                 ...(typeof entry.name === "string" ? { name: entry.name.slice(0, 240) } : {})
             };
         }).filter(Boolean);
-        storageSet(MERGE_REPORT_KEY, JSON.stringify({ version: 1, adjustments: safe, userId: typeof ownerId === "string" ? ownerId : "", createdAt: Date.now() }));
+        storageSet(MERGE_REPORT_KEY, JSON.stringify({ version: 2, adjustments: safe, userId: typeof ownerId === "string" ? ownerId : "", createdAt: Date.now() }));
     };
 
     const readMergeReport = () => {
@@ -170,12 +184,12 @@
     };
 
     const clearMergeReport = () => storageRemove(MERGE_REPORT_KEY);
-    const removeMergeAdjustment = (productId) => {
-        const id = toInteger(productId);
+    const removeMergeAdjustment = (variantId) => {
+        const id = toInteger(variantId);
         if (id === null) return;
-        const adjustments = readMergeReport().filter((entry) => entry.productId !== id);
+        const adjustments = readMergeReport().filter((entry) => entry.variantId !== id);
         if (!adjustments.length) return clearMergeReport();
-        storageSet(MERGE_REPORT_KEY, JSON.stringify({ version: 1, adjustments, createdAt: Date.now() }));
+        storageSet(MERGE_REPORT_KEY, JSON.stringify({ version: 2, adjustments, createdAt: Date.now() }));
     };
 
 

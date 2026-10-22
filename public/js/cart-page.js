@@ -13,15 +13,20 @@ const escapeHtml = (value) => String(value ?? "")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-const itemValidation = (item) => validatedItems.find((candidate) => Number(candidate.productId) === Number(item.productId));
+const itemValidation = (item) => validatedItems.find((candidate) =>
+    item.variantId !== undefined
+        ? Number(candidate.variantId) === Number(item.variantId)
+        : Number(candidate.productId) === Number(item.legacyProductId ?? item.productId)
+);
 const effectiveItem = (item) => itemValidation(item) || item;
 const isUnavailable = (item) => effectiveItem(item).available === false || item.available === false;
 
 const unavailableReason = (item) => {
     const reason = effectiveItem(item).unavailableReason;
-    if (reason === "out_of_stock") return "Sản phẩm hiện đã hết hàng, vui lòng xóa khỏi giỏ hàng.";
+    if (reason === "out_of_stock") return "Phiên bản hiện đã hết hàng, vui lòng xóa khỏi giỏ hàng.";
     if (reason === "soft_deleted") return "Sản phẩm đã ngừng kinh doanh, vui lòng xóa khỏi giỏ hàng.";
-    if (reason === "not_found") return "Sản phẩm không còn tồn tại, vui lòng xóa khỏi giỏ hàng.";
+    if (reason === "not_found") return "Phiên bản không còn tồn tại, vui lòng xóa khỏi giỏ hàng.";
+    if (reason === "variant_unavailable" || reason === "legacy_variant_unavailable") return "Không thể xác định phiên bản cũ. Hãy xóa sản phẩm và chọn lại.";
     return typeof reason === "string" && reason.length > 20 ? reason : "Sản phẩm không khả dụng, vui lòng xóa khỏi giỏ hàng.";
 };
 
@@ -73,30 +78,36 @@ const renderCart = (items) => {
     const total = subtotal + shippingFee;
     const itemsHtml = safeItems.map((item) => {
         const value = effectiveItem(item);
-        const productId = Number(item.productId);
+        const variantId = Number(item.variantId);
+        const legacyProductId = Number(item.legacyProductId);
+        const hasVariantId = Number.isInteger(variantId) && variantId > 0;
         const quantity = Number(value.quantity || item.quantity || 1);
         const stock = Number(value.stock ?? item.stock ?? quantity);
         const unavailable = isUnavailable(item);
-        const maxStock = Math.max(quantity, stock);
         const lineTotal = unavailable ? 0 : Number(value.price || item.price || 0) * quantity;
         const warning = unavailable ? unavailableReason(item) : value.quantityAdjusted ? "Số lượng đã điều chỉnh do tồn kho." : "";
+        const quantityControls = hasVariantId
+            ? `<button class="qty-btn" type="button" onclick="changeQty(${variantId}, ${quantity - 1}, ${stock})" ${quantity <= 1 ? 'aria-label="Xóa phiên bản"' : 'aria-label="Giảm số lượng"'}>−</button>
+               <span class="cart-item__qty" aria-live="polite">${quantity}</span>
+               <button class="qty-btn" type="button" onclick="changeQty(${variantId}, ${quantity + 1}, ${stock})" ${unavailable || quantity >= stock ? "disabled" : 'aria-label="Tăng số lượng"'}>+</button>`
+            : `<button class="qty-btn" type="button" disabled aria-label="Phiên bản cũ không thể sửa">−</button><span class="cart-item__qty">${quantity}</span><button class="qty-btn" type="button" disabled aria-label="Phiên bản cũ không thể sửa">+</button>`;
+        const removeHandler = hasVariantId ? `removeItem(${variantId})` : `removeLegacyItem(${legacyProductId})`;
         return `
-        <article class="cart-item ${unavailable ? "cart-item--unavailable" : ""}" data-product-id="${productId}">
+        <article class="cart-item ${unavailable ? "cart-item--unavailable" : ""}" data-variant-id="${hasVariantId ? variantId : ""}">
             <div class="cart-item__img-wrap">
                 <img src="${escapeHtml(value.image || item.image || "/img/placeholder.png")}" alt="${escapeHtml(value.name || item.name)}" class="cart-item__img">
             </div>
             <div class="cart-item__body">
                 <div class="cart-item__name">${escapeHtml(value.name || item.name)}</div>
+                ${value.variantLabel || item.variantLabel ? `<p class="cart-item__desc">${escapeHtml(value.variantLabel || item.variantLabel)}</p>` : ""}
                 <p class="cart-item__desc">${escapeHtml(value.description || item.description || "")}</p>
                 <div class="cart-item__price-row">
                     <span class="cart-item__unit-price">${formatPrice(value.price || item.price)}</span>
                     <div class="cart-item__qty-controls" aria-label="Số lượng ${escapeHtml(value.name || item.name)}">
-                        <button class="qty-btn" type="button" onclick="changeQty(${productId}, ${quantity - 1}, ${stock})" ${quantity <= 1 ? "aria-label=\"Xóa sản phẩm\"" : "aria-label=\"Giảm số lượng\""}>−</button>
-                        <span class="cart-item__qty" aria-live="polite">${quantity}</span>
-                        <button class="qty-btn" type="button" onclick="changeQty(${productId}, ${quantity + 1}, ${stock})" ${unavailable || quantity >= stock ? "disabled" : "aria-label=\"Tăng số lượng\""}>+</button>
+                        ${quantityControls}
                     </div>
                     <span class="cart-item__line-total">${formatPrice(lineTotal)}</span>
-                    <button class="cart-item__remove" type="button" onclick="removeItem(${productId})" aria-label="Xóa ${escapeHtml(value.name || item.name)}">✕</button>
+                    <button class="cart-item__remove" type="button" onclick="${removeHandler}" aria-label="Xóa ${escapeHtml(value.name || item.name)}">✕</button>
                 </div>
                 ${warning ? `<p class="cart-item__stock-warning" role="alert">${escapeHtml(warning)}</p>` : ""}
             </div>
@@ -153,9 +164,9 @@ async function retryCartMerge() {
     }
 }
 
-async function changeQty(productId, newQty, maxStock) {
-    if (newQty <= 0 && !window.confirm("Xóa sản phẩm này khỏi giỏ hàng?")) return;
-    const result = CartService.updateQty(productId, newQty, maxStock);
+async function changeQty(variantId, newQty, maxStock) {
+    if (newQty <= 0 && !window.confirm("Xóa phiên bản này khỏi giỏ hàng?")) return;
+    const result = CartService.updateQty(variantId, newQty, maxStock);
     if (!result.ok) {
         showToast(result.message || "Không thể cập nhật số lượng", "error");
         return;
@@ -164,9 +175,14 @@ async function changeQty(productId, newQty, maxStock) {
     await rerender();
 }
 
-async function removeItem(productId) {
-    const result = CartService.removeItem(productId);
+async function removeItem(variantId) {
+    const result = CartService.removeItem(variantId);
     if (result.promise) await result.promise;
+    await rerender();
+}
+
+async function removeLegacyItem(productId) {
+    CartService.removeLegacyItem(productId);
     await rerender();
 }
 
@@ -192,16 +208,43 @@ async function validateGuestCart(items) {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items: current.map((item) => ({ productId: item.productId, quantity: item.quantity })) })
+            body: JSON.stringify({
+                items: current.map((item) => ({
+                    ...(item.variantId !== undefined
+                        ? { variantId: item.variantId }
+                        : { productId: item.legacyProductId ?? item.productId }),
+                    quantity: item.quantity,
+                    name: item.name,
+                    image: item.image,
+                    price: item.price
+                }))
+            })
         });
         const body = await response.json();
         if (!response.ok || body.success === false) throw new Error(body.message || "Không thể kiểm tra giỏ hàng");
         validatedItems = body.data?.validatedItems || [];
-        const merged = current.map((item) => {
-            const valid = validatedItems.find((entry) => Number(entry.productId) === Number(item.productId));
-            return valid ? { ...item, quantity: valid.quantity, stock: valid.stock, available: valid.available, unavailableReason: valid.unavailableReason } : item;
+        const merged = current.map((item, index) => {
+            const valid = validatedItems[index];
+            if (!valid) return item;
+            if (!valid.variantId) {
+                return { ...item, available: false, unavailableReason: valid.unavailableReason || "legacy_variant_unavailable" };
+            }
+            return {
+                ...item,
+                variantId: Number(valid.variantId),
+                productId: Number(valid.productId),
+                legacyProductId: undefined,
+                name: valid.name || item.name,
+                variantLabel: valid.variantLabel || "",
+                optionValues: valid.optionValues || {},
+                sku: valid.sku || "",
+                price: Number(valid.price ?? item.price),
+                stock: Number(valid.stock || 0),
+                quantity: valid.quantity,
+                available: valid.available,
+                unavailableReason: valid.unavailableReason
+            };
         });
-        // Keep unavailable items visible for repair; only available quantity caps are persisted.
         localStorage.setItem("digi_cart", JSON.stringify(merged));
         renderCart(merged);
     } catch (error) {

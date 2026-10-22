@@ -18,14 +18,26 @@ const toDate = (value) =>
 const toNumber = (value) =>
     value === undefined || value === null ? value : Number(value);
 
+const parseOptions = (value) => {
+    if (value && typeof value === "object") return value;
+    try {
+        return JSON.parse(value || "{}");
+    } catch {
+        return {};
+    }
+};
+
 const mapOrderItem = (row) => ({
-    productId: row.productId,
+    variantId: toNumber(row.variantId),
+    sku: row.skuSnapshot,
+    options: parseOptions(row.optionsSnapshot),
     name: row.nameSnapshot,
     image: row.imageSnapshot,
     unitPrice: toNumber(row.unitPrice),
     quantity: row.quantity,
     lineTotal: toNumber(row.lineTotal)
 });
+
 
 const mapOrder = (row, { includeUserId = false } = {}) => {
     if (!row) return undefined;
@@ -76,9 +88,11 @@ const createOrder = async (orderData) => {
         paymentStatus: orderData.paymentStatus,
         items: {
             create: (orderData.items || []).map((item) => ({
-                productId: item.productId,
+                variantId: item.variantId,
                 nameSnapshot: item.name,
                 imageSnapshot: item.image,
+                skuSnapshot: item.sku,
+                optionsSnapshot: JSON.stringify(item.options || {}),
                 unitPrice: item.unitPrice,
                 quantity: item.quantity,
                 lineTotal: item.lineTotal

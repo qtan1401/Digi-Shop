@@ -8,6 +8,7 @@ const SHIPPING_FEE = 100000;
 const MOMO_MAX_AMOUNT = 50_000_000; // Keep in sync with the server-side MoMo adapter.
 
 let currentProduct = null;
+let currentVariant = null;
 let currentQuantity = 1;
 let cartItems = null;
 let checkoutDraft = null;
@@ -43,7 +44,7 @@ const computeSubtotal = () => {
             return sum + Number(item.price || 0) * Number(item.quantity || 0);
         }, 0);
     }
-    if (currentProduct && currentProduct.stock > 0) return Number(currentProduct.price || 0) * currentQuantity;
+    if (currentVariant && currentVariant.stock > 0) return Number(currentVariant.price || 0) * currentQuantity;
     return 0;
 };
 const computeShipping = () => SHIPPING_FEE;
@@ -55,7 +56,7 @@ const refreshSummary = () => {
     setEl("summary-subtotal", formatPrice(subtotal));
     setEl("summary-shipping", formatPrice(shipping));
     setEl("summary-total", formatPrice(subtotal + shipping));
-    if (currentProduct) setEl("checkout-total-price", formatPrice(Number(currentProduct.price || 0) * currentQuantity));
+    if (currentVariant) setEl("checkout-total-price", formatPrice(Number(currentVariant.price || 0) * currentQuantity));
 };
 
 const updateQtyDisplay = () => {
@@ -64,7 +65,7 @@ const updateQtyDisplay = () => {
 };
 
 const increaseQty = () => {
-    if (currentProduct && currentQuantity < Number(currentProduct.stock || 0)) {
+    if (currentVariant && currentQuantity < Number(currentVariant.stock || 0)) {
         currentQuantity += 1;
         refreshSummary();
         updateQtyDisplay();
@@ -122,15 +123,20 @@ const attachLiveValidation = () => {
 
 const draftMode = () => Array.isArray(cartItems) ? "cart" : "buy-now";
 const draftProductId = () => currentProduct?.id ?? Number(getUrlParam("id"));
+const draftVariantId = () => currentVariant?.id ?? Number(getUrlParam("variantId"));
 const currentSnapshot = () => Array.isArray(cartItems)
     ? cartItems.map((item) => ({ ...item }))
-    : currentProduct ? [{
+    : currentProduct && currentVariant ? [{
+        variantId: Number(currentVariant.id),
         productId: Number(currentProduct.id),
         name: currentProduct.name,
+        variantLabel: Object.entries(currentVariant.optionValues || {}).map(([name, value]) => `${name}: ${value}`).join(" · "),
+        optionValues: currentVariant.optionValues || {},
+        sku: currentVariant.sku,
         image: currentProduct.image,
         description: currentProduct.description,
-        price: currentProduct.price,
-        stock: currentProduct.stock,
+        price: currentVariant.price,
+        stock: currentVariant.stock,
         quantity: currentQuantity
     }] : [];
 
@@ -139,9 +145,10 @@ const saveCheckoutDraft = () => {
     return window.DigiCheckoutState.saveDraft({
         mode: draftMode(),
         productId: draftProductId(),
+        variantId: draftVariantId(),
         cartSnapshot: currentSnapshot(),
         form: formValues(),
-        returnPath: window.DigiCheckoutState.currentReturnPath(draftMode(), draftProductId())
+        returnPath: window.DigiCheckoutState.currentReturnPath(draftMode(), draftProductId(), draftVariantId())
     });
 };
 
@@ -172,17 +179,18 @@ const renderForbidden = () => {
 
 const adjustmentReason = (reason) => ({
     stock_capped: "do tồn kho",
-    out_of_stock: "sản phẩm đã hết hàng",
+    out_of_stock: "phiên bản đã hết hàng",
     soft_deleted: "sản phẩm đã ngừng kinh doanh",
-    not_found: "sản phẩm không còn tồn tại"
-}[reason] || "theo tình trạng sản phẩm");
+    not_found: "phiên bản không còn tồn tại",
+    variant_unavailable: "phiên bản không còn khả dụng"
+}[reason] || "theo tình trạng phiên bản");
 
 const renderMergeBanner = () => {
     const adjustments = window.DigiCheckoutState?.readMergeReport?.() || [];
     if (!adjustments.length || !checkoutDraft || !isUserSession()) return "";
     const rows = adjustments.map((adjustment) => {
-        const item = (cartItems || []).find((candidate) => Number(candidate.productId) === Number(adjustment.productId));
-        const name = item?.name || `Sản phẩm #${adjustment.productId}`;
+        const item = (cartItems || []).find((candidate) => Number(candidate.variantId) === Number(adjustment.variantId));
+        const name = item?.name || `Phiên bản #${adjustment.variantId}`;
         return `<li><strong>${escapeHtml(name)}</strong>: ${adjustment.requestedQuantity} → ${adjustment.finalQuantity} ${escapeHtml(adjustmentReason(adjustment.reason))}.</li>`;
     }).join("");
     return `
@@ -197,7 +205,7 @@ const renderMergeBanner = () => {
 const renderUnavailableNotice = (items) => {
     const unavailable = (items || []).filter((item) => item.available === false);
     if (!unavailable.length) return "";
-    const names = unavailable.map((item) => `<li>${escapeHtml(item.name || `Sản phẩm #${item.productId}`)}: ${escapeHtml(adjustmentReason(item.unavailableReason))}</li>`).join("");
+    const names = unavailable.map((item) => `<li>${escapeHtml(item.name || `Phiên bản #${item.variantId}`)}: ${escapeHtml(adjustmentReason(item.unavailableReason))}</li>`).join("");
     return `<div class="checkout-unavailable" role="alert" aria-live="assertive"><strong>Không thể thanh toán lúc này.</strong><ul>${names}</ul><a href="/cart.html">Mở giỏ hàng để xử lý</a></div>`;
 };
 
@@ -406,7 +414,15 @@ const renderOrderSuccess = (order) => {
     activePaymentOrder = order;
     const container = document.getElementById("payment-info");
     const items = Array.isArray(order?.items) ? order.items : [];
-    const itemsHtml = items.map((item) => `<div class="order-detail-row"><span class="order-detail-label">${escapeHtml(item.name)} × ${item.quantity}</span><span class="order-detail-value">${formatPrice(item.lineTotal)}</span></div>`).join("");
+    const itemsHtml = items.map((item) => {
+        const optionsSnapshot = item.optionsSnapshot && typeof item.optionsSnapshot === "object"
+            ? item.optionsSnapshot
+            : item.options && typeof item.options === "object" ? item.options : {};
+        const options = Object.entries(optionsSnapshot).map(([name, value]) => `${name}: ${value}`).join(" · ");
+        const sku = item.skuSnapshot ?? item.sku;
+        const details = [options, sku ? `SKU: ${sku}` : ""].filter(Boolean).join(" · ");
+        return `<div class="order-detail-row"><span class="order-detail-label">${escapeHtml(item.name)} × ${item.quantity}${details ? `<small>${escapeHtml(details)}</small>` : ""}</span><span class="order-detail-value">${formatPrice(item.lineTotal)}</span></div>`;
+    }).join("");
     const customer = order?.customer || { name: "", phone: "", address: "", note: "" };
     const paymentMethod = order?.paymentMethod === "MOMO" ? "MoMo" :
         order?.paymentMethod === "VNPAY" ? "VNPay" : order?.paymentMethod;
@@ -465,12 +481,12 @@ const handleCheckout = async () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    items: cartItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+                    items: cartItems.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
                     ...values
                 })
             });
         } else {
-            response = await authApi(`/api/checkout/${encodeURIComponent(currentProduct.id)}`, {
+            response = await authApi(`/api/checkout/${encodeURIComponent(currentVariant.id)}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quantity: currentQuantity, ...values })
@@ -502,13 +518,18 @@ const validateGuestItems = async (items) => {
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ items: items.map((item) => ({ productId: item.productId, quantity: item.quantity })) })
+            body: JSON.stringify({
+                items: items.map((item) => ({
+                    ...(item.variantId !== undefined ? { variantId: item.variantId } : { productId: item.legacyProductId ?? item.productId }),
+                    quantity: item.quantity
+                }))
+            })
         });
         const body = await response.json();
         if (!response.ok || body.success === false) throw new Error(body.message || "Không thể kiểm tra giỏ hàng");
         const validated = body.data?.validatedItems || [];
-        return items.map((item) => {
-            const value = validated.find((entry) => Number(entry.productId) === Number(item.productId));
+        return items.map((item, index) => {
+            const value = validated[index];
             return value ? { ...item, ...value } : item;
         });
     } catch (_) {
@@ -516,21 +537,34 @@ const validateGuestItems = async (items) => {
     }
 };
 
-const loadBuyNow = async (id) => {
+const loadBuyNow = async (id, variantId) => {
     const container = document.getElementById("payment-info");
     try {
         const response = await fetch(`/api/products/info/${encodeURIComponent(id)}`, { credentials: "same-origin" });
         const body = await response.json();
         if (!response.ok || body.success === false) throw new Error(body.message || "Không tìm thấy sản phẩm");
         currentProduct = body.data;
-        const draftQuantity = checkoutDraft?.mode === "buy-now" && Number(checkoutDraft.productId) === Number(id)
+        const variants = currentProduct.variants || [];
+        currentVariant = variants.find((variant) => Number(variant.id) === Number(variantId));
+        if (!currentVariant) throw new Error("Không tìm thấy phiên bản sản phẩm đã chọn.");
+        const draftQuantity = checkoutDraft?.mode === "buy-now" &&
+            Number(checkoutDraft.productId) === Number(id) &&
+            Number(checkoutDraft.variantId) === Number(variantId)
             ? Number(checkoutDraft.cartSnapshot?.[0]?.quantity || 1)
             : 1;
-        currentQuantity = Math.max(1, Math.min(draftQuantity, Number(currentProduct.stock || 1)));
-        const unavailable = currentProduct.isDeleted === true || Number(currentProduct.stock) <= 0;
-        const summaryHtml = `<div class="checkout-summary__item"><img src="${escapeHtml(currentProduct.image || "")}" alt="${escapeHtml(currentProduct.name)}" class="checkout-summary__img"><div class="checkout-summary__item-info"><div class="checkout-summary__item-name">${escapeHtml(currentProduct.name)}</div><div class="checkout-summary__item-desc">${escapeHtml(currentProduct.description || "")}</div><div class="checkout-summary__item-price">${formatPrice(currentProduct.price)} × ${currentQuantity}</div></div></div>`;
-        const qtyControls = unavailable ? "" : `<div class="checkout-form-row"><label for="qty-input">Số lượng đặt mua</label><div class="quantity-input"><button type="button" onclick="decreaseQty()" aria-label="Giảm số lượng">−</button><input type="number" id="qty-input" value="${currentQuantity}" min="1" max="${Number(currentProduct.stock)}" readonly><button type="button" onclick="increaseQty()" aria-label="Tăng số lượng">+</button></div></div>`;
-        renderCheckoutForm(summaryHtml, qtyControls, unavailable, unavailable ? [{ ...currentProduct, productId: currentProduct.id, available: false, unavailableReason: currentProduct.isDeleted ? "soft_deleted" : "out_of_stock" }] : []);
+        currentQuantity = Math.max(1, Math.min(draftQuantity, Number(currentVariant.stock || 1)));
+        const unavailable = currentProduct.isDeleted === true || currentVariant.isActive !== true || Number(currentVariant.stock) <= 0;
+        const variantLabel = Object.entries(currentVariant.optionValues || {})
+            .map(([name, value]) => `${name}: ${value}`)
+            .join(" · ");
+        const summaryHtml = `<div class="checkout-summary__item"><img src="${escapeHtml(currentProduct.image || "")}" alt="${escapeHtml(currentProduct.name)}" class="checkout-summary__img"><div class="checkout-summary__item-info"><div class="checkout-summary__item-name">${escapeHtml(currentProduct.name)}</div><div class="checkout-summary__item-desc">${escapeHtml([variantLabel, currentVariant.sku ? `SKU: ${currentVariant.sku}` : "", currentProduct.description || ""].filter(Boolean).join(" · "))}</div><div class="checkout-summary__item-price">${formatPrice(currentVariant.price)} × ${currentQuantity}</div></div></div>`;
+        const qtyControls = unavailable ? "" : `<div class="checkout-form-row"><label for="qty-input">Số lượng đặt mua</label><div class="quantity-input"><button type="button" onclick="decreaseQty()" aria-label="Giảm số lượng">−</button><input type="number" id="qty-input" value="${currentQuantity}" min="1" max="${Number(currentVariant.stock)}" readonly><button type="button" onclick="increaseQty()" aria-label="Tăng số lượng">+</button></div></div>`;
+        renderCheckoutForm(summaryHtml, qtyControls, unavailable, unavailable ? [{
+            variantId: currentVariant.id,
+            name: currentProduct.name,
+            available: false,
+            unavailableReason: currentProduct.isDeleted ? "soft_deleted" : currentVariant.isActive ? "out_of_stock" : "variant_unavailable"
+        }] : []);
     } catch (error) {
         container.innerHTML = `<div class="error-message"><h2>Không tìm thấy sản phẩm</h2><p>${escapeHtml(error.message)}</p><a href="/" class="btn btn--primary">Quay lại trang chủ</a></div>`;
     }
@@ -546,7 +580,7 @@ const loadFromCart = async () => {
         return;
     }
     const unavailable = cartItems.some((item) => item.available === false);
-    const summaryHtml = cartItems.map((item) => `<div class="checkout-summary__item"><img src="${escapeHtml(item.image || item.product?.image || "")}" alt="${escapeHtml(item.name || item.product?.name)}" class="checkout-summary__img"><div class="checkout-summary__item-info"><div class="checkout-summary__item-name">${escapeHtml(item.name || item.product?.name)}</div><div class="checkout-summary__item-desc">${escapeHtml(item.description || item.product?.description || "")}</div><div class="checkout-summary__item-price">${formatPrice(item.price || item.product?.price)} × ${item.quantity}</div></div></div>`).join("");
+    const summaryHtml = cartItems.map((item) => `<div class="checkout-summary__item"><img src="${escapeHtml(item.image || item.product?.image || "")}" alt="${escapeHtml(item.name || item.product?.name)}" class="checkout-summary__img"><div class="checkout-summary__item-info"><div class="checkout-summary__item-name">${escapeHtml(item.name || item.product?.name)}</div><div class="checkout-summary__item-desc">${escapeHtml([item.variantLabel, item.sku ? `SKU: ${item.sku}` : "", item.description || item.product?.description || ""].filter(Boolean).join(" · "))}</div><div class="checkout-summary__item-price">${formatPrice(item.price || item.variant?.price)} × ${item.quantity}</div></div></div>`).join("");
     renderCheckoutForm(summaryHtml, "", unavailable, cartItems);
 };
 
@@ -581,10 +615,11 @@ const loadCheckout = async () => {
     }
 
     const id = getUrlParam("id");
+    const variantId = getUrlParam("variantId");
     const source = getUrlParam("source");
     if (source === "cart") return loadFromCart();
-    if (id && /^\d+$/.test(id)) return loadBuyNow(Number(id));
-    document.getElementById("payment-info").innerHTML = `<div class="error-message"><h2>Không tìm thấy sản phẩm</h2><p>Vui lòng chọn sản phẩm từ trang chủ hoặc mở giỏ hàng trước khi thanh toán.</p><div class="checkout-auth-forbidden__actions"><a href="/" class="btn btn--primary">Trang chủ</a><a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a></div></div>`;
+    if (id && /^\d+$/.test(id) && variantId && /^\d+$/.test(variantId)) return loadBuyNow(Number(id), Number(variantId));
+    document.getElementById("payment-info").innerHTML = `<div class="error-message"><h2>Không tìm thấy sản phẩm</h2><p>Vui lòng chọn một phiên bản từ trang chi tiết hoặc mở giỏ hàng trước khi thanh toán.</p><div class="checkout-auth-forbidden__actions"><a href="/" class="btn btn--primary">Trang chủ</a><a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a></div></div>`;
 };
 
 document.addEventListener("DOMContentLoaded", loadCheckout);

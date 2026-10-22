@@ -14,12 +14,12 @@ const errorToStatus = (msg) => {
  * [POST] /api/checkout/check-stock/:id
  * Kiểm tra tồn kho (không trừ kho)
  */
-const checkProductinStock = async (req, res) => {
+const checkVariantInStock = async (req, res) => {
     try {
-        const productId = req.params.id || req.body.productId;
+        const variantId = req.params.id || req.body.variantId;
         const quantity = req.body.quantity || req.query.quantity || 1;
-        const result = await checkoutService.checkProduct(productId, quantity);
-        res.status(200).json({ success: true, message: "Sản phẩm còn hàng trong kho", inStock: true, data: result });
+        const result = await checkoutService.checkVariant(variantId, quantity);
+        res.status(200).json({ success: true, message: "Phiên bản sản phẩm còn hàng trong kho", inStock: true, data: result });
     } catch (error) {
         res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
     }
@@ -31,11 +31,11 @@ const checkProductinStock = async (req, res) => {
  */
 const processCheckout = async (req, res) => {
     try {
-        const productId = req.params.id || req.body.productId;
+        const variantId = req.params.id || req.body.variantId;
         const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
 
         const result = await checkoutService.processCheckout(req.user.id, {
-            productId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note
+            variantId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note
         }, req);
 
         res.status(201).json({
@@ -50,10 +50,10 @@ const processCheckout = async (req, res) => {
 };
 
 /**
- * [POST] /api/checkout/batch
  * Thanh toán toàn bộ giỏ hàng (nhiều sản phẩm)
- * Body: { items: [{productId, quantity}], customerName, customerPhone, customerAddress, paymentMethod, note }
+ * Body: { items: [{variantId, quantity}], customerName, customerPhone, customerAddress, paymentMethod, note }
  */
+
 const cartCheckout = async (req, res) => {
     try {
         const { items, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
@@ -71,4 +71,4 @@ const cartCheckout = async (req, res) => {
     }
 };
 
-module.exports = { checkProductinStock, processCheckout, cartCheckout };
+module.exports = { checkVariantInStock, processCheckout, cartCheckout };

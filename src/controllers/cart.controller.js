@@ -30,7 +30,7 @@ const sendAccountError = (res, error) => {
     const knownCodes = new Set([
         "AUTH_REQUIRED",
         "VALIDATION_FAILED",
-        "PRODUCT_NOT_FOUND",
+        "VARIANT_NOT_FOUND",
         "CART_ITEM_UNAVAILABLE",
         "IDEMPOTENCY_CONFLICT"
     ]);
@@ -59,7 +59,7 @@ const getAccountCart = async (req, res) => {
 
 const setAccountCartQuantity = async (req, res) => {
     try {
-        const result = await cartService.setAccountCartQuantity(accountUserId(req), req.params.productId, req.body && req.body.quantity);
+        const result = await cartService.setAccountCartQuantity(accountUserId(req), req.params.variantId, req.body && req.body.quantity);
         return res.json({ success: true, data: result });
     } catch (error) {
         return sendAccountError(res, error);
@@ -68,7 +68,7 @@ const setAccountCartQuantity = async (req, res) => {
 
 const removeAccountCartItem = async (req, res) => {
     try {
-        const result = await cartService.removeAccountCartItem(accountUserId(req), req.params.productId);
+        const result = await cartService.removeAccountCartItem(accountUserId(req), req.params.variantId);
         return res.json({ success: true, data: result });
     } catch (error) {
         return sendAccountError(res, error);

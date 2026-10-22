@@ -4,7 +4,7 @@
 // removed after the server confirms a committed merge or a successful logout.
 
 const CART_KEY = "digi_cart";
-const MERGE_OPERATION_KEY = "digi_cart_merge_operation_v1";
+const MERGE_OPERATION_KEY = "digi_cart_merge_operation_v2";
 const SHIPPING_FEE_DEFAULT = 100000;
 
 let _authSession = { authenticated: false, user: null };
@@ -17,7 +17,7 @@ let _mergeError = null;
 const _load = () => {
     try {
         const value = JSON.parse(localStorage.getItem(CART_KEY));
-        return Array.isArray(value) ? value : [];
+        return Array.isArray(value) ? _normalizeItems(value) : [];
     } catch (_) {
         return [];
     }
@@ -43,24 +43,33 @@ const _storageRemove = (key) => {
 const _clearMergeContext = () => _storageRemove(MERGE_OPERATION_KEY);
 
 const _number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-const _productId = (value) => Number.isSafeInteger(Number(value)) ? Number(value) : null;
+const _variantId = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
 const _quantity = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
 
 const _normalizeItem = (item) => {
     if (!item || typeof item !== "object") return null;
     const product = item.product || item;
-    const productId = _productId(item.productId ?? product.id ?? item.id);
+    const variantId = _variantId(item.variantId ?? item.variant?.id);
+    const legacyProductId = variantId === null
+        ? _variantId(item.legacyProductId ?? item.productId ?? product.id ?? item.id)
+        : null;
+    const productId = _variantId(item.productId ?? item.product?.id);
     const quantity = _quantity(item.quantity);
-    if (productId === null || quantity === null) return null;
-    const rawStock = item.stock ?? product.stock;
+    if ((variantId === null && legacyProductId === null) || quantity === null) return null;
+    const rawStock = item.stock ?? item.variant?.stock;
     const hasStock = rawStock !== undefined && rawStock !== null;
     return {
-        productId,
+        ...(variantId === null ? {} : { variantId }),
+        ...(productId === null ? {} : { productId }),
+        ...(legacyProductId === null ? {} : { legacyProductId }),
         name: typeof (item.name ?? product.name) === "string" ? (item.name ?? product.name) : "Sản phẩm",
+        variantLabel: typeof item.variantLabel === "string" ? item.variantLabel : "",
+        optionValues: item.optionValues && typeof item.optionValues === "object" ? item.optionValues : {},
+        sku: typeof (item.sku ?? item.variant?.sku) === "string" ? (item.sku ?? item.variant.sku) : "",
         slug: typeof item.slug === "string" ? item.slug : "",
         image: typeof (item.image ?? product.image) === "string" ? (item.image ?? product.image) : "",
         description: typeof (item.description ?? product.description) === "string" ? (item.description ?? product.description) : "",
-        price: _number(item.price ?? product.price),
+        price: _number(item.price ?? item.variant?.price ?? product.price),
         stock: hasStock ? _number(rawStock) : undefined,
         quantity,
         available: item.available !== false && product.isDeleted !== true && (!hasStock || _number(rawStock) > 0),
@@ -87,10 +96,55 @@ const _api = async (path, options = {}) => {
     }
     return _unwrap(body);
 };
+const _migrateLegacyGuestCart = async () => {
+    const items = _load();
+    if (!items.some((item) => item.variantId === undefined)) return items;
+    const response = await fetch("/api/cart/validate", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            items: items.map((item) => ({
+                ...(item.variantId === undefined ? { productId: item.legacyProductId } : { variantId: item.variantId }),
+                quantity: item.quantity,
+                name: item.name,
+                image: item.image,
+                price: item.price
+            }))
+        })
+    });
+    const body = await response.json();
+    if (!response.ok || body?.success === false) throw new Error(body?.message || "Không thể chuyển giỏ hàng sang phiên bản mới.");
+    const validated = Array.isArray(body?.data?.validatedItems) ? body.data.validatedItems : [];
+    const migrated = items.map((item, index) => {
+        if (item.variantId !== undefined) return item;
+        const variant = validated[index];
+        if (!variant?.variantId) {
+            return { ...item, available: false, unavailableReason: variant?.unavailableReason || "legacy_variant_unavailable" };
+        }
+        return {
+            ...item,
+            variantId: Number(variant.variantId),
+            productId: Number(variant.productId),
+            legacyProductId: undefined,
+            name: variant.name || item.name,
+            variantLabel: variant.variantLabel || "",
+            optionValues: variant.optionValues || {},
+            sku: variant.sku || "",
+            price: Number(variant.price ?? item.price),
+            stock: Number(variant.stock || 0),
+            available: Boolean(variant.available),
+            unavailableReason: variant.unavailableReason || null
+        };
+    });
+    _save(migrated);
+    return _load();
+};
 
 const _canonicalItems = (items) => _normalizeItems(items)
-    .map((item) => ({ productId: item.productId, quantity: item.quantity }))
-    .sort((a, b) => a.productId - b.productId);
+    .filter((item) => item.variantId !== undefined)
+    .map((item) => ({ variantId: item.variantId, quantity: item.quantity }))
+    .sort((left, right) => left.variantId - right.variantId);
 
 const _sameItems = (left, right) => JSON.stringify(_canonicalItems(left)) === JSON.stringify(_canonicalItems(right));
 
@@ -101,7 +155,7 @@ const _getMergeContext = (userId, items) => {
     const operationId = (window.crypto && typeof window.crypto.randomUUID === "function")
         ? window.crypto.randomUUID()
         : `merge-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-    context = { version: 1, userId, operationId, items: _canonicalItems(items) };
+    context = { version: 2, userId, operationId, items: _canonicalItems(items) };
     _storageSet(MERGE_OPERATION_KEY, JSON.stringify(context));
     return context;
 };
@@ -111,15 +165,15 @@ const _augmentUnavailableItems = (items) => {
     const report = window.DigiCheckoutState?.readMergeReport?.() || [];
     const draft = window.DigiCheckoutState?.readDraft?.();
     const unavailable = report.filter((entry) =>
-        Number(entry.finalQuantity) <= 0 && ["out_of_stock", "soft_deleted", "not_found"].includes(entry.reason)
+        Number(entry.finalQuantity) <= 0 && ["out_of_stock", "soft_deleted", "not_found", "variant_unavailable"].includes(entry.reason)
     );
     unavailable.forEach((entry) => {
-        if (base.some((item) => item.productId === Number(entry.productId))) return;
-        const source = draft?.cartSnapshot?.find((item) => Number(item.productId) === Number(entry.productId)) || (entry.name ? { name: entry.name } : null);
+        if (base.some((item) => item.variantId === Number(entry.variantId))) return;
+        const source = draft?.cartSnapshot?.find((item) => Number(item.variantId) === Number(entry.variantId)) || (entry.name ? { name: entry.name } : null);
         if (!source) return;
         base.push({
             ...source,
-            productId: Number(entry.productId),
+            variantId: Number(entry.variantId),
             quantity: Math.max(1, Number(entry.requestedQuantity) || 1),
             stock: 0,
             available: false,
@@ -128,6 +182,7 @@ const _augmentUnavailableItems = (items) => {
     });
     return base;
 };
+
 
 const _setAccountItems = (items) => {
     _accountItems = _augmentUnavailableItems(items);
@@ -221,10 +276,11 @@ const CartService = {
     getMergeError() { return _mergeError; },
 
     addItem(product, quantity = 1) {
-        const productId = _productId(product?.id ?? product?.productId);
+        const variantId = _variantId(product?.variantId);
+        const productId = _variantId(product?.productId ?? product?.product?.id);
         const requested = _quantity(quantity);
-        if (!product || productId === null || requested === null || _number(product.stock) <= 0) {
-            return { ok: false, reason: "out_of_stock", message: "Sản phẩm đã hết hàng" };
+        if (!product || variantId === null || productId === null || requested === null || _number(product.stock) <= 0) {
+            return { ok: false, reason: "out_of_stock", message: "Phiên bản sản phẩm đã hết hàng" };
         }
         if (_currentIsUser()) {
             if (_mergeError) return { ok: false, reason: "merge_failed", message: "Hãy hợp nhất giỏ hàng trước khi chỉnh sửa." };
@@ -235,10 +291,10 @@ const CartService = {
                 });
                 return { ok: true, pending: true, promise };
             }
-            const existing = _accountItems.find((item) => item.productId === productId);
+            const existing = _accountItems.find((item) => item.variantId === variantId);
             const nextQuantity = (existing?.quantity || 0) + requested;
             if (nextQuantity > _number(product.stock)) return { ok: false, reason: "exceeds_stock", message: `Chỉ còn ${product.stock} sản phẩm có thể thêm` };
-            const promise = _api(`/api/cart/items/${encodeURIComponent(productId)}`, {
+            const promise = _api(`/api/cart/items/${encodeURIComponent(variantId)}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quantity: nextQuantity })
@@ -252,7 +308,7 @@ const CartService = {
         }
 
         const items = _load();
-        const index = items.findIndex((item) => item.productId === productId);
+        const index = items.findIndex((item) => item.variantId === variantId);
         const existingQty = index >= 0 ? Number(items[index].quantity) : 0;
         const total = existingQty + requested;
         if (total > _number(product.stock)) {
@@ -262,8 +318,12 @@ const CartService = {
                 : { ok: false, reason: "max_reached", message: `Đã đạt tối đa ${product.stock} sản phẩm trong giỏ` };
         }
         const item = {
+            variantId,
             productId,
             name: product.name,
+            variantLabel: product.variantLabel || "",
+            optionValues: product.optionValues || {},
+            sku: product.sku || "",
             slug: product.slug || "",
             image: product.image || "",
             description: product.description || "",
@@ -272,15 +332,15 @@ const CartService = {
             quantity: requested,
             addedAt: new Date().toISOString()
         };
-        if (index >= 0) items[index] = { ...items[index], quantity: total, stock: _number(product.stock) };
+        if (index >= 0) items[index] = { ...items[index], ...item, quantity: total };
         else items.push(item);
         _save(items);
         this.updateBadge();
         return { ok: true };
     },
 
-    removeItem(productId) {
-        const id = _productId(productId);
+    removeItem(variantId) {
+        const id = _variantId(variantId);
         if (id === null) return { ok: false, reason: "not_found" };
         if (_currentIsUser()) {
             if (_mergeError) return { ok: false, reason: "merge_failed", message: "Hãy hợp nhất giỏ hàng trước khi chỉnh sửa." };
@@ -292,13 +352,21 @@ const CartService = {
                 .catch((error) => { _mergeError = error; showToast(error.message, "error"); throw error; });
             return { ok: true, pending: true, promise };
         }
-        _save(_load().filter((item) => item.productId !== id));
+        _save(_load().filter((item) => item.variantId !== id));
+        this.updateBadge();
+        return { ok: true };
+    },
+    removeLegacyItem(productId) {
+        const id = _variantId(productId);
+        if (id === null || _currentIsUser()) return { ok: false, reason: "not_found" };
+        _save(_load().filter((item) => item.legacyProductId !== id));
         this.updateBadge();
         return { ok: true };
     },
 
-    updateQty(productId, qty, maxStock) {
-        const id = _productId(productId);
+
+    updateQty(variantId, qty, maxStock) {
+        const id = _variantId(variantId);
         const requested = Number(qty);
         if (id === null || !Number.isInteger(requested)) return { ok: false, reason: "invalid_quantity" };
         if (requested <= 0) return this.removeItem(id);
@@ -317,7 +385,7 @@ const CartService = {
             return { ok: true, pending: true, promise };
         }
         const items = _load();
-        const index = items.findIndex((item) => item.productId === id);
+        const index = items.findIndex((item) => item.variantId === id);
         if (index < 0) return { ok: false, reason: "not_found" };
         items[index].quantity = requested;
         _save(items);
@@ -337,7 +405,7 @@ const CartService = {
         if (!_currentIsUser()) return { ok: true };
         const current = _accountItems.slice();
         for (const item of current) {
-            await _api(`/api/cart/items/${encodeURIComponent(item.productId)}`, { method: "DELETE" });
+            await _api(`/api/cart/items/${encodeURIComponent(item.variantId)}`, { method: "DELETE" });
         }
         window.DigiCheckoutState?.clearMergeReport?.();
         _storageRemove("digi_checkout_merge_report_v1");
@@ -388,7 +456,10 @@ const mergeGuestCartForUser = async (user) => {
     _storageRemove("digi_checkout_merge_report_v1");
     _accountReady = false;
     _mergeError = null;
-    const guestItems = _load();
+    const guestItems = await _migrateLegacyGuestCart();
+    if (guestItems.some((item) => item.variantId === undefined)) {
+        throw new Error("Một số sản phẩm cũ có nhiều phiên bản và cần được chọn lại trước khi hợp nhất giỏ hàng.");
+    }
     let result = { items: [], adjustments: [] };
     if (guestItems.length > 0) {
         const context = _getMergeContext(userId, guestItems);
@@ -399,7 +470,7 @@ const mergeGuestCartForUser = async (user) => {
         }));
         const report = result.adjustments.map((entry) => ({
             ...entry,
-            name: guestItems.find((item) => Number(item.productId) === Number(entry.productId))?.name
+            name: guestItems.find((item) => Number(item.variantId) === Number(entry.variantId))?.name
         }));
         window.DigiCheckoutState?.saveMergeReport(report);
         _setAccountItems(result.items);
@@ -458,6 +529,7 @@ const retryMerge = async () => {
 
 const digiCartReady = (async () => {
     if (!window.DigiAuth?.ready) {
+        await _migrateLegacyGuestCart().catch(() => {});
         CartService.updateBadge();
         return CartService.getSession();
     }
@@ -470,6 +542,7 @@ const digiCartReady = (async () => {
         if (_currentIsUser() && _load().length > 0 && _handledLoginUserId !== String(_authSession.user?.id || "")) {
             try { await mergeGuestCartForUser(_authSession.user); } catch (error) { _mergeError = error; }
         }
+        if (!_currentIsUser() && !_currentIsAdmin()) await _migrateLegacyGuestCart();
     } catch (error) {
         _mergeError = error;
         _pendingLoginUserId = null;

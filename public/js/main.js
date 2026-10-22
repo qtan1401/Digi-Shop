@@ -1,6 +1,5 @@
 // ===== MAIN.JS =====
-// Trang chủ: fetch danh sách sản phẩm, render cards
-// Mỗi card có: "Mua ngay" (direct checkout) + "Thêm vào giỏ" + disabled khi hết hàng
+// Product cards link to detail; customers must select a purchasable variant there.
 
 const catalogState = {
     products: [],
@@ -185,17 +184,12 @@ const createStockBadge = (stock) => {
 };
 
 const createProductCard = (product, canPurchase = true) => {
-    const outOfStock = product.stock <= 0;
+    const price = Number(product.price) === Number(product.priceMax)
+        ? formatPrice(product.price)
+        : `${formatPrice(product.price)} – ${formatPrice(product.priceMax)}`;
     const controls = !canPurchase
         ? `<span class="product-card__role-note">Tài khoản Admin chỉ xem catalog.</span>`
-        : outOfStock
-            ? `<button class="btn btn--primary" disabled style="opacity:.45;cursor:not-allowed;">Hết hàng</button>
-               <button class="btn btn--secondary" disabled style="opacity:.45;cursor:not-allowed;">Thêm giỏ hàng</button>`
-            : `<a href="/checkouts.html?id=${product.id}" class="btn btn--primary">Mua ngay</a>
-               <button class="btn btn--secondary btn--add-cart"
-                   onclick="handleAddToCart(${product.id}, '${product.name.replace(/'/g, "\\'")}', ${product.price}, ${product.stock}, this)">
-                   Thêm vào giỏ
-               </button>`;
+        : `<a href="/product_info.html?id=${encodeURIComponent(product.id)}" class="btn btn--primary">Chọn phiên bản</a>`;
     return `
     <div class="product-card">
         <a
@@ -211,7 +205,7 @@ const createProductCard = (product, canPurchase = true) => {
                 <h3 class="product-card__name">${product.name}</h3>
                 <p class="product-card__metadata">${product.brand} · ${product.deviceType}</p>
                 <p class="product-card__description">${product.description}</p>
-                <span class="product-card__price">${formatPrice(product.price)}</span>
+                <span class="product-card__price">${price}</span>
             </div>
         </a>
         <div class="product-card__footer">${controls}</div>
@@ -219,26 +213,6 @@ const createProductCard = (product, canPurchase = true) => {
     `;
 };
 
-/**
- * Xử lý nút "Thêm vào giỏ" từ product card
- * product data được truyền trực tiếp qua params để tránh gọi API thêm
- */
-function handleAddToCart(id, name, price, stock, btnEl) {
-    const result = CartService.addItem({ id, name, price, stock, image: "", description: "" });
-    if (!result.ok) {
-        showToast(result.message || "Sản phẩm đã hết hàng!", "error");
-        return;
-    }
-    // Visual feedback tạm thời trên nút
-    const original = btnEl.textContent;
-    btnEl.textContent = "✓ Đã thêm";
-    btnEl.disabled = true;
-    setTimeout(() => {
-        btnEl.textContent = original;
-        btnEl.disabled = false;
-    }, 1500);
-    showToast(`Đã thêm "${name}" vào giỏ hàng`, "success");
-}
 
 const loadProducts = async () => {
     try {

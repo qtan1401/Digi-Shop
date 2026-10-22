@@ -86,43 +86,62 @@ const validateImageContent = async (buffer) => {
     return { error: INVALID_IMAGE_MESSAGE, format: null };
 };
 
-const imageError = (res, message) => res.status(400).json({
+const imageError = (res, message, field = "image") => res.status(400).json({
     success: false,
     message,
-    errors: [{ field: "image", message }]
+    errors: [{ field, message }]
 });
+
+const COLOR_IMAGE_PREFIX = "colorImage::";
+const encodeColorImageField = (value) => `${COLOR_IMAGE_PREFIX}${Buffer.from(String(value), "utf8").toString("base64url")}`;
+const decodeColorImageField = (fieldname) => {
+    if (!fieldname.startsWith(COLOR_IMAGE_PREFIX)) return null;
+    try {
+        return Buffer.from(fieldname.slice(COLOR_IMAGE_PREFIX.length), "base64url").toString("utf8");
+    } catch {
+        return null;
+    }
+};
 
 const parser = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: MAX_IMAGE_BYTES, files: 1, fields: 16, parts: 17 },
+    limits: { fileSize: MAX_IMAGE_BYTES, files: 21, fields: 16, parts: 40 },
     fileFilter: (_req, file, callback) => {
         const hasSupportedName = typeof file.originalname === "string" && /\.(png|webp)$/i.test(file.originalname);
         const hasSupportedMimeType = ["image/png", "image/webp"].includes(file.mimetype);
-        if (!hasSupportedName || !hasSupportedMimeType) {
+        const isKnownField = file.fieldname === "image" || decodeColorImageField(file.fieldname) !== null;
+        if (!isKnownField || !hasSupportedName || !hasSupportedMimeType) {
             const error = new Error("Ảnh sản phẩm phải là PNG hoặc WebP hợp lệ");
             error.code = "INVALID_PRODUCT_IMAGE";
             return callback(error);
         }
         return callback(null, true);
     }
-}).single("image");
+}).any();
 
-const uploadProductImage = (req, res, next) => {
+const uploadProductImages = (req, res, next) => {
     parser(req, res, async (error) => {
-        if (!error) {
-            if (req.file) {
-                const { error: contentError, format } = await validateImageContent(req.file.buffer);
-                if (contentError) return imageError(res, contentError);
-                req.file.productImageFormat = format;
+        if (error) {
+            if (error.code === "LIMIT_FILE_SIZE") return imageError(res, "Ảnh sản phẩm không được vượt quá 5 MiB");
+            if (error.code === "LIMIT_UNEXPECTED_FILE" || error.code === "INVALID_PRODUCT_IMAGE") {
+                return imageError(res, error.message || "Chỉ được tải lên ảnh PNG hoặc WebP hợp lệ");
             }
-            return next();
+            return imageError(res, "Dữ liệu tải ảnh không hợp lệ");
         }
-        if (error.code === "LIMIT_FILE_SIZE") return imageError(res, "Ảnh sản phẩm không được vượt quá 5 MiB");
-        if (error.code === "LIMIT_UNEXPECTED_FILE" || error.code === "INVALID_PRODUCT_IMAGE") {
-            return imageError(res, error.message || "Chỉ được tải lên một ảnh PNG hoặc WebP");
+        const files = req.files || [];
+        req.file = files.find((file) => file.fieldname === "image") || null;
+        req.colorImageFiles = [];
+        for (const file of files) {
+            const colorValue = file.fieldname === "image" ? null : decodeColorImageField(file.fieldname);
+            if (colorValue === null && file.fieldname !== "image") continue;
+            const { error: contentError, format } = await validateImageContent(file.buffer);
+            if (contentError) return imageError(res, contentError, file.fieldname === "image" ? "image" : "colorImages");
+            file.productImageFormat = format;
+            if (file.fieldname === "image") continue;
+            req.colorImageFiles.push({ value: colorValue, file });
         }
-        return imageError(res, "Dữ liệu tải ảnh không hợp lệ");
+        return next();
     });
 };
 
-module.exports = { uploadProductImage, MAX_IMAGE_BYTES };
+module.exports = { uploadProductImages, encodeColorImageField, MAX_IMAGE_BYTES };

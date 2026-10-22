@@ -7,7 +7,19 @@ This context covers the product catalog, customer orders, and their payment life
 ### Product catalog
 
 **Product**:
-A device offered by Digi-Shop for customer purchase.
+A device model offered in the catalog, grouping one or more Product variants.
+
+**Product variant**:
+A specific sellable configuration of a Product, defined by its values for the applicable Product options. It has its own SKU, price, and stock.
+
+**Product option**:
+A named dimension of a Product that customers can use to distinguish its variants, such as Color or Size.
+
+**Product option value**:
+A possible choice within a Product option.
+
+**SKU**:
+A unique stock-keeping code identifying one Product variant.
 
 **Brand**:
 The maker's customer-facing identity associated with a Product.

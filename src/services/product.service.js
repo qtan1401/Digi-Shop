@@ -3,8 +3,8 @@
 
 const productRepository = require("../repositories/product.repository");
 
-const REQUIRED_FIELDS = ["name", "brand", "deviceType", "price", "stock", "sku", "image", "description"];
-const EDITABLE_FIELDS = ["name", "brand", "deviceType", "price", "stock", "image", "description"];
+const REQUIRED_FIELDS = ["name", "brand", "deviceType", "image", "description"];
+const EDITABLE_FIELDS = ["name", "brand", "deviceType", "image", "description"];
 const BRANDS = ["Apple", "Samsung", "MSI"];
 const DEVICE_TYPES = ["phone", "tablet", "laptop"];
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
@@ -32,21 +32,105 @@ const isBlank = (value) =>
     value === undefined || value === null ||
     (typeof value === "string" && value.trim().length === 0);
 
+const normalizeOptionText = (value) =>
+    typeof value === "string" ? value.trim().normalize("NFC") : "";
+const optionKey = (value) => normalizeOptionText(value).toLocaleLowerCase("vi");
+const HEX_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+
+const normalizeColorHex = (rawValue, name, errors) => {
+    if (rawValue === undefined || rawValue === null || rawValue === "") return null;
+    if (typeof rawValue !== "string" || !HEX_COLOR_PATTERN.test(rawValue)) {
+        errors.push({ field: "options", message: `Mã màu của "${name}" phải theo định dạng #RRGGBB.` });
+        return null;
+    }
+    return rawValue.toUpperCase();
+};
+
+const normalizeOptions = (rawOptions, errors) => {
+    if (!Array.isArray(rawOptions)) {
+        errors.push({ field: "options", message: "Tùy chọn phải là danh sách." });
+        return [];
+    }
+    const names = new Set();
+    return rawOptions.map((option, optionIndex) => {
+        if (!option || typeof option !== "object" || Array.isArray(option)) {
+            errors.push({ field: "options", message: "Tùy chọn không hợp lệ." });
+            return null;
+        }
+        const name = normalizeOptionText(option.name);
+        const key = optionKey(name);
+        if (!name || name.length > 100 || names.has(key)) {
+            errors.push({ field: "options", message: "Tên tùy chọn phải có tối đa 100 ký tự và không trùng." });
+        }
+        names.add(key);
+        if (!Array.isArray(option.values) || option.values.length === 0) {
+            errors.push({ field: "options", message: `Tùy chọn "${name || optionIndex + 1}" phải có ít nhất một giá trị.` });
+            return { name, values: [] };
+        }
+        const values = new Set();
+        const normalizedValues = option.values.map((rawEntry) => {
+            const entry = (rawEntry && typeof rawEntry === "object" && !Array.isArray(rawEntry)) ? rawEntry : { value: rawEntry };
+            const value = normalizeOptionText(entry.value);
+            const valueKey = optionKey(value);
+            if (!value || value.length > 100 || values.has(valueKey)) {
+                errors.push({ field: "options", message: `Giá trị của "${name}" phải có tối đa 100 ký tự và không trùng.` });
+            }
+            values.add(valueKey);
+            const colorHex = normalizeColorHex(entry.colorHex, name, errors);
+            return { value, colorHex };
+        });
+        return { name, values: normalizedValues };
+    }).filter(Boolean);
+};
+
+const normalizeVariantOptions = (rawValues, options, field, errors) => {
+    if (!rawValues || typeof rawValues !== "object" || Array.isArray(rawValues)) {
+        errors.push({ field: "variants", message: `Tổ hợp ${field} thiếu giá trị tùy chọn.` });
+        return {};
+    }
+    const entries = Object.entries(rawValues);
+    const mapped = {};
+    const consumed = new Set();
+    for (const option of options) {
+        const key = optionKey(option.name);
+        const match = entries.find(([name]) => optionKey(name) === key);
+        if (!match) {
+            errors.push({ field: "variants", message: `Tổ hợp ${field} thiếu tùy chọn "${option.name}".` });
+            continue;
+        }
+        consumed.add(match[0]);
+        const value = normalizeOptionText(match[1]);
+        const canonicalValue = option.values.find((candidate) => optionKey(candidate.value) === optionKey(value));
+        if (!canonicalValue) {
+            errors.push({ field: "variants", message: `Giá trị "${value}" không thuộc tùy chọn "${option.name}".` });
+            continue;
+        }
+        mapped[option.name] = canonicalValue.value;
+    }
+    if (entries.some(([name]) => !consumed.has(name))) {
+        errors.push({ field: "variants", message: `Tổ hợp ${field} có tùy chọn không được khai báo.` });
+    }
+    return mapped;
+};
+
+const sameOptionValues = (left = {}, right = {}) => {
+    const canonical = (values) => Object.entries(values)
+        .map(([name, value]) => [optionKey(name), optionKey(value)])
+        .sort(([leftName], [rightName]) => leftName.localeCompare(rightName));
+    return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+};
+
 /**
- * Validate and normalize the complete product shape.
+ * Validate the Product's shared fields and its complete sellable variant set.
  * @param {Object} input
- * @param {boolean} requireSku
  * @returns {Object}
  */
-const validateProduct = (input, { requireSku = true } = {}) => {
+const validateProduct = (input) => {
     const data = { ...input };
     const errors = [];
 
     for (const field of REQUIRED_FIELDS) {
-        if (field === "sku" && !requireSku) continue;
-        if (isBlank(data[field])) {
-            errors.push({ field, message: `${field} là trường bắt buộc` });
-        }
+        if (isBlank(data[field])) errors.push({ field, message: `${field} là trường bắt buộc` });
     }
 
     if (typeof data.name === "string") {
@@ -58,29 +142,11 @@ const validateProduct = (input, { requireSku = true } = {}) => {
         errors.push({ field: "name", message: "Tên sản phẩm phải là chuỗi" });
     }
 
-    if (typeof data.price !== "number" || !Number.isFinite(data.price) ||
-        !Number.isInteger(data.price) || data.price <= 0) {
-        errors.push({ field: "price", message: "Giá bán phải là số nguyên dương (> 0)" });
-    }
-
-    if (typeof data.stock !== "number" || !Number.isFinite(data.stock) ||
-        !Number.isInteger(data.stock) || data.stock < 0) {
-        errors.push({ field: "stock", message: "Tồn kho phải là số nguyên không âm (≥ 0)" });
-    }
-
     if (!isAllowed(data.brand, BRANDS)) {
         errors.push({ field: "brand", message: "Thương hiệu phải là Apple, Samsung hoặc MSI" });
     }
-
     if (!isAllowed(data.deviceType, DEVICE_TYPES)) {
         errors.push({ field: "deviceType", message: "Loại thiết bị phải là phone, tablet hoặc laptop" });
-    }
-
-    if (requireSku || !isBlank(data.sku)) {
-        data.sku = normalizeSku(data.sku);
-        if (!/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(data.sku)) {
-            errors.push({ field: "sku", message: "SKU chỉ được chứa chữ cái, số và dấu gạch nối" });
-        }
     }
 
     if (typeof data.image !== "string" || isBlank(data.image)) {
@@ -99,23 +165,82 @@ const validateProduct = (input, { requireSku = true } = {}) => {
         data.description = data.description.trim();
     }
 
+    const options = normalizeOptions(data.options === undefined ? [] : data.options, errors);
+    const variants = data.variants;
+    if (!Array.isArray(variants) || variants.length === 0) {
+        errors.push({ field: "variants", message: "Sản phẩm phải có ít nhất một biến thể bán được." });
+    }
+
+    const variantSkus = new Set();
+    const combinations = new Set();
+    const usedValues = new Map(options.map((option) => [option.name, new Set()]));
+    const normalizedVariants = Array.isArray(variants) ? variants.map((variant, index) => {
+        const field = `#${index + 1}`;
+        if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+            errors.push({ field: "variants", message: `Biến thể ${field} không hợp lệ.` });
+            return null;
+        }
+        const sku = normalizeSku(variant.sku);
+        if (!/^[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(sku)) {
+            errors.push({ field: "variants", message: `SKU của biến thể ${field} chỉ được chứa chữ cái, số và dấu gạch nối.` });
+        }
+        if (variantSkus.has(sku)) errors.push({ field: "variants", message: `SKU "${sku}" bị lặp trong danh sách biến thể.` });
+        variantSkus.add(sku);
+
+        const price = Number(variant.price);
+        const stock = Number(variant.stock);
+        if (!Number.isFinite(price) || !Number.isInteger(price) || price <= 0) {
+            errors.push({ field: "variants", message: `Giá của biến thể ${field} phải là số nguyên dương.` });
+        }
+        if (!Number.isFinite(stock) || !Number.isInteger(stock) || stock < 0) {
+            errors.push({ field: "variants", message: `Tồn kho của biến thể ${field} phải là số nguyên không âm.` });
+        }
+
+        const optionValues = normalizeVariantOptions(variant.optionValues ?? variant.options, options, field, errors);
+        const combination = JSON.stringify(Object.entries(optionValues)
+            .map(([name, value]) => [optionKey(name), optionKey(value)])
+            .sort(([leftName], [rightName]) => leftName.localeCompare(rightName)));
+        if (combinations.has(combination)) {
+            errors.push({ field: "variants", message: `Tổ hợp thuộc tính của biến thể ${field} bị trùng.` });
+        }
+        combinations.add(combination);
+        for (const [name, value] of Object.entries(optionValues)) usedValues.get(name)?.add(optionKey(value));
+        return { sku, price, stock, image: typeof variant.image === "string" && variant.image.trim() ? variant.image.trim() : null, optionValues };
+    }).filter(Boolean) : [];
+
+    for (const option of options) {
+        const used = usedValues.get(option.name);
+        if (option.values.some((value) => !used?.has(optionKey(value.value)))) {
+            errors.push({ field: "options", message: `Mọi giá trị của "${option.name}" phải xuất hiện trong ít nhất một biến thể.` });
+        }
+    }
+
     if (errors.length > 0) {
         throw createDomainError(
-            "Vui lòng nhập đầy đủ và chính xác các trường bắt buộc của sản phẩm.",
+            "Vui lòng nhập đầy đủ và chính xác thông tin sản phẩm và biến thể.",
             errors
         );
     }
 
+    data.options = options;
+    data.variants = normalizedVariants;
     return data;
 };
 
-const assertUniqueSku = async (sku, productId) => {
-    const existing = await productRepository.findBySku(sku);
-    if (existing && String(existing.id) !== String(productId)) {
-        throw createDomainError(
-            `Mã SKU '${sku}' đã tồn tại trên hệ thống. SKU là duy nhất vĩnh viễn.`,
-            [{ field: "sku", message: "SKU trùng lặp" }]
+const assertUniqueSkus = async (variants, productId, currentProduct) => {
+    for (const variant of variants) {
+        const existing = await productRepository.findBySku(variant.sku);
+        if (!existing) continue;
+        const sameCurrentVariant = currentProduct?.variants?.some((current) =>
+            current.id === existing.id &&
+            sameOptionValues(current.optionValues, variant.optionValues)
         );
+        if (!sameCurrentVariant) {
+            throw createDomainError(
+                `Mã SKU "${variant.sku}" đã tồn tại trên hệ thống. SKU là duy nhất vĩnh viễn.`,
+                [{ field: "variants", message: `SKU "${variant.sku}" bị trùng.` }]
+            );
+        }
     }
 };
 
@@ -165,7 +290,7 @@ const getAdminProducts = async (filters = {}) => {
 
 const createProduct = async (input) => {
     const data = validateProduct(input);
-    await assertUniqueSku(data.sku);
+    await assertUniqueSkus(data.variants);
     const timestamp = new Date().toISOString();
     return await productRepository.createProduct({
         ...data,
@@ -185,11 +310,13 @@ const updateProduct = async (id, input = {}) => {
     for (const field of EDITABLE_FIELDS) {
         if (Object.prototype.hasOwnProperty.call(input, field)) changes[field] = input[field];
     }
-    const merged = validateProduct({ ...product, ...changes }, { requireSku: true });
-    await assertUniqueSku(product.sku, product.id);
+    for (const field of ["options", "variants"]) {
+        if (Object.prototype.hasOwnProperty.call(input, field)) changes[field] = input[field];
+    }
 
-    // Keep the original SKU regardless of a forged payload.
-    delete merged.sku;
+    const merged = validateProduct({ ...product, ...changes });
+    await assertUniqueSkus(merged.variants, product.id, product);
+
     delete merged.id;
     delete merged.slug;
     delete merged.isDeleted;
@@ -215,8 +342,6 @@ const restoreProduct = async (id) => {
     if (product.isDeleted !== true) {
         throw createDomainError("Sản phẩm hiện không ở trạng thái đã xóa.");
     }
-
-    await assertUniqueSku(product.sku, product.id);
     return await productRepository.restoreProduct(id);
 };
 
