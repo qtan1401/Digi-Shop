@@ -145,12 +145,10 @@ const createPayment = ({ attempt, order, config } = {}) => {
     }
     const hashSecret = config.hashSecret;
     const paymentUrl = requireHttpsUrl(config.payUrl, "payment URL");
-    if (
-        paymentUrl.origin !== "https://pay.vnpay.vn" ||
-        paymentUrl.pathname !== "/vpcpay.html" ||
-        paymentUrl.search
-    ) {
-        throw new Error("VNPay payment URL must use the production endpoint");
+    const isProductionUrl = paymentUrl.origin === "https://pay.vnpay.vn" && paymentUrl.pathname === "/vpcpay.html";
+    const isSandboxUrl = paymentUrl.origin === "https://sandbox.vnpayment.vn" && paymentUrl.pathname === "/paymentv2/vpcpay.html";
+    if ((!isProductionUrl && !isSandboxUrl) || paymentUrl.search) {
+        throw new Error("VNPay payment URL must use the production or sandbox endpoint");
     }
     const returnUrl = requireHttpsUrl(config.returnUrl, "return URL");
     const ipAddress = requireString(config.ipAddr, "client IP address");

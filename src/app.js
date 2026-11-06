@@ -14,6 +14,12 @@ const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/au
 
 const app = express();
 
+// Behind a reverse proxy (e.g. Railway) set TRUST_PROXY to the number of proxy hops
+// so req.ip is the customer's address, which VNPay requires. Unset = trust none.
+if (/^[1-9]\d*$/.test(process.env.TRUST_PROXY || "")) {
+    app.set("trust proxy", Number(process.env.TRUST_PROXY));
+}
+
 // ===== MIDDLEWARE =====
 app.use(express.json());
 app.use(parseCookies);

@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 
 const CREATE_URL = "https://payment.momo.vn/v2/gateway/api/create";
+const SANDBOX_CREATE_URL = "https://test-payment.momo.vn/v2/gateway/api/create";
 const MIN_AMOUNT = 1_000;
 const MAX_AMOUNT = 50_000_000;
 
@@ -66,7 +67,7 @@ const configValues = (config) => {
     } catch {
         throw new Error("Invalid MoMo API URL.");
     }
-    if (parsedApiUrl.href !== CREATE_URL || parsedApiUrl.username || parsedApiUrl.password) {
+    if ((parsedApiUrl.href !== CREATE_URL && parsedApiUrl.href !== SANDBOX_CREATE_URL) || parsedApiUrl.username || parsedApiUrl.password) {
         throw new Error("Invalid MoMo API URL.");
     }
     return { partnerCode, accessKey, secretKey, redirectUrl, ipnUrl, apiUrl };

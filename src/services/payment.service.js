@@ -16,18 +16,31 @@ const paymentError = (code, message, statusCode = 400) => {
     return error;
 };
 
+// APP_ORIGIN is a comma-separated allow-list shared with auth; providers need
+// exactly one public HTTPS origin from it for callback and return URLs.
 const normalizeOrigin = () => {
-    let url;
-    try {
-        url = new URL(process.env.APP_ORIGIN || "");
-    } catch {
+    const httpsOrigins = new Set();
+    for (const item of String(process.env.APP_ORIGIN || "").split(",").map((value) => value.trim()).filter(Boolean)) {
+        let url;
+        try {
+            url = new URL(item);
+        } catch {
+            throw paymentError("PAYMENT_NOT_CONFIGURED", "Cổng thanh toán chưa được cấu hình", 503);
+        }
+        if (url.protocol !== "https:") continue;
+        if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+            throw paymentError("PAYMENT_NOT_CONFIGURED", "Cổng thanh toán chưa được cấu hình", 503);
+        }
+        httpsOrigins.add(url.origin);
+    }
+    if (httpsOrigins.size !== 1) {
         throw paymentError("PAYMENT_NOT_CONFIGURED", "Cổng thanh toán chưa được cấu hình", 503);
     }
-    if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-        throw paymentError("PAYMENT_NOT_CONFIGURED", "Cổng thanh toán chưa được cấu hình", 503);
-    }
-    return url.origin;
+    return [...httpsOrigins][0];
 };
+
+// PAYMENT_ENV=sandbox selects the providers' test endpoints; anything else is production.
+const isSandbox = () => process.env.PAYMENT_ENV === "sandbox";
 
 const providerConfig = (provider, attempt, request) => {
     const origin = normalizeOrigin();
@@ -43,13 +56,13 @@ const providerConfig = (provider, attempt, request) => {
         if (Object.values(config).some((value) => typeof value !== "string" || value.length === 0)) {
             throw paymentError("PAYMENT_NOT_CONFIGURED", "MoMo chưa được cấu hình", 503);
         }
-        return config;
+        return isSandbox() ? { ...config, apiUrl: "https://test-payment.momo.vn/v2/gateway/api/create" } : config;
     }
 
     const config = {
         tmnCode: process.env.VNPAY_TMN_CODE,
         hashSecret: process.env.VNPAY_HASH_SECRET,
-        payUrl: process.env.VNPAY_PAY_URL || "https://pay.vnpay.vn/vpcpay.html",
+        payUrl: isSandbox() ? "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html" : (process.env.VNPAY_PAY_URL || "https://pay.vnpay.vn/vpcpay.html"),
         returnUrl,
         ipAddr: String(request?.ip || "").replace(/^::ffff:/, "")
     };
@@ -70,8 +83,9 @@ const providerConfig = (provider, attempt, request) => {
 
 const publicAttempt = async (attempt) => {
     let qrDataUrl = null;
-    if (attempt.qrPayload && attempt.status === "PENDING") {
-        qrDataUrl = await QRCode.toDataURL(attempt.qrPayload, {
+    const qrValue = attempt.qrPayload || (attempt.provider === "VNPAY" ? attempt.paymentUrl : null);
+    if (qrValue && attempt.status === "PENDING") {
+        qrDataUrl = await QRCode.toDataURL(qrValue, {
             errorCorrectionLevel: "M",
             margin: 2,
             width: 256
