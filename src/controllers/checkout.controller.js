@@ -10,6 +10,20 @@ const errorToStatus = (msg) => {
     return 500;
 };
 
+// Voucher failures carry a code and HTTP status (409 VOUCHER_UNAVAILABLE, 422 VOUCHER_*);
+// everything else keeps the legacy message-based mapping. `message` stays for existing clients.
+const VOUCHER_CODE = /^VOUCHER_/;
+const sendCheckoutError = (res, error) => {
+    if (VOUCHER_CODE.test(error.code || "") && Number.isInteger(error.statusCode)) {
+        return res.status(error.statusCode).json({
+            success: false,
+            message: error.message,
+            error: { code: error.code, message: error.message }
+        });
+    }
+    return res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
+};
+
 /**
  * [POST] /api/checkout/check-stock/:id
  * Kiểm tra tồn kho (không trừ kho)
@@ -32,10 +46,10 @@ const checkVariantInStock = async (req, res) => {
 const processCheckout = async (req, res) => {
     try {
         const variantId = req.params.id || req.body.variantId;
-        const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
+        const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes } = req.body;
 
         const result = await checkoutService.processCheckout(req.user.id, {
-            variantId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note
+            variantId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes
         }, req);
 
         res.status(201).json({
@@ -45,7 +59,7 @@ const processCheckout = async (req, res) => {
             remainingStock: result.remainingStock
         });
     } catch (error) {
-        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
+        sendCheckoutError(res, error);
     }
 };
 
@@ -56,9 +70,9 @@ const processCheckout = async (req, res) => {
 
 const cartCheckout = async (req, res) => {
     try {
-        const { items, customerName, customerPhone, customerAddress, paymentMethod, note } = req.body;
+        const { items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes } = req.body;
         const result = await checkoutService.processCartCheckout(req.user.id, {
-            items, customerName, customerPhone, customerAddress, paymentMethod, note
+            items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes
         }, req);
 
         res.status(201).json({
@@ -67,7 +81,7 @@ const cartCheckout = async (req, res) => {
             data: result.order
         });
     } catch (error) {
-        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
+        sendCheckoutError(res, error);
     }
 };
 

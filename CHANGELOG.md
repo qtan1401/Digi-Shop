@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added **Vouchers**: administrators create percentage and free-shipping vouchers (Voucher screen in the admin sidebar); customers pick listed vouchers or type a code in a new checkout summary column, with up to 3 per order, one free-shipping voucher, a 500,000 ₫ cap per voucher and 1,000,000 ₫ per order. Discount is computed by one shared function, quantity is reserved in the order transaction and given back when an order is cancelled or a payment attempt expires or fails; checkout is blocked, naming the voucher, if it is no longer valid. Order details show the price breakdown per voucher.
 - Redesigned the storefront homepage: removed the hero and the duplicate category links, moved search, device type, brand and price filters into a persistent left column (a slide-in panel below 1024 px), and rebuilt the product card to show the price range, a stock badge only for sold-out and low-stock items, and the variant count. Catalog URLs and filter/sort behaviour are unchanged; the server-rendered `/danh-muc/*` and `/the/*` pages now inject their label into the page heading.
 - Adjusted shared design tokens in `public/css/styles.css` (page background, border, secondary text, status colours) and added an auto-hiding scrollbar.
 - Replaced generic product categories with required Apple/Samsung/MSI brand and phone/tablet/laptop device type values across persistence, product validation, administration, and public responses; the migration retains existing product rows.

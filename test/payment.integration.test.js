@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const { after, before, beforeEach, test } = require("node:test");
 
 process.env.APP_ORIGIN = "https://payments.example.test";
+process.env.PAYMENT_ENV = "production"; // do not inherit PAYMENT_ENV from a developer's .env
 process.env.JWT_ACCESS_SECRET = "integration-test-secret-that-is-more-than-thirty-two-bytes";
 process.env.MOMO_PARTNER_CODE = "MOMOPARTNER";
 process.env.MOMO_ACCESS_KEY = "momo-test-access";
@@ -87,6 +88,9 @@ const makeClient = () => {
         },
         orderItem: {
             findMany: async ({ where = {} }) => state.orderItems.filter((row) => matches(row, where)).map(clone)
+        },
+        orderVoucher: {
+            findMany: async () => []
         },
         productVariant: {
             findUnique: async ({ where }) => clone(state.productVariants.get(where.id) || null),
@@ -477,7 +481,7 @@ test("VNPay retry API regenerates a hosted VNPAYQR payment URL for the same orde
     const { data: attempt } = await response.json();
     assert.equal(attempt.orderId, "ORD-TEST-01");
     assert.equal(attempt.provider, "VNPAY");
-    assert.equal(attempt.status, "PENDING");
+    assert.match(attempt.qrDataUrl, /^data:image\/png;base64,/);
     const paymentUrl = new URL(attempt.paymentUrl);
     assert.equal(paymentUrl.origin, "https://pay.vnpay.vn");
     assert.equal(paymentUrl.pathname, "/vpcpay.html");
@@ -490,6 +494,55 @@ test("VNPay retry API regenerates a hosted VNPAYQR payment URL for the same orde
     assert.equal(generatedSignature, signVnPay(signedParams));
     assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "UNPAID");
     assert.equal(state.productVariants.get(1).stock, 0);
+});
+
+test("payment initiation uses the HTTPS origin when APP_ORIGIN also lists local HTTP origins", async () => {
+    const httpsOrigin = process.env.APP_ORIGIN;
+    // A non-HTTPS entry makes auth use unprefixed cookie names.
+    const csrf = "csrf-token-for-payment-tests";
+    const headers = {
+        Cookie: `access_token=${tokenFor("user-test-01")}; csrf_token=${csrf}`,
+        Origin: httpsOrigin,
+        "x-csrf-token": csrf,
+        "Content-Type": "application/json"
+    };
+    process.env.APP_ORIGIN = `http://localhost:3000,${httpsOrigin}`;
+    try {
+        const response = await fetch(`${baseUrl}/api/payments/orders/ORD-TEST-01/attempts`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ provider: "VNPAY" })
+        });
+        assert.equal(response.status, 201, await response.clone().text());
+        const { data: attempt } = await response.json();
+        const returnUrl = new URL(new URL(attempt.paymentUrl).searchParams.get("vnp_ReturnUrl"));
+        assert.equal(returnUrl.origin, httpsOrigin);
+    } finally {
+        process.env.APP_ORIGIN = httpsOrigin;
+    }
+});
+
+test("PAYMENT_ENV=sandbox sends MoMo to its test API and builds VNPay sandbox URLs", async () => {
+    process.env.PAYMENT_ENV = "sandbox";
+    const originalFetch = global.fetch;
+    let momoUrl;
+    global.fetch = async (url) => { momoUrl = String(url); throw new Error("stop after capturing URL"); };
+    const post = (provider) => originalFetch(`${baseUrl}/api/payments/orders/ORD-TEST-01/attempts`, {
+        method: "POST",
+        headers: { ...headersFor("user-test-01", "user", true), "Content-Type": "application/json" },
+        body: JSON.stringify({ provider })
+    });
+    try {
+        await post("MOMO");
+        assert.equal(momoUrl, "https://test-payment.momo.vn/v2/gateway/api/create");
+        const vnpay = await post("VNPAY");
+        assert.equal(vnpay.status, 201, await vnpay.clone().text());
+        const paymentUrl = new URL((await vnpay.json()).data.paymentUrl);
+        assert.equal(paymentUrl.origin + paymentUrl.pathname, "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html");
+    } finally {
+        global.fetch = originalFetch;
+        process.env.PAYMENT_ENV = "production";
+    }
 });
 
 test("retry rejects when inventory was sold after an expired attempt released its reservation", async () => {

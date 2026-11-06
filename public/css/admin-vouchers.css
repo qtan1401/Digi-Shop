@@ -1,0 +1,170 @@
+/* NodeShop admin: màn Voucher, phương án A (bảng + modal tạo/sửa).
+   Chép từ wireframe vouchers.js (v:"a"), class Tailwind đã dịch sang px. Chỉ dùng token của :root trong styles.css.
+   Dùng chung phần còn lại với admin-orders.css (gốc `.ao`). Breakpoint: sm 640, md 768. */
+
+.ao.av { min-width: 0; }
+.ao .av-card { overflow: hidden; container: vcard / inline-size; }
+.ao .av-create { width: 100%; }
+@media (min-width: 640px) { .ao .av-create { width: auto; margin-left: auto; } }
+.ao .is-fetching { opacity: 0.6; transition: opacity 150ms; }
+
+/* ----- bảng ----- */
+.ao .av-table { min-width: 0; }
+.ao .av-th-code { min-width: 14rem; }
+.ao .av-th-offer, .ao .av-th-range { min-width: 9rem; }
+.ao .av-th-usage { min-width: 7rem; }
+.ao .av-th-status { min-width: 9rem; }
+.ao .av-td-code { max-width: 18rem; }
+.ao .av-nowrap { white-space: nowrap; }
+.ao .av-code-line { display: flex; align-items: center; gap: 8px; }
+.ao .av-code {
+    display: inline-flex; min-height: 32px; max-width: 100%; align-items: center; text-align: left; overflow-wrap: anywhere;
+    font-family: var(--font-mono); font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0.025em; color: var(--text-primary);
+}
+.ao .av-code:hover { text-decoration: underline; }
+.ao .av-desc {
+    display: -webkit-box; margin-top: 2px; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    font-size: 12px; line-height: 16px; text-wrap: pretty; color: var(--text-secondary);
+}
+.ao .av-strong { font-size: 14px; line-height: 20px; font-weight: 500; }
+.ao .av-sub { margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.ao .av-tnum { font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.ao .av-sub.av-tnum { font-size: 12px; line-height: 16px; }
+.ao .av-soon { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; color: var(--warning); }
+.ao .av-listed { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; line-height: 20px; }
+.ao .av-col-listed { display: none; padding: 12px; text-align: left; }
+.ao .av-hidden-mark { display: inline-flex; flex-shrink: 0; }
+@container vcard (min-width: 64rem) {
+    .ao .av-col-listed { display: table-cell; }
+    .ao .av-hidden-mark { display: none; }
+}
+.ao .av-usage { width: 112px; }
+.ao .av-usage-wide { width: 144px; }
+.ao .av-usage-n { font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.ao .av-usage-used { font-weight: 500; }
+.ao .av-meter { height: 4px; margin-top: 6px; overflow: hidden; border-radius: 9999px; background: var(--secondary); }
+.ao .av-meter-fill { height: 100%; border-radius: 9999px; background: var(--accent); }
+.ao .av-meter-fill.is-full { background: var(--warning); }
+.ao .av-switch-cell { display: flex; justify-content: flex-end; }
+.ao .av-sk-gap { margin-top: 8px; }
+
+/* ----- card mobile ----- */
+.ao .av-card-item { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; }
+.ao .av-card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ao .av-code-block { min-height: 40px; min-width: 0; }
+.ao .av-card-desc { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 1; -webkit-box-orient: vertical; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.ao .av-card-offer { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ao .av-card-offer .av-sub { margin-top: 0; }
+.ao .av-card-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.ao .av-card-end { display: flex; align-items: center; gap: 12px; }
+.ao .av-card-end .av-sub { margin-top: 0; }
+
+/* ----- modal tạo / sửa: neo đỉnh, đầu và chân đứng yên, chỉ thân cuộn; dưới sm là tấm toàn màn hình ----- */
+.ao .av-modal { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-start; justify-content: center; }
+.ao .av-modal-scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 0.3); opacity: 0; transition: opacity 100ms ease-in; }
+.ao .av-modal-box {
+    position: relative; display: flex; width: 100%; height: 100dvh; flex-direction: column; background: var(--bg-surface);
+    box-shadow: var(--shadow-modal); opacity: 0; scale: 0.98; transition: opacity 100ms ease-in, scale 100ms ease-in;
+}
+.ao .av-modal[data-open] .av-modal-scrim { opacity: 1; transition: opacity 150ms ease-out; }
+.ao .av-modal[data-open] .av-modal-box { opacity: 1; scale: 1; transition: opacity 150ms ease-out, scale 150ms ease-out; }
+.ao .av-modal-box:focus { outline: none; }
+@media (min-width: 640px) {
+    .ao .av-modal { padding: 16px; }
+    .ao .av-modal-box { height: auto; max-height: 90vh; max-width: 40rem; margin-top: 5vh; border: 1px solid var(--border); border-radius: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .ao .av-modal-box { scale: 1; transition: opacity 100ms linear; } }
+.ao .av-mhead { display: flex; flex-shrink: 0; align-items: flex-start; gap: 12px; padding: 20px 20px 16px; }
+.ao .av-mhead-main { min-width: 0; flex: 1; }
+.ao .av-mhead h2 { font-size: 18px; line-height: 28px; font-weight: 600; }
+.ao .av-mhead p { margin-top: 8px; font-size: 14px; line-height: 24px; text-wrap: pretty; color: var(--text-secondary); overflow-wrap: anywhere; }
+.ao .av-sub-code { font-family: var(--font-mono); font-weight: 500; color: var(--text-primary); }
+.ao .av-close { width: 40px; height: 40px; border-radius: 12px; }
+.ao .av-mbody { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 24px; overflow-y: auto; padding: 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.ao .av-mfoot { display: grid; flex-shrink: 0; grid-template-columns: 1fr 1fr; gap: 8px; padding: 16px 20px; }
+@media (min-width: 640px) {
+    .ao .av-mhead { padding: 20px 24px 16px; }
+    .ao .av-close { width: 32px; height: 32px; border-radius: 8px; }
+    .ao .av-mbody { padding: 20px 24px; }
+    .ao .av-mfoot { display: flex; justify-content: flex-end; padding: 16px 24px; }
+}
+.ao .av-sec { display: flex; flex-direction: column; }
+.ao .av-sec-top { padding-top: 24px; border-top: 1px solid var(--border); }
+.ao .av-sec > .av-field + .av-field { margin-top: 12px; }
+.ao .av-h3 { margin-bottom: 12px; font-size: 14px; line-height: 20px; font-weight: 600; }
+.ao .av-alert { padding: 10px 12px; border-radius: 12px; background: var(--error-bg); color: var(--error-strong); font-size: 14px; line-height: 20px; }
+.ao .av-banner { display: flex; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-primary); }
+.ao .av-banner-ic { margin-top: 2px; }
+.ao .av-banner p { min-width: 0; font-size: 14px; line-height: 20px; text-wrap: pretty; color: color-mix(in srgb, var(--text-primary) 80%, transparent); }
+
+/* ô nhập */
+.ao .av-field { min-width: 0; }
+.ao .av-label { display: block; width: fit-content; margin-bottom: 6px; font-size: 14px; line-height: 20px; font-weight: 500; cursor: pointer; }
+.ao .av-control { position: relative; }
+.ao .av-input {
+    display: block; width: 100%; height: 44px; padding: 0 16px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-surface);
+    color: var(--text-primary); font-size: 16px; line-height: 24px; outline: none; transition: border-color 150ms, box-shadow 150ms; -webkit-appearance: none; appearance: none;
+}
+.ao .av-input::placeholder { color: var(--text-secondary); opacity: 1; }
+.ao .av-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+.ao .av-input:disabled { border-color: var(--border-strong); background: color-mix(in srgb, var(--secondary) 50%, transparent); color: color-mix(in srgb, var(--text-primary) 70%, transparent); cursor: not-allowed; -webkit-text-fill-color: currentColor; }
+.ao .av-input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.ao .av-input[type="number"]::-webkit-inner-spin-button, .ao .av-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.ao .av-textarea { height: auto; min-height: 80px; padding: 10px 16px; resize: none; }
+.ao .av-mono { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.025em; }
+.ao .av-pr { padding-right: 44px; }
+.ao .av-input-end { position: absolute; top: 50%; right: 14px; translate: 0 -50%; pointer-events: none; color: var(--text-secondary); }
+.ao .av-suffix { font-size: 14px; line-height: 20px; }
+.ao .av-msg { min-height: 16px; margin-top: 6px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.ao .av-msg.is-error { color: var(--error-text); }
+.ao .has-error .av-input { border-color: var(--error-text); }
+.ao .has-error .av-input:focus { box-shadow: 0 0 0 2px var(--danger-bg); }
+@media (min-width: 768px) { .ao .av-input { height: 40px; font-size: 14px; line-height: 20px; } .ao .av-textarea { height: auto; } }
+.ao .av-grid2 { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 16px; }
+@media (min-width: 640px) { .ao .av-grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ao .av-field-narrow { max-width: 20rem; } }
+
+/* loại voucher: hai thẻ chọn */
+.ao .av-types { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 0; padding: 0; border: 0; min-width: 0; }
+@media (min-width: 640px) { .ao .av-types { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ao .av-typecard { display: flex; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--border-strong); border-radius: 12px; cursor: pointer; transition: border-color 150ms, background-color 150ms; }
+.ao .av-typecard:has(.av-radio:checked) { border-color: var(--accent); background: var(--accent-light); }
+.ao .av-typecard:has(.av-radio:disabled) { cursor: not-allowed; opacity: 0.7; }
+.ao .av-typecard:has(.av-radio:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ao .av-radio {
+    width: 20px; height: 20px; flex-shrink: 0; margin: 2px 0 0; border: 1.5px solid var(--border-strong); border-radius: 9999px; background: var(--bg-surface);
+    cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; transition: border-color 150ms, border-width 150ms;
+}
+.ao .av-radio:checked { border-width: 6px; border-color: var(--accent); }
+.ao .av-radio:disabled { cursor: not-allowed; }
+.ao .av-typecard-text { display: block; min-width: 0; }
+.ao .av-typecard-title { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
+.ao .av-typecard-desc { display: block; margin-top: 2px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.ao .av-if-pct { margin-top: 16px; }
+.ao .av-example { margin-top: 4px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.ao .av-example:empty { display: none; }
+.ao .av-note { margin-top: 16px; padding: 12px 16px; border-radius: 12px; background: var(--bg-primary); font-size: 14px; line-height: 20px; text-wrap: pretty; color: color-mix(in srgb, var(--text-primary) 80%, transparent); }
+.ao .av-mbody[data-type="FREE_SHIPPING"] .av-if-pct { display: none; }
+.ao .av-mbody:not([data-type="FREE_SHIPPING"]) .av-if-free { display: none; }
+
+/* hộp chọn trong form có nút Lưu (choice-controls.md) */
+.ao .av-checks { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.ao .av-checkrow { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.ao .av-checkbox { position: relative; display: inline-flex; flex-shrink: 0; margin-top: 2px; }
+.ao .av-checkbox-input {
+    width: 20px; height: 20px; margin: 0; border: 1.5px solid var(--border-strong); border-radius: 6px; background: var(--bg-surface);
+    cursor: pointer; outline: none; -webkit-appearance: none; appearance: none; transition: border-color 150ms, background-color 150ms;
+}
+.ao .av-checkbox-input:checked { border-color: var(--accent); background: var(--accent); }
+.ao .av-checkbox-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ao .av-checkbox-tick { position: absolute; inset: 0; width: 14px; height: 14px; margin: auto; stroke-width: 3; color: var(--accent-contrast); opacity: 0; pointer-events: none; }
+.ao .av-checkbox-input:checked + .av-checkbox-tick { opacity: 1; }
+.ao .av-checkrow-text { display: block; min-width: 0; }
+.ao .av-checkrow-label { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
+.ao .av-checkrow-desc { display: block; margin-top: 2px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+
+/* xoá voucher */
+.ao .av-del { display: flex; flex-direction: column; gap: 12px; }
+@media (min-width: 640px) { .ao .av-del { flex-direction: row; align-items: center; justify-content: space-between; } .ao .av-del .ao-btn { flex-shrink: 0; } }
+.ao .av-del-text { display: flex; min-width: 0; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 20px; text-wrap: pretty; color: var(--text-secondary); }
+.ao .av-del-text b { font-weight: 500; color: var(--text-primary); }
+.ao .av-del-ic { margin-top: 2px; }

@@ -221,6 +221,7 @@ model Order {
   user            User?       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   items           OrderItem[]
   paymentAttempts PaymentAttempt[]
+  vouchers        OrderVoucher[]
 
   @@index([userId, createdAt], map: "orders_user_id_created_at_idx")
   @@map("orders")
@@ -273,4 +274,45 @@ model AuditLog {
   timestamp   DateTime @default(dbgenerated("SYSUTCDATETIME()")) @db.DateTime2
 
   @@map("audit_logs")
+}
+
+// Voucher: administrator-issued code redeemed on an Order for a Discount.
+// Extra CHECK constraints live in the migration (type/percent/max_discount shape,
+// redeemed_count <= quantity); Prisma cannot express them.
+model Voucher {
+  id             Int            @id @default(autoincrement())
+  code           String         @unique(map: "vouchers_code_key") @db.NVarChar(20)
+  description    String         @db.NVarChar(200)
+  type           String         @db.NVarChar(16)
+  percent        Int?
+  maxDiscount    Decimal?       @map("max_discount") @db.Decimal(18, 2)
+  startsAt       DateTime       @map("starts_at") @db.DateTime2
+  endsAt         DateTime       @map("ends_at") @db.DateTime2
+  quantity       Int
+  redeemedCount  Int            @default(0) @map("redeemed_count")
+  isEnabled      Boolean        @default(true) @map("is_enabled")
+  isListed       Boolean        @default(true) @map("is_listed")
+  createdAt      DateTime       @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt      DateTime       @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  orders         OrderVoucher[]
+
+  @@map("vouchers")
+}
+
+// One row per Voucher redeemed on an Order, holding a snapshot so later Voucher edits
+// never rewrite order history. releasedAt is set when the quantity was given back.
+model OrderVoucher {
+  orderId         String    @map("order_id") @db.NVarChar(64)
+  voucherId       Int       @map("voucher_id")
+  codeSnapshot    String    @map("code_snapshot") @db.NVarChar(20)
+  typeSnapshot    String    @map("type_snapshot") @db.NVarChar(16)
+  percentSnapshot Int?      @map("percent_snapshot")
+  discountAmount  Decimal   @map("discount_amount") @db.Decimal(18, 2)
+  releasedAt      DateTime? @map("released_at") @db.DateTime2
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  voucher         Voucher   @relation(fields: [voucherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([orderId, voucherId])
+  @@index([voucherId], map: "order_vouchers_voucher_id_idx")
+  @@map("order_vouchers")
 }

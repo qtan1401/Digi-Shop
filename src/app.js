@@ -11,6 +11,7 @@ const cartRoutes = require("./routes/cart.routes");
 const adminRoutes = require("./routes/admin.routes");
 const authRoutes = require("./routes/auth.routes");
 const paymentRoutes = require("./routes/payment.routes");
+const voucherRoutes = require("./routes/voucher.routes");
 const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/auth");
 
 const app = express();
@@ -38,6 +39,7 @@ app.use("/api/cart", cartRoutes);         // Cart domain — validate & shipping
 app.use("/api", checkoutRoutes);          // Checkout domain — mua ngay + giỏ hàng
 app.use("/api/orders", orderRoutes);      // Order domain — tra cứu + quản lý
 app.use("/api/admin", adminRoutes);
+app.use("/api/vouchers", voucherRoutes); // Voucher quote for cart/checkout
 app.use("/api/payments", paymentRoutes); // Provider callbacks and customer payment attempts
 
 app.get("/", (req, res) => {

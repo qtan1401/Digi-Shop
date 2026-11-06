@@ -1,6 +1,6 @@
 # Digi-Shop
 
-This context covers the product catalog, customer orders, and their payment lifecycle through external payment providers.
+This context covers the product catalog, customer orders and their payment lifecycle through external payment providers, and the Vouchers customers redeem against orders.
 
 ## Language
 
@@ -44,3 +44,28 @@ _Avoid_: Order
 **Expired payment attempt**:
 A payment attempt that did not receive a valid successful result within five minutes. Expiring an attempt does not by itself confirm payment or cancel the order.
 _Avoid_: Cancelled order
+
+### Vouchers
+
+**Voucher**:
+A code issued by an administrator that a customer redeems on an Order to receive a Discount, valid only within its validity period.
+_Avoid_: Coupon, promo code, promotion
+
+**Percentage voucher**:
+A Voucher whose Discount is a percentage of the Order's subtotal, limited by a maximum Discount amount.
+
+**Free-shipping voucher**:
+A Voucher whose Discount equals the Order's shipping fee.
+
+**Validity period**:
+The span of time during which a Voucher can be redeemed.
+
+**Voucher quantity**:
+The number of Orders that may still redeem a Voucher. Each Order that redeems it uses one, and gives it back if the Order is cancelled or its payment does not complete.
+
+**Unlisted voucher**:
+A Voucher that is not shown in the checkout list and can only be redeemed by entering its code.
+
+**Discount**:
+The amount deducted from an Order by the Vouchers redeemed on it. It never changes the Product variant's price.
+_Avoid_: Sale price, promotional price

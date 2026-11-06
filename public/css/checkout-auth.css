@@ -134,3 +134,123 @@
     background: var(--bg-surface);
     color: var(--text-primary);
 }
+
+/* ============================================================================
+   THANH TOÁN — KHỐI VOUCHER TRONG CỘT TÓM TẮT (thanhtoan-voucher A)
+   Màu/cỡ chữ lấy từ token ở styles.css; nút và ô nhập dùng .btn / .checkout-input sẵn có.
+   ============================================================================ */
+.checkout-layout > .checkout-card__form { padding: 20px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.checkout-layout > .checkout-card__form > .checkout-section-title:first-child { margin-top: 0; }
+.checkout-summary .checkout-summary__title { padding-bottom: 12px; }
+.checkout-summary .btn--checkout { min-height: 44px; margin-top: 16px; }
+.checkout-summary .btn--checkout:disabled { cursor: not-allowed; opacity: 0.5; transform: none; box-shadow: none; }
+.checkout-summary .checkout-alert-error { margin: 12px 0 0; }
+.checkout-summary a:focus-visible, .checkout-summary button:focus-visible, .checkout-summary summary:focus-visible, .checkout-summary input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.vc-rule { height: 0; margin: 16px 0; border: 0; border-top: 1px solid var(--border); }
+.checkout-summary .checkout-summary__item:has(+ .vc-rule) { margin-bottom: 0; border-bottom: 0; }
+
+.vc-banner { display: flex; gap: 12px; margin-bottom: 16px; padding: 12px; border-radius: var(--radius-md); background: var(--error-bg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error-text) 30%, transparent); color: var(--error-strong); font-size: 14px; line-height: 20px; }
+.vc-banner[hidden] { display: none; }
+.vc-banner > .icon { width: 16px; height: 16px; margin-top: 2px; }
+.vc-banner > div { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.vc-banner__title { font-weight: 500; }
+.vc-banner__btn { min-height: 40px; margin-top: 8px; padding: 8px 16px; line-height: 1.25; }
+
+.vc-block { display: flex; flex-direction: column; gap: 12px; }
+.vc-title { font: 600 16px/24px var(--font-body); color: var(--text-primary); }
+.vc-limit { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.vc-form { display: flex; gap: 8px; }
+.vc-form__field { min-width: 0; flex: 1; }
+.vc-input { height: 44px; padding: 0 16px; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 16px; text-transform: uppercase; }
+.vc-input::placeholder { font-family: var(--font-body); text-transform: none; color: var(--text-secondary); opacity: 1; }
+.vc-input:disabled { cursor: not-allowed; opacity: 0.5; }
+.vc-apply { flex-shrink: 0; min-height: 44px; padding: 0 16px; border-color: var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); line-height: 1.25; }
+.vc-apply:disabled { cursor: not-allowed; opacity: 0.5; }
+.vc-error { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; font-size: 14px; line-height: 20px; color: var(--error-text); }
+.vc-error .icon { width: 16px; height: 16px; margin-top: 2px; }
+.vc-error span { min-width: 0; overflow-wrap: anywhere; }
+.vc-notice { padding: 8px 12px; border-radius: var(--radius-md); background: var(--warning-bg); font-size: 13px; line-height: 18px; color: var(--warning); overflow-wrap: anywhere; }
+.vc-notice[hidden] { display: none; }
+
+.vc-chips { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; }
+.vc-chip { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; height: 36px; padding: 0 4px 0 12px; border-radius: 9999px; background: color-mix(in srgb, var(--text-primary) 5%, transparent); font-size: 14px; }
+.vc-chip .icon { width: 14px; height: 14px; }
+.vc-chip__code { overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-weight: 500; }
+.vc-chip__amount { white-space: nowrap; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.vc-chip__note { white-space: nowrap; font-size: 12px; }
+.vc-chip.is-bad { background: var(--error-bg); box-shadow: inset 0 0 0 1px var(--error-text); color: var(--error-strong); }
+.vc-form button, .vc-chip__remove, .vc-banner button, .vc-empty button, .vc-guest button { font-family: var(--font-body); }
+.vc-chip__remove { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 9999px; background: none; color: var(--text-secondary); cursor: pointer; transition: background-color 0.15s, color 0.15s; }
+.vc-chip__remove:hover { background: color-mix(in srgb, var(--text-primary) 10%, transparent); color: var(--text-primary); }
+
+.vc-list { display: flex; flex-direction: column; gap: 8px; }
+.vc-row { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); cursor: pointer; transition: background-color 0.15s, border-color 0.15s; }
+.vc-row:hover { background: var(--item-hover); }
+.vc-row.is-selected { border-color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.vc-row.is-locked { cursor: not-allowed; background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.vc-row.is-bad { border-color: var(--error-text); background: var(--error-bg); }
+.vc-row__check { flex-shrink: 0; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
+.vc-row__check:disabled { cursor: not-allowed; }
+.vc-row__body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.vc-row__top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.vc-row__code { font: 500 14px/20px var(--font-mono); }
+.vc-row__soon { padding: 2px 8px; border-radius: 9999px; background: var(--warning-bg); font-size: 12px; font-weight: 500; line-height: 16px; white-space: nowrap; color: var(--warning); }
+.vc-row__desc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; color: color-mix(in srgb, var(--text-primary) 80%, transparent); }
+.vc-row__exp { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.vc-row__note { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.vc-row__note .icon { width: 14px; height: 14px; margin-top: 1px; }
+.vc-row__note.is-warn { color: var(--warning); }
+.vc-row__note.is-bad { font-weight: 500; color: var(--error-text); }
+.vc-row__amount { flex-shrink: 0; align-self: flex-start; text-align: right; font: 600 14px/20px var(--font-display); font-variant-numeric: tabular-nums; }
+.vc-row__amount small { display: block; margin-top: 2px; font: 400 12px/16px var(--font-body); color: var(--text-secondary); }
+.vc-row__amount.is-struck { text-decoration: line-through; color: var(--text-secondary); }
+.vc-row--skeleton { cursor: default; }
+.vc-row--skeleton:hover { background: var(--bg-surface); }
+.vc-row--skeleton .vc-row__body { gap: 8px; }
+.vc-sk { display: block; height: 12px; }
+.vc-sk--box { width: 20px; height: 20px; border-radius: 6px; }
+.vc-sk--total { width: 112px; height: 20px; }
+.vc-more > summary { display: flex; min-height: 40px; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-md); font-size: 14px; font-weight: 500; color: var(--text-secondary); cursor: pointer; list-style: none; }
+.vc-more > summary::-webkit-details-marker { display: none; }
+.vc-more > summary:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.vc-more > summary .icon { width: 16px; height: 16px; transition: transform 0.15s; }
+.vc-more[open] > summary .icon { transform: rotate(180deg); }
+.vc-more__rows { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.vc-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 20px 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); text-align: center; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.vc-empty--dashed { border-style: dashed; }
+.vc-empty__icon { width: 24px; height: 24px; margin-bottom: 4px; }
+.vc-empty__title { font-weight: 500; color: var(--text-primary); }
+.vc-empty__title--error { color: var(--error-text); }
+.vc-empty .btn { margin-top: 8px; min-height: 40px; }
+.vc-guest { display: flex; gap: 12px; padding: 16px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--text-primary) 5%, transparent); font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.vc-guest > .icon { width: 20px; height: 20px; margin-top: 2px; }
+.vc-guest__title { font-weight: 500; color: var(--text-primary); }
+.vc-guest .btn { margin-top: 12px; min-height: 40px; }
+
+.vc-sum { display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 20px; color: var(--text-primary); }
+.vc-sum__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vc-sum__row dt { min-width: 0; }
+.vc-sum__row dd { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.vc-sum__code { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); }
+.vc-sum__code .icon { width: 14px; height: 14px; color: var(--text-secondary); }
+.vc-sum__sub { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; }
+.vc-sum__sub.is-warn { color: var(--warning); }
+.vc-sum__sub.is-bad { color: var(--error-text); }
+.vc-sum .is-struck { color: var(--text-secondary); text-decoration: line-through; }
+.vc-sum .is-success { color: var(--success); }
+.vc-sum__muted { color: var(--text-secondary); }
+.vc-sum__total { align-items: baseline; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border-strong); }
+.vc-sum__total dt { font-weight: 500; }
+.vc-sum__total dd { font: 600 20px/28px var(--font-display); }
+
+@media (max-width: 480px) {
+    .checkout-layout .checkout-grid-2 { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+@media (max-width: 768px) {
+    .payment-container--wide { padding: 24px 16px 60px; }
+    .checkout-layout > .checkout-card__form, .checkout-summary { padding: 16px; }
+    .vc-chip { height: 40px; }
+    .vc-chip__remove { width: 40px; height: 40px; }
+    .vc-row__check { width: 24px; height: 24px; }
+}
+/* ===== HẾT: VOUCHER THANH TOÁN ===== */

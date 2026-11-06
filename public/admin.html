@@ -28,6 +28,9 @@
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Đơn hàng
                     <span class="admin-navlink__count tabular" data-orders-count hidden></span>
                 </a>
+                <a class="admin-navlink" href="#/voucher" data-nav="voucher">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>Voucher
+                </a>
                 <a class="admin-navlink" href="#/tai-khoan" data-nav="tai-khoan">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/></svg>Tài khoản
                 </a>
@@ -102,6 +105,10 @@
 
                 <section data-view="don-hang" id="view-don-hang" aria-label="Đơn hàng" hidden>
                     <div id="orders-root"></div>
+                </section>
+
+                <section data-view="voucher" id="view-voucher" aria-label="Voucher" hidden>
+                    <div id="vouchers-root"></div>
                 </section>
 
                 <section data-view="tai-khoan" id="view-tai-khoan" aria-label="Tài khoản" hidden>
@@ -249,6 +256,7 @@
     <script src="/js/admin.js"></script>
     <script src="/js/admin-kit.js"></script>
     <script src="/js/admin-orders.js"></script>
+    <script src="/js/admin-vouchers.js"></script>
     <script src="/js/admin-overview.js"></script>
     <script src="/js/admin-shell.js"></script>
 </body>

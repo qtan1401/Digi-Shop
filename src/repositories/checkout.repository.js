@@ -2,6 +2,8 @@
 // Locks variant inventory, decrements it, and writes immutable order snapshots atomically.
 
 const { getPrismaClient } = require("../db/prisma");
+const voucherRepository = require("./voucher.repository");
+const { calculateDiscount, unusableReason } = require("../services/voucher-calculator");
 
 const toIsoString = (value) =>
     value === undefined || value === null
@@ -184,7 +186,7 @@ const createOrder = async (transaction, orderData) => {
  * Execute checkout atomically. Business validation/calculation runs after every
  * requested variant has been locked and read, before stock mutation.
  */
-const checkout = async (requestedItems, userId, buildOrder) => {
+const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [] } = {}) => {
     if (typeof userId !== "string" || userId.trim().length === 0) {
         throw new TypeError("Checkout repository requires an authenticated user ID");
     }
@@ -199,10 +201,29 @@ const checkout = async (requestedItems, userId, buildOrder) => {
             });
         }
 
+        // buildOrder prices the Order by calling redeemVouchers({ subtotal, shippingFee }) exactly
+        // once. Vouchers are locked (ascending id), validated against the database clock and
+        // counted here, still before any stock decrement or Order insert; any throw rolls back all.
+        let redemption;
+        const redeemVouchers = async ({ subtotal, shippingFee }) => {
+            const { vouchers, now } = await voucherRepository.lockByCodes(transaction, voucherCodes);
+            for (const voucher of vouchers) {
+                const unusable = unusableReason(voucher, now);
+                if (unusable) throw new voucherRepository.VoucherUnavailableError(unusable.message);
+            }
+            const pricing = calculateDiscount({ subtotal, shippingFee, vouchers });
+            for (const voucher of [...vouchers].sort((left, right) => left.id - right.id)) {
+                await voucherRepository.incrementRedeemed(transaction, voucher);
+            }
+            redemption = { vouchers, lines: pricing.lines };
+            return pricing;
+        };
+
         const orderData = {
-            ...(await buildOrder(lockedItems)),
+            ...(await buildOrder(lockedItems, { redeemVouchers })),
             userId
         };
+        if (!redemption) throw new TypeError("Checkout order builder must price the order through redeemVouchers");
 
         const remainingStockByVariantId = {};
         for (const { variantId, quantity, variant } of lockedItems) {
@@ -224,6 +245,7 @@ const checkout = async (requestedItems, userId, buildOrder) => {
         }
 
         const row = await createOrder(transaction, orderData);
+        await voucherRepository.insertOrderVouchers(transaction, row.id, redemption.vouchers, redemption.lines);
         let paymentAttempt;
         if (orderData.paymentAttempt) {
             const attempt = orderData.paymentAttempt;
@@ -247,7 +269,15 @@ const checkout = async (requestedItems, userId, buildOrder) => {
             };
         }
         return {
-            order: mapOrder(row),
+            order: {
+                ...mapOrder(row),
+                vouchers: redemption.vouchers.map((voucher, index) => ({
+                    code: voucher.code,
+                    type: voucher.type,
+                    percent: voucher.percent,
+                    amount: redemption.lines[index].amount
+                }))
+            },
             paymentAttempt,
             remainingStockByVariantId
         };

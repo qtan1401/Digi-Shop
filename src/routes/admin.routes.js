@@ -5,6 +5,7 @@ const express = require("express");
 const { requireRole, requireCsrf } = require("../middlewares/auth");
 const adminController = require("../controllers/admin.controller");
 const { uploadProductImages } = require("../middlewares/product-image-upload");
+const adminVoucherController = require("../controllers/admin-voucher.controller");
 
 const router = express.Router();
 
@@ -25,5 +26,12 @@ router.put("/products/:id", requireCsrf, uploadProductImages, adminController.up
 
 // Audit trail.
 router.get("/audit-logs", adminController.listAuditLogs);
+
+// Voucher management.
+router.get("/vouchers", adminVoucherController.list);
+router.get("/vouchers/:id", adminVoucherController.get);
+router.post("/vouchers", requireCsrf, adminVoucherController.create);
+router.put("/vouchers/:id", requireCsrf, adminVoucherController.update);
+router.delete("/vouchers/:id", requireCsrf, adminVoucherController.remove);
 
 module.exports = router;

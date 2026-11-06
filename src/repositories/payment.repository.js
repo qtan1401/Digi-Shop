@@ -1,4 +1,5 @@
 const { getPrismaClient } = require("../db/prisma");
+const voucherRepository = require("./voucher.repository");
 
 const ACTIVE = "PENDING";
 
@@ -58,6 +59,7 @@ const releaseAttempt = async (transaction, attempt, status, now) => {
     });
     if (changed.count !== 1) return transaction.paymentAttempt.findUnique({ where: { id: attempt.id } });
     await restoreInventory(transaction, attempt.orderId);
+    await voucherRepository.releaseForOrder(transaction, attempt.orderId, now);
     return transaction.paymentAttempt.findUnique({ where: { id: attempt.id } });
 };
 
@@ -131,6 +133,14 @@ const createRetryAttempt = async ({ id, orderId, provider, amount, expiresAt, no
         if (activeAttempt) throw new PaymentError("PAYMENT_ATTEMPT_ACTIVE", "Đơn hàng đang có một giao dịch chưa hết hạn", 409);
 
         await reserveInventory(transaction, orderId);
+        const reserved = await voucherRepository.reserveReleasedForOrder(transaction, orderId);
+        if (!reserved.ok) {
+            throw new PaymentError(
+                "PAYMENT_VOUCHER_UNAVAILABLE",
+                `Voucher ${reserved.code} không còn hiệu lực, vui lòng tạo đơn hàng mới`,
+                409
+            );
+        }
         const row = await transaction.paymentAttempt.create({
             data: { id, orderId, provider, amount, status: ACTIVE, expiresAt }
         });
