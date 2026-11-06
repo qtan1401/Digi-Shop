@@ -210,6 +210,24 @@
         } catch (_) { return null; }
     };
 
+    // Pages a customer may return to after logging in (`/auth.html?next=…`). Same-origin, allow-listed paths only,
+    // so the parameter cannot be used as an open redirect.
+    const NEXT_PATHS = [/^\/orders\.html$/, /^\/product_info\.html$/, /^\/profile\.html$/, /^\/cart\.html$/];
+    const safeNextPath = (value) => {
+        if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return null;
+        try {
+            const url = new URL(value, window.location.origin);
+            if (url.origin !== window.location.origin || !NEXT_PATHS.some((pattern) => pattern.test(url.pathname))) return null;
+            return `${url.pathname}${url.search}${url.hash}`;
+        } catch (_) { return null; }
+    };
+    const getNextPath = () => safeNextPath(new URLSearchParams(window.location.search).get("next"));
+    /** Login URL that brings the customer back to `path` (or the current page) when that page is allow-listed. */
+    const loginUrl = (path = `${window.location.pathname}${window.location.search}${window.location.hash}`, tab = "login") => {
+        const next = safeNextPath(path);
+        return `/auth.html?tab=${tab}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+    };
+
     const clearReturnState = () => {
         try { sessionStorage.removeItem(DRAFT_KEY); } catch (_) { /* storage can be disabled */ }
     };
@@ -250,11 +268,12 @@
         document.querySelectorAll("[data-auth-nav]").forEach((host) => {
             host.classList.toggle("auth-nav--admin", session.user?.role === "admin");
             if (!session.authenticated) {
-                host.innerHTML = `<a class="auth-nav__login" href="/auth.html">Đăng nhập</a><a class="auth-nav__register" href="/auth.html?tab=register">Đăng ký</a>`;
+                host.innerHTML = `<a class="auth-nav__login" href="${escapeHtml(loginUrl())}">Đăng nhập</a><a class="auth-nav__register" href="${escapeHtml(loginUrl(undefined, "register"))}">Đăng ký</a>`;
                 return;
             }
             const label = escapeHtml(identityLabel(session.user));
-            host.innerHTML = `<details class="auth-nav__menu"><summary class="auth-nav__identity" aria-label="Mở menu tài khoản">${label}<span aria-hidden="true">⌄</span></summary><div class="auth-nav__popover"><a href="/profile.html">Hồ sơ</a>${session.user.role === "admin" ? "<a href=\"/admin.html\">Quản trị</a>" : ""}<button type="button" data-auth-logout>Đăng xuất</button></div></details>`;
+            const ordersLink = session.user.role === "user" ? `<a href="/orders.html"${window.location.pathname === "/orders.html" ? " aria-current=\"page\"" : ""}>Đơn hàng của tôi</a>` : "";
+            host.innerHTML = `<details class="auth-nav__menu"><summary class="auth-nav__identity" aria-label="Mở menu tài khoản">${label}<span aria-hidden="true">⌄</span></summary><div class="auth-nav__popover"><a href="/profile.html">Hồ sơ</a>${ordersLink}${session.user.role === "admin" ? "<a href=\"/admin.html\">Quản trị</a>" : ""}<button type="button" data-auth-logout>Đăng xuất</button></div></details>`;
         });
         document.querySelectorAll(".cart-nav-link").forEach((link) => {
             const item = link.closest("li");
@@ -591,7 +610,7 @@
             window.location.replace("/admin.html");
             return detail;
         }
-        if (!detail.handled) window.location.replace(returnState?.returnPath || "/");
+        if (!detail.handled) window.location.replace(returnState?.returnPath || getNextPath() || "/");
         return detail;
     };
 
@@ -631,6 +650,8 @@
         getSession: () => session,
         subscribe: (listener) => { if (typeof listener !== "function") return () => {}; listeners.add(listener); return () => listeners.delete(listener); },
         getReturnState,
+        getNextPath,
+        loginUrl,
         clearReturnState,
         setVerificationContext,
         getVerificationContext,

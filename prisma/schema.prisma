@@ -220,6 +220,7 @@ model Order {
   paymentStatus   String      @map("payment_status") @db.NVarChar(32)
   createdAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
   updatedAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  cancelledAt     DateTime?   @map("cancelled_at") @db.DateTime2
   user            User?       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   items           OrderItem[]
   paymentAttempts PaymentAttempt[]

@@ -507,7 +507,7 @@ const completeLogin = async (session) => {
     try {
         const result = await mergeGuestCartForUser(user);
         const draft = window.DigiCheckoutState?.readDraft?.();
-        const returnPath = draft?.returnPath || window.DigiAuth?.getReturnState?.()?.returnPath;
+        const returnPath = draft?.returnPath || window.DigiAuth?.getReturnState?.()?.returnPath || window.DigiAuth?.getNextPath?.();
         window.location.assign(returnPath || "/");
         return { ok: true, role: "user", items: _accountItems.slice(), adjustments: result.adjustments };
     } catch (error) {

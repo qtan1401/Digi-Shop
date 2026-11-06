@@ -10,6 +10,9 @@ const router = express.Router();
 // [GET] /api/orders → Toàn bộ đơn hàng (Admin only)
 router.get("/", requireRole("admin"), orderController.getAllOrders);
 
+// [GET] /api/orders/mine → Đơn hàng của khách đang đăng nhập (User only; trước /:id)
+router.get("/mine", requireRole("user"), orderController.getMyOrders);
+
 // [GET] /api/orders/:id → Chi tiết đơn hàng (chủ đơn hoặc Admin)
 router.get("/:id", requireRole("user", "admin"), orderController.getOrderDetail);
 

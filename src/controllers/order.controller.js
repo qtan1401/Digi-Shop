@@ -8,7 +8,9 @@ const SAFE_ERROR_MESSAGES = Object.freeze({
     ORDER_NOT_FOUND: "Không tìm thấy đơn hàng",
     INVALID_ORDER_STATUS: "Trạng thái đơn hàng không hợp lệ",
     INVALID_ORDER_TRANSITION: "Không thể chuyển trạng thái đơn hàng",
-    INVALID_PAYMENT_STATUS: "Trạng thái thanh toán không hợp lệ"
+    INVALID_PAYMENT_STATUS: "Trạng thái thanh toán không hợp lệ",
+    INVALID_PAGINATION: "Tham số phân trang không hợp lệ",
+    INVALID_FILTER: "Bộ lọc không hợp lệ"
 });
 
 const sendOrderError = (res, error) => {
@@ -21,6 +23,16 @@ const sendOrderError = (res, error) => {
             message: SAFE_ERROR_MESSAGES[code] || "Order request failed"
         }
     });
+};
+
+/** [GET] /api/orders/mine — Đơn hàng của chính khách hàng */
+const getMyOrders = async (req, res) => {
+    try {
+        const { data, meta } = await orderService.listMyOrders(req.user, req.query);
+        return res.status(200).json({ success: true, data, meta });
+    } catch (error) {
+        return sendOrderError(res, error);
+    }
 };
 
 /** [GET] /api/orders/:id — Chi tiết đơn hàng */
@@ -77,4 +89,4 @@ const updatePaymentStatus = async (req, res) => {
     }
 };
 
-module.exports = { getOrderDetail, getAllOrders, updateOrderStatus, updatePaymentStatus };
+module.exports = { getOrderDetail, getMyOrders, getAllOrders, updateOrderStatus, updatePaymentStatus };

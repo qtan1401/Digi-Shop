@@ -30,16 +30,24 @@ const parseOptions = (value) => {
     }
 };
 
-const mapOrderItem = (row) => ({
-    variantId: toNumber(row.variantId),
-    sku: row.skuSnapshot,
-    options: parseOptions(row.optionsSnapshot),
-    name: row.nameSnapshot,
-    image: row.imageSnapshot,
-    unitPrice: toNumber(row.unitPrice),
-    quantity: row.quantity,
-    lineTotal: toNumber(row.lineTotal)
-});
+const mapOrderItem = (row) => {
+    const item = {
+        variantId: toNumber(row.variantId),
+        sku: row.skuSnapshot,
+        options: parseOptions(row.optionsSnapshot),
+        name: row.nameSnapshot,
+        image: row.imageSnapshot,
+        unitPrice: toNumber(row.unitPrice),
+        quantity: row.quantity,
+        lineTotal: toNumber(row.lineTotal)
+    };
+    // Only present when the variant->product link was loaded (detail reads).
+    if (row.variant) {
+        item.productId = toNumber(row.variant.productId);
+        item.productAvailable = Boolean(row.variant.product) && row.variant.product.isDeleted !== true;
+    }
+    return item;
+};
 
 
 const mapOrder = (row, { includeUserId = false } = {}) => {
@@ -62,7 +70,8 @@ const mapOrder = (row, { includeUserId = false } = {}) => {
         orderStatus: row.orderStatus,
         paymentStatus: row.paymentStatus,
         createdAt: toIsoString(row.createdAt),
-        updatedAt: toIsoString(row.updatedAt)
+        updatedAt: toIsoString(row.updatedAt),
+        cancelledAt: row.cancelledAt ? toIsoString(row.cancelledAt) : null
     };
     if (includeUserId) order.userId = row.userId;
     if (row.vouchers) {
@@ -73,6 +82,18 @@ const mapOrder = (row, { includeUserId = false } = {}) => {
             amount: toNumber(entry.discountAmount)
         }));
     }
+    // Only present on detail reads: the latest payment attempt (stored statuses PENDING, SUCCEEDED, FAILED, EXPIRED,
+    // LATE_SUCCESS), with a PENDING attempt past its deadline reported as EXPIRED (the expiry sweep may not have run yet).
+    if (row.paymentAttempts) {
+        const attempt = row.paymentAttempts[0];
+        order.paymentAttempt = attempt
+            ? {
+                provider: attempt.provider,
+                status: attempt.status === "PENDING" && new Date(attempt.expiresAt) <= new Date() ? "EXPIRED" : attempt.status,
+                expiresAt: toIsoString(attempt.expiresAt)
+            }
+            : null;
+    }
     return order;
 };
 
@@ -82,6 +103,23 @@ const itemsInclude = {
     },
     vouchers: {
         orderBy: { voucherId: "asc" }
+    }
+};
+
+const detailInclude = {
+    items: {
+        orderBy: { id: "asc" },
+        include: {
+            variant: { select: { productId: true, product: { select: { isDeleted: true } } } }
+        }
+    },
+    vouchers: {
+        orderBy: { voucherId: "asc" }
+    },
+    paymentAttempts: {
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 1,
+        select: { provider: true, status: true, expiresAt: true }
     }
 };
 
@@ -139,9 +177,78 @@ const getOrderById = async (id, options = {}) => {
 
     const row = await getPrismaClient().order.findUnique({
         where: { id: String(id) },
-        include: itemsInclude
+        include: detailInclude
     });
     return mapOrder(row, options);
+};
+
+const ORDER_STATUSES = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
+const LIST_ITEM_PREVIEW = 3;
+
+/** Order counts per status for one user (all statuses, one grouped query). */
+const countByStatus = async (userId) => {
+    const rows = await getPrismaClient().order.groupBy({
+        by: ["orderStatus"],
+        where: { userId },
+        _count: { _all: true }
+    });
+    const counts = Object.fromEntries(ORDER_STATUSES.map((status) => [status, 0]));
+    let all = 0;
+    for (const row of rows) {
+        counts[row.orderStatus] = row._count._all;
+        all += row._count._all;
+    }
+    return { all, ...counts };
+};
+
+/**
+ * One page of a user's orders, newest first. Three queries total, independent of page size:
+ * the page (with first items), and the quantity sums of the page's orders.
+ */
+const listByUser = async (userId, { status, skip, take }) => {
+    const where = status ? { userId, orderStatus: status } : { userId };
+    const rows = await getPrismaClient().order.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take,
+        select: {
+            id: true,
+            createdAt: true,
+            orderStatus: true,
+            paymentStatus: true,
+            paymentMethod: true,
+            totalPrice: true,
+            items: {
+                orderBy: { id: "asc" },
+                take: LIST_ITEM_PREVIEW,
+                select: { nameSnapshot: true, imageSnapshot: true, optionsSnapshot: true, quantity: true }
+            },
+            _count: { select: { items: true, vouchers: true } }
+        }
+    });
+    const orderIds = rows.map((row) => row.id);
+    const quantities = orderIds.length
+        ? await getPrismaClient().orderItem.groupBy({ by: ["orderId"], where: { orderId: { in: orderIds } }, _sum: { quantity: true } })
+        : [];
+    const quantityByOrder = new Map(quantities.map((row) => [row.orderId, row._sum.quantity || 0]));
+    return rows.map((row) => ({
+        id: row.id,
+        createdAt: toIsoString(row.createdAt),
+        orderStatus: row.orderStatus,
+        paymentStatus: row.paymentStatus,
+        paymentMethod: row.paymentMethod,
+        totalPrice: toNumber(row.totalPrice),
+        itemCount: quantityByOrder.get(row.id) || 0,
+        lineCount: row._count.items,
+        items: row.items.map((item) => ({
+            name: item.nameSnapshot,
+            image: item.imageSnapshot,
+            options: parseOptions(item.optionsSnapshot),
+            quantity: item.quantity
+        })),
+        voucherCount: row._count.vouchers
+    }));
 };
 
 const updateStatus = async (id, data) => {
@@ -185,7 +292,7 @@ const cancelOrder = async (id) => {
             throw error;
         }
         if (current.orderStatus !== "CANCELLED") {
-            await transaction.order.updateMany({ where: { id: orderId }, data: { orderStatus: "CANCELLED" } });
+            await transaction.order.updateMany({ where: { id: orderId }, data: { orderStatus: "CANCELLED", cancelledAt: new Date() } });
         }
         await voucherRepository.releaseForOrder(transaction, orderId, new Date());
         const row = await transaction.order.findUnique({ where: { id: orderId }, include: itemsInclude });
@@ -203,6 +310,8 @@ module.exports = {
     createOrder,
     getAllOrders,
     getOrderById,
+    countByStatus,
+    listByUser,
     updateOrderStatus,
     updatePaymentStatus
 };
