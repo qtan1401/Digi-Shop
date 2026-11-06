@@ -52,14 +52,16 @@ const createLog = async (logData = {}) => {
     return mapAuditLog(row);
 };
 
-const getAllLogs = async () => {
-    const rows = await getPrismaClient().auditLog.findMany({
-        orderBy: [
-            { timestamp: "desc" },
-            { id: "desc" }
-        ]
-    });
-    return rows.map(mapAuditLog);
+const getAllLogs = async (limit = 8) => {
+    const client = getPrismaClient();
+    const [rows, total] = await Promise.all([
+        client.auditLog.findMany({
+            orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+            take: limit
+        }),
+        client.auditLog.count()
+    ]);
+    return { data: rows.map(mapAuditLog), total };
 };
 
 module.exports = {

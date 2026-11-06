@@ -133,13 +133,11 @@ const listProducts = async (req, res) => {
     try {
         const result = await adminService.getProducts({
             q: req.query.q,
-            status: req.query.status || "active"
+            status: req.query.status || "active",
+            page: req.query.page,
+            pageSize: req.query.pageSize
         });
-        return res.json({
-            success: true,
-            total: result.total,
-            data: result.data
-        });
+        return res.json({ success: true, data: result.data, meta: result.meta });
     } catch (error) {
         return sendError(res, error);
     }
@@ -236,8 +234,8 @@ const restoreProduct = async (req, res) => {
 
 const listAuditLogs = async (req, res) => {
     try {
-        const data = await adminService.getAuditLogs();
-        return res.json({ success: true, total: data.length, data });
+        const result = await adminService.getAuditLogs(8);
+        return res.json({ success: true, total: result.total, data: result.data });
     } catch (error) {
         return sendError(res, error);
     }
@@ -252,7 +250,6 @@ module.exports = {
     deleteProduct,
     restoreProduct,
     listAuditLogs,
-    getAllProducts: listProducts,
     getProductById: getProduct,
     softDeleteProduct: deleteProduct,
     getAuditLogs: listAuditLogs,

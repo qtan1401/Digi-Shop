@@ -108,7 +108,7 @@ const createAdminAccount = async ({ username, temporaryPassword } = {}, actor) =
     return account;
 };
 
-const getAuditLogs = async () => await auditRepository.getAllLogs();
+const getAuditLogs = async (limit = 8) => await auditRepository.getAllLogs(limit);
 
 
 module.exports = {

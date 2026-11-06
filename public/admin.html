@@ -3,99 +3,149 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="NodeShop — Quản trị danh mục và sản phẩm">
-    <title>NodeShop — Quản trị catalog</title>
+    <meta name="description" content="NodeShop — Quản trị cửa hàng">
+    <title>Tổng quan — NodeShop Admin</title>
     <link rel="stylesheet" href="/css/styles.css">
     <link rel="stylesheet" href="/css/admin.css">
+    <link rel="stylesheet" href="/css/admin-orders.css">
+    <link rel="stylesheet" href="/css/admin-vouchers.css">
+    <link rel="stylesheet" href="/css/admin-reviews.css">
     <link rel="stylesheet" href="/css/auth.css">
 </head>
 <body class="admin-page">
-    <header class="admin-header">
-        <div class="admin-header__inner">
-            <a class="admin-brand" href="/" aria-label="NodeShop trang chủ">NodeShop <span>Admin</span></a>
-            <a class="admin-header__store-link" href="/">Xem cửa hàng <span aria-hidden="true">↗</span></a>
-            <div class="auth-nav" data-auth-nav aria-live="polite"><span>Đang kiểm tra phiên…</span></div>
+    <div class="admin-app" id="admin-app" hidden>
+        <aside class="admin-sidebar" id="admin-sidebar" aria-label="Menu">
+            <button class="sr-only" type="button" data-menu-close>Đóng menu</button>
+            <div class="admin-sidebar__head"><a class="admin-brand" href="/">NodeShop<span>Admin</span></a></div>
+            <nav class="admin-sidebar__nav" aria-label="Quản trị">
+                <a class="admin-navlink" href="#/tong-quan" data-nav="tong-quan">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Tổng quan
+                </a>
+                <a class="admin-navlink" href="#/san-pham" data-nav="san-pham">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/></svg>Sản phẩm
+                </a>
+                <a class="admin-navlink" href="#/don-hang" data-nav="don-hang">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Đơn hàng
+                    <span class="admin-navlink__count tabular" data-orders-count hidden></span>
+                </a>
+                <a class="admin-navlink" href="#/tai-khoan" data-nav="tai-khoan">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/></svg>Tài khoản
+                </a>
+            </nav>
+            <div class="admin-sidebar__foot">
+                <a class="admin-navlink admin-navlink--plain" href="/">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>Xem cửa hàng
+                </a>
+                <div class="admin-account">
+                    <span class="avatar" data-admin-avatar aria-hidden="true">AD</span>
+                    <div class="admin-account__text">
+                        <p class="admin-account__name" data-admin-name>admin</p>
+                        <p class="admin-account__role">Quản trị viên</p>
+                    </div>
+                    <button class="admin-account__logout" type="button" data-auth-logout aria-label="Đăng xuất" title="Đăng xuất">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    </button>
+                </div>
+            </div>
+        </aside>
+        <div class="admin-scrim" data-menu-close></div>
+
+        <div class="admin-column">
+            <header class="admin-topbar">
+                <button class="admin-menu-btn" type="button" data-menu-open aria-label="Mở menu" aria-controls="admin-sidebar" aria-expanded="false">
+                    <svg class="icon icon--20" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+                </button>
+                <nav class="admin-crumb" aria-label="Đường dẫn"><span class="admin-crumb__parent">Quản trị</span><span class="admin-crumb__parent">/</span><h1 class="admin-crumb__current" id="admin-title" tabindex="-1">Tổng quan</h1></nav>
+                <div class="admin-topbar__end"><span class="avatar" data-admin-avatar aria-hidden="true">AD</span></div>
+            </header>
+
+            <main class="admin-main" id="admin-main">
+                <section data-view="tong-quan" id="view-tong-quan" aria-label="Tổng quan" hidden>
+                    <div id="overview-root"></div>
+                </section>
+
+                <section data-view="san-pham" id="view-san-pham" aria-label="Sản phẩm" hidden>
+                    <div class="admin-feedback" id="global-feedback" role="status" aria-live="polite" hidden></div>
+                    <div class="card pd-card">
+                        <div class="pd-toolbar">
+                            <div class="pd-tabs scrollbar-clean">
+                                <div class="status-tabs" role="tablist" aria-label="Trạng thái sản phẩm">
+                                    <button class="status-tab is-active" type="button" role="tab" aria-selected="true" data-product-status="active">Đang bán <span id="active-count" class="tab-count">—</span></button>
+                                    <button class="status-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-product-status="deleted">Đã xóa <span id="deleted-count" class="tab-count">—</span></button>
+                                    <button class="status-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-product-status="all">Tất cả</button>
+                                </div>
+                            </div>
+                            <div class="pd-tools">
+                                <label class="search-field" for="product-search">
+                                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                                    <input id="product-search" type="search" placeholder="Tìm theo tên hoặc SKU…" autocomplete="off">
+                                    <span class="filter-spinner" id="search-spinner" aria-hidden="true" hidden></span>
+                                </label>
+                                <button class="ab ab--ghost" id="clear-filters-btn" type="button" hidden>Xóa lọc</button>
+                                <button class="ab ab--outline" id="refresh-products-btn" type="button">
+                                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>Làm mới
+                                </button>
+                                <button class="ab ab--primary" id="add-product-btn" type="button">+ Thêm sản phẩm</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap" id="product-table-region" aria-live="polite">
+                            <div class="skeleton-table" aria-label="Đang tải sản phẩm">
+                                <span></span><span></span><span></span><span></span>
+                            </div>
+                        </div>
+                        <div class="pd-foot">
+                            <p class="table-summary" id="table-summary" aria-live="polite">Đang tải sản phẩm…</p>
+                            <div id="product-pagination" class="admin-pagination"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section data-view="don-hang" id="view-don-hang" aria-label="Đơn hàng" hidden>
+                    <div id="orders-root"></div>
+                </section>
+
+                <section data-view="tai-khoan" id="view-tai-khoan" aria-label="Tài khoản" hidden>
+                    <div class="ac-grid">
+                        <section class="card ac-card" aria-labelledby="admin-account-title">
+                            <header class="ac-card__head">
+                                <h2 id="admin-account-title">Tạo tài khoản Admin</h2>
+                                <p>Tài khoản mới phải đổi mật khẩu lần đầu</p>
+                            </header>
+                            <form id="admin-account-form" class="form-grid" novalidate>
+                                <div class="field">
+                                    <label for="admin-account-username">Username <span>*</span></label>
+                                    <input id="admin-account-username" name="username" type="text" minlength="3" maxlength="64" autocomplete="off" required aria-describedby="admin-account-username-error">
+                                    <span class="field-error" id="admin-account-username-error" data-account-error="username" aria-live="polite"></span>
+                                </div>
+                                <div class="field">
+                                    <label for="admin-account-password">Mật khẩu tạm thời <span>*</span></label>
+                                    <input id="admin-account-password" name="temporaryPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="admin-account-password-error">
+                                    <span class="field-error" id="admin-account-password-error" data-account-error="temporaryPassword" aria-live="polite"></span>
+                                </div>
+                                <div class="field--wide modal-actions modal-actions--start">
+                                    <button class="ab ab--primary" type="submit">Tạo Admin</button>
+                                </div>
+                            </form>
+                            <div id="admin-account-feedback" class="admin-feedback" role="status" aria-live="polite" hidden></div>
+                        </section>
+
+                        <section class="card ac-card" id="audit-panel" aria-labelledby="audit-title">
+                            <header class="ac-card__head ac-card__head--row">
+                                <div>
+                                    <h2 id="audit-title">Audit log</h2>
+                                    <p>8 thao tác mới nhất</p>
+                                </div>
+                                <button class="ab ab--ghost" id="refresh-audit-btn" type="button">Làm mới</button>
+                            </header>
+                            <div class="audit-list" id="audit-list">
+                                <p class="muted">Đang tải lịch sử…</p>
+                            </div>
+                        </section>
+                    </div>
+                </section>
+            </main>
         </div>
-    </header>
-
-    <main class="admin-shell" hidden>
-        <section class="admin-intro" aria-labelledby="admin-title">
-            <div>
-                <p class="admin-eyebrow">CATALOG CONTROL CENTER</p>
-                <h1 id="admin-title">Quản trị catalog</h1>
-                <p class="admin-intro__copy">Quản lý danh mục, sản phẩm và vòng đời tồn kho trong một nơi.</p>
-            </div>
-            <button class="btn btn--primary" id="add-product-btn" type="button">+ Thêm sản phẩm</button>
-        </section>
-
-        <div class="admin-feedback" id="global-feedback" role="status" aria-live="polite" hidden></div>
-        <section class="panel admin-account-panel" aria-labelledby="admin-account-title">
-            <div class="panel-heading">
-                <div><p class="panel-kicker">Quản trị viên</p><h2 id="admin-account-title">Tạo tài khoản Admin</h2></div>
-                <span class="muted">Tài khoản mới phải đổi mật khẩu lần đầu</span>
-            </div>
-            <form id="admin-account-form" class="form-grid" novalidate>
-                <div class="field">
-                    <label for="admin-account-username">Username <span>*</span></label>
-                    <input id="admin-account-username" name="username" type="text" minlength="3" maxlength="64" autocomplete="off" required aria-describedby="admin-account-username-error">
-                    <span class="field-error" id="admin-account-username-error" data-account-error="username" aria-live="polite"></span>
-                </div>
-                <div class="field">
-                    <label for="admin-account-password">Mật khẩu tạm thời <span>*</span></label>
-                    <input id="admin-account-password" name="temporaryPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="admin-account-password-error">
-                    <span class="field-error" id="admin-account-password-error" data-account-error="temporaryPassword" aria-live="polite"></span>
-                </div>
-                <div class="field--wide modal-actions">
-                    <button class="btn btn--primary" type="submit">Tạo Admin</button>
-                </div>
-            </form>
-            <div id="admin-account-feedback" class="admin-feedback" role="status" aria-live="polite" hidden></div>
-        </section>
-
-        <section class="admin-layout" aria-label="Bảng điều khiển catalog">
-            <aside class="admin-sidebar">
-                <div class="panel audit-panel" id="audit-panel">
-                    <div class="panel-heading">
-                        <div>
-                            <p class="panel-kicker">Theo dõi</p>
-                            <h2>Audit log</h2>
-                        </div>
-                        <button class="text-button" id="refresh-audit-btn" type="button">Làm mới</button>
-                    </div>
-                    <div class="audit-list" id="audit-list">
-                        <p class="muted">Đang tải lịch sử…</p>
-                    </div>
-                </div>
-            </aside>
-
-            <section class="admin-content">
-                <div class="panel product-panel">
-                    <div class="product-toolbar">
-                        <div class="status-tabs" role="tablist" aria-label="Trạng thái sản phẩm">
-                            <button class="status-tab is-active" type="button" role="tab" aria-selected="true" data-status="active">Đang bán <span id="active-count" class="tab-count">—</span></button>
-                            <button class="status-tab" type="button" role="tab" aria-selected="false" data-status="deleted">Đã xóa <span id="deleted-count" class="tab-count">—</span></button>
-                            <button class="status-tab" type="button" role="tab" aria-selected="false" data-status="all">Tất cả</button>
-                        </div>
-                        <button class="btn btn--secondary btn--small" id="refresh-products-btn" type="button">↻ Làm mới</button>
-                    </div>
-                    <div class="filter-bar">
-                        <label class="search-field" for="product-search">
-                            <span aria-hidden="true">⌕</span>
-                            <input id="product-search" type="search" placeholder="Tìm theo tên hoặc SKU…" autocomplete="off">
-                            <span class="filter-spinner" id="search-spinner" aria-hidden="true" hidden></span>
-                        </label>
-                        <button class="text-button clear-filters" id="clear-filters-btn" type="button" hidden>Xóa lọc</button>
-                    </div>
-                    <div class="table-summary" id="table-summary" aria-live="polite">Đang tải sản phẩm…</div>
-                    <div class="table-wrap" id="product-table-region">
-                        <div class="skeleton-table" aria-label="Đang tải sản phẩm">
-                            <span></span><span></span><span></span><span></span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        </section>
-    </main>
+    </div>
 
     <div class="modal-backdrop" id="product-modal" hidden>
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
@@ -119,7 +169,7 @@
                             <label>Màu sắc <span class="field-hint-inline">(tuỳ chọn)</span></label>
                             <p class="field-hint">Thêm màu để ảnh sản phẩm đổi theo màu khách chọn. Bỏ trống nếu sản phẩm không có màu.</p>
                             <div id="color-rows" class="color-rows"></div>
-                            <button class="btn btn--secondary btn--small" id="add-color-btn" type="button">+ Thêm màu</button>
+                            <button class="ab ab--secondary ab--sm" id="add-color-btn" type="button">+ Thêm màu</button>
                             <small class="field-error" data-error-for="colorImages"></small>
                         </div>
                         <div class="storage-builder">
@@ -128,7 +178,7 @@
                             <div id="storage-presets" class="storage-presets"></div>
                             <div class="storage-custom">
                                 <input id="storage-custom-input" type="text" maxlength="60" placeholder="Giá trị tuỳ chỉnh…" autocomplete="off">
-                                <button class="btn btn--secondary btn--small" id="add-storage-btn" type="button">+ Thêm</button>
+                                <button class="ab ab--secondary ab--sm" id="add-storage-btn" type="button">+ Thêm</button>
                             </div>
                             <div id="storage-chips" class="storage-chips" aria-live="polite"></div>
                         </div>
@@ -174,8 +224,8 @@
                     </div>
                 </div>
                 <div class="modal-actions">
-                    <button class="btn btn--secondary" type="button" data-close-modal="product-modal">Hủy</button>
-                    <button class="btn btn--primary" id="product-submit-btn" type="submit">Thêm sản phẩm</button>
+                    <button class="ab ab--secondary" type="button" data-close-modal="product-modal">Hủy</button>
+                    <button class="ab ab--primary" id="product-submit-btn" type="submit">Thêm sản phẩm</button>
                 </div>
             </form>
         </section>
@@ -188,8 +238,8 @@
             <h2 id="confirm-title">Xác nhận thao tác</h2>
             <p id="confirm-message" class="modal-copy"></p>
             <div class="modal-actions">
-                <button class="btn btn--secondary" type="button" data-close-modal="confirm-modal">Hủy</button>
-                <button class="btn btn--primary" id="confirm-action-btn" type="button">Xác nhận</button>
+                <button class="ab ab--secondary" type="button" data-close-modal="confirm-modal">Hủy</button>
+                <button class="ab ab--primary" id="confirm-action-btn" type="button">Xác nhận</button>
             </div>
         </section>
     </div>
@@ -197,5 +247,9 @@
     <div id="toast-container" class="admin-toasts" role="status" aria-live="polite" aria-atomic="true"></div>
     <script src="/js/auth.js"></script>
     <script src="/js/admin.js"></script>
+    <script src="/js/admin-kit.js"></script>
+    <script src="/js/admin-orders.js"></script>
+    <script src="/js/admin-overview.js"></script>
+    <script src="/js/admin-shell.js"></script>
 </body>
 </html>
