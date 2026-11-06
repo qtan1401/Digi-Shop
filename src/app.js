@@ -2,6 +2,7 @@ const { storageDirectory } = require("./services/product-image-storage");
 const express = require("express");
 const path = require("path");
 
+const catalogSeoRoutes = require("./routes/catalog-seo.routes");
 // Import Routes
 const productRoutes = require("./routes/product.routes");
 const checkoutRoutes = require("./routes/checkout.routes");
@@ -27,6 +28,7 @@ app.use(ensureCsrfCookie);
 app.use(attachUser);
 app.use("/uploads/products", express.static(storageDirectory(), { fallthrough: false, index: false }));
 app.use(express.static(path.join(__dirname, "../public")));
+app.use("/", catalogSeoRoutes);
 
 
 // ===== ROUTES =====

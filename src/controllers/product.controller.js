@@ -9,8 +9,17 @@ const productService = require("../services/product.service");
  * Lấy danh sách tất cả sản phẩm
  */
 const getAll = async (req, res) => {
-    const products = await productService.getAllProducts();
-    res.json({ success: true, data: products });
+    try {
+        const result = await productService.getCatalogPage(req.query);
+        return res.json({ success: true, ...result });
+    } catch (error) {
+        if (!error || !Number.isInteger(error.statusCode)) throw error;
+        return res.status(error.statusCode).json({
+            success: false,
+            message: error.message,
+            errors: error.errors || []
+        });
+    }
 };
 
 /**

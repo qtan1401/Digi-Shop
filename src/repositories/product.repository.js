@@ -3,6 +3,7 @@
 
 const crypto = require("crypto");
 const { getPrismaClient } = require("../db/prisma");
+const { Prisma } = require("@prisma/client");
 
 const toId = (id) => {
     const value = Number(id);
@@ -152,13 +153,6 @@ const getProductByIdFrom = async (client, id, includeConfiguration = true) => {
     return mapProduct(row, { includeConfiguration });
 };
 
-const getAllProducts = async () => {
-    const rows = await getPrismaClient().product.findMany({
-        include: SUMMARY_INCLUDE,
-        orderBy: { id: "asc" }
-    });
-    return rows.map((row) => mapProduct(row));
-};
 
 const getProductByID = async (id) => getProductByIdFrom(getPrismaClient(), id);
 const getVariantByID = async (id) => {
@@ -369,40 +363,83 @@ const restore = async (id) => updateAndRead(id, {
 
 const restoreProduct = async (id) => restore(id);
 
-const findWithFilter = async (q = "", status = "active") => {
-    const where = {};
-    if (status === "active") where.isDeleted = false;
-    if (status === "deleted") where.isDeleted = true;
 
-    const query = typeof q === "string" ? q.trim() : "";
-    if (query) {
-        where.OR = [
-            { name: { contains: query } },
-            { variants: { some: { isActive: true, sku: { contains: query } } } }
-        ];
-    }
 
+const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxPrice, sort, order }) => {
+    const client = getPrismaClient();
+    const predicates = [Prisma.sql`p.is_deleted = 0`];
+    if (q) predicates.push(Prisma.sql`(
+        CHARINDEX(${q} COLLATE Latin1_General_100_CI_AI, p.name COLLATE Latin1_General_100_CI_AI) > 0
+        OR CHARINDEX(${q} COLLATE Latin1_General_100_CI_AI, p.description COLLATE Latin1_General_100_CI_AI) > 0
+    )`);
+    if (category.length) predicates.push(Prisma.sql`p.device_type IN (${Prisma.join(category)})`);
+    if (tag.length) predicates.push(Prisma.sql`p.brand IN (${Prisma.join(tag)})`);
+    if (minPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) >= ${minPrice}`);
+    if (maxPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) <= ${maxPrice}`);
+
+    const primaryOrder = sort === "name"
+        ? Prisma.sql`p.name COLLATE Vietnamese_100_CI_AS ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`
+        : sort === "price"
+            ? Prisma.sql`f.min_price ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`
+            : null;
+    const orderBy = primaryOrder ? Prisma.sql`${primaryOrder}, p.id ASC` : Prisma.sql`p.id ASC`;
+    const cte = Prisma.sql`
+        WITH prices AS (
+            SELECT product_id, MIN(price) AS min_price
+            FROM product_variants WHERE is_active = 1 GROUP BY product_id
+        ), filtered AS (
+            SELECT p.id, COALESCE(v.min_price, 0) AS min_price
+            FROM products p LEFT JOIN prices v ON v.product_id = p.id
+            WHERE ${Prisma.join(predicates, " AND ")}
+        )`;
+    const countRows = await client.$queryRaw(Prisma.sql`${cte} SELECT COUNT(*) AS total FROM filtered`);
+    const total = Number(countRows[0]?.total || 0);
+    const catalogTotal = await client.product.count({ where: { isDeleted: false } });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const actualPage = Math.min(page, totalPages);
+    const rows = total === 0 ? [] : await client.$queryRaw(Prisma.sql`
+        ${cte}
+        SELECT f.id, f.min_price FROM filtered f
+        JOIN products p ON p.id = f.id
+        ORDER BY ${orderBy}
+        OFFSET ${(actualPage - 1) * pageSize} ROWS FETCH NEXT ${pageSize} ROWS ONLY
+    `);
+    const ids = rows.map((row) => Number(row.id));
+    const records = ids.length ? await client.product.findMany({
+        where: { id: { in: ids } },
+        include: SUMMARY_INCLUDE
+    }) : [];
+    const byId = new Map(records.map((row) => [row.id, mapProduct(row)]));
+    const data = rows.map((row) => {
+        const product = byId.get(Number(row.id));
+        if (product) product.price = Number(row.min_price);
+        return product;
+    }).filter(Boolean);
+    return { data, meta: { page: actualPage, pageSize, total, totalPages, catalogTotal } };
+};
+
+const countProducts = async (where) => getPrismaClient().product.count({ where });
+const findAdminPage = async (where, page, pageSize) => {
     const rows = await getPrismaClient().product.findMany({
         where,
         include: SUMMARY_INCLUDE,
-        orderBy: { id: "asc" }
+        orderBy: { id: "asc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize
     });
     return rows.map((row) => mapProduct(row));
 };
 
-const getProductsByFilter = async (filters = {}) =>
-    findWithFilter(filters.q, filters.status || "active");
-
 module.exports = {
-    getAllProducts,
     isSkuTaken,
     getProductByID,
     getVariantByID,
     getLegacyDefaultVariantByProductID,
     findBySku,
     checkSku,
-    findWithFilter,
-    getProductsByFilter,
+    getCatalogPage,
+    countProducts,
+    findAdminPage,
     createProduct,
     updateProduct,
     softDelete,

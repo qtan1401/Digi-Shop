@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Redesigned the storefront homepage: removed the hero and the duplicate category links, moved search, device type, brand and price filters into a persistent left column (a slide-in panel below 1024 px), and rebuilt the product card to show the price range, a stock badge only for sold-out and low-stock items, and the variant count. Catalog URLs and filter/sort behaviour are unchanged; the server-rendered `/danh-muc/*` and `/the/*` pages now inject their label into the page heading.
+- Adjusted shared design tokens in `public/css/styles.css` (page background, border, secondary text, status colours) and added an auto-hiding scrollbar.
 - Replaced generic product categories with required Apple/Samsung/MSI brand and phone/tablet/laptop device type values across persistence, product validation, administration, and public responses; the migration retains existing product rows.
 - Removed category management and category API routes, updated the normal seed compatibility path to write fixed taxonomy values, and removed the default administrator password fallback.
 - Added HTTP integration coverage for supported taxonomy persistence, public product fields, invalid values, product updates, and removal of category routes.
@@ -24,3 +26,7 @@
 - Added a nullable color swatch hex field and variant image field by additive database migration; public Product detail responses now include both option metadata and color-specific variant images.
 - Seeded 15 example phones, tablets, and laptops (five per device type) with storage variants and locally stored product imagery; `data/product-images/SOURCES.md` records known source links and data caveats.
 - Added a confirmed local rollback-check command that executes the reset clear inside a transaction, always rolls back, and verifies all affected table counts are unchanged.
+
+- Added server-side pagination for `/api/products`, storefront catalog, Device type and Brand landing pages, and Admin product lists; URL-backed state preserves search, facets, price bounds, and sorting. Public/Admin page sizes default to 12/10 and cap at 48; no schema changes or pagination of cart, checkout, Orders, or OrderItems.
+- Added Unicode-aware catalog search and stable sorting; public price bounds use active Product variant prices. Added server-rendered Device type and Brand landing pages with canonical/noindex behavior, pagination links, structured data, `sitemap.xml`, and `robots.txt`.
+- Added regression coverage for multi-page taxonomy SSR and pagination; verified storefront and Admin pagination, filtering/search resets, browser history, and SEO endpoints.

@@ -244,19 +244,6 @@ const assertUniqueSkus = async (variants, productId, currentProduct) => {
     }
 };
 
-/**
- * Public list. Deleted records are excluded by default.
- * Set includeDeleted/status explicitly for an internal/admin caller.
- */
-const getAllProducts = async (options = {}) => {
-    if (options === true || options.includeDeleted === true || options.status === "all") {
-        return await productRepository.findWithFilter("", "all");
-    }
-    if (options.status === "deleted") {
-        return await productRepository.findWithFilter("", "deleted");
-    }
-    return await productRepository.findWithFilter("", "active");
-};
 
 /**
  * Public detail lookup excludes soft-deleted products by default.
@@ -273,19 +260,72 @@ const getProductById = getProductByID;
 const getAdminProductById = async (id) =>
     await getProductByID(id, { includeDeleted: true });
 
-const findProducts = async (filters = {}) => {
-    const status = filters.status || "active";
-    if (!PRODUCT_STATUSES.includes(status)) {
-        throw createDomainError("Trạng thái sản phẩm không hợp lệ.", [
-            { field: "status", message: "status phải là all, active hoặc deleted" }
-        ]);
-    }
-    return await productRepository.findWithFilter(filters.q, status);
-};
 
 const getAdminProducts = async (filters = {}) => {
-    const data = await findProducts(filters);
-    return { data, total: data.length };
+    const status = filters.status || "active";
+    if (!PRODUCT_STATUSES.includes(status)) throw createDomainError("status must be active, deleted, or all.");
+    const parsePositive = (value, fallback, maximum = Infinity) => {
+        if (value === undefined) return fallback;
+        if (!/^[1-9]\d*$/.test(String(value))) throw createDomainError("Invalid pagination parameter.");
+        const parsed = Number(value);
+        if (parsed > maximum) throw createDomainError("Invalid pagination parameter.");
+        return parsed;
+    };
+    const page = parsePositive(filters.page, 1);
+    const pageSize = parsePositive(filters.pageSize, 10, 48);
+    const where = status === "all" ? {} : { isDeleted: status === "deleted" };
+    if (filters.q !== undefined && (typeof filters.q !== "string" || filters.q.length > 120)) {
+        throw createDomainError("Invalid q.");
+    }
+    const q = typeof filters.q === "string" ? filters.q.trim() : "";
+    if (q) where.OR = [
+        { name: { contains: q } },
+        { variants: { some: { isActive: true, sku: { contains: q } } } }
+    ];
+    const total = await productRepository.countProducts(where);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const actualPage = Math.min(page, totalPages);
+    const data = await productRepository.findAdminPage(where, actualPage, pageSize);
+    return { data, meta: { page: actualPage, pageSize, total, totalPages } };
+};
+
+const getCatalogPage = async (filters = {}) => {
+    const number = (value, fallback) => {
+        if (value === undefined) return fallback;
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 1) throw createDomainError("Invalid pagination parameter.");
+        return parsed;
+    };
+    const page = number(filters.page, 1);
+    const pageSize = number(filters.pageSize, 12);
+    if (pageSize > 48) throw createDomainError("pageSize cannot exceed 48.");
+    const allowed = (name, choices) => {
+        const values = filters[name] === undefined ? [] : Array.isArray(filters[name]) ? filters[name] : [filters[name]];
+        if (values.some((value) => !choices.includes(value))) throw createDomainError(`Invalid ${name}.`);
+        return values;
+    };
+    if (filters.q !== undefined && (typeof filters.q !== "string" || filters.q.length > 120)) {
+        throw createDomainError("Invalid q.");
+    }
+    const q = typeof filters.q === "string" ? filters.q.trim() : "";
+    const sort = filters.sort || "default";
+    const order = filters.order || "asc";
+    if (!["default", "name", "price"].includes(sort) || !["asc", "desc"].includes(order)) throw createDomainError("Invalid sorting.");
+    const price = (value) => {
+        if (value === undefined) return null;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0) throw createDomainError("Invalid price range.");
+        return parsed;
+    };
+    const minPrice = price(filters.minPrice);
+    const maxPrice = price(filters.maxPrice);
+    if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) throw createDomainError("Invalid price range.");
+    const result = await productRepository.getCatalogPage({
+        page, pageSize, q: Array.from(q).length >= 3 ? q : null,
+        category: allowed("category", DEVICE_TYPES),
+        tag: allowed("tag", BRANDS), minPrice, maxPrice, sort, order
+    });
+    return result;
 };
 
 const createProduct = async (input) => {
@@ -353,12 +393,11 @@ module.exports = {
     DEVICE_TYPES,
     PRODUCT_STATUSES,
     normalizeSku,
-    getAllProducts,
     getProductByID,
     getProductById,
     getAdminProductById,
-    findProducts,
     getAdminProducts,
+    getCatalogPage,
     createProduct,
     updateProduct,
     softDeleteProduct,
