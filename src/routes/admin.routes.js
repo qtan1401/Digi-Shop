@@ -6,6 +6,7 @@ const { requireRole, requireCsrf } = require("../middlewares/auth");
 const adminController = require("../controllers/admin.controller");
 const { uploadProductImages } = require("../middlewares/product-image-upload");
 const adminVoucherController = require("../controllers/admin-voucher.controller");
+const adminReviewController = require("../controllers/admin-review.controller");
 
 const router = express.Router();
 
@@ -33,5 +34,9 @@ router.get("/vouchers/:id", adminVoucherController.get);
 router.post("/vouchers", requireCsrf, adminVoucherController.create);
 router.put("/vouchers/:id", requireCsrf, adminVoucherController.update);
 router.delete("/vouchers/:id", requireCsrf, adminVoucherController.remove);
+
+// Review moderation.
+router.get("/reviews", adminReviewController.list);
+router.patch("/reviews/:id", requireCsrf, adminReviewController.setHidden);
 
 module.exports = router;

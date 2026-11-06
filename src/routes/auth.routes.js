@@ -1,6 +1,6 @@
 const express = require("express");
 const controller = require("../controllers/auth.controller");
-const { requireAuth, requireCsrf, requireGoogleCsrf, rateLimitAuth } = require("../middlewares/auth");
+const { requireAuth, requireRole, requireCsrf, requireGoogleCsrf, rateLimitAuth } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -14,5 +14,6 @@ router.post("/logout", requireCsrf, controller.logout);
 router.get("/session", controller.session);
 router.post("/recover", rateLimitAuth("recover"), requireCsrf, controller.recover);
 router.post("/change-password", requireAuth, requireCsrf, controller.changePassword);
+router.post("/username", requireRole("user"), requireCsrf, controller.setUsername);
 
 module.exports = router;

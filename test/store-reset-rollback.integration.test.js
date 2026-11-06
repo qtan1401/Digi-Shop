@@ -4,7 +4,7 @@ const sql = require("mssql");
 const { verifyResetRollback } = require("../prisma/seed");
 
 const clearedTables = [
-    "payment_attempts", "order_items", "orders", "cart_items", "carts", "cart_merge_operations",
+    "order_vouchers", "vouchers", "product_reviews", "payment_attempts", "order_items", "orders", "cart_items", "carts", "cart_merge_operations",
     "oauth_identities", "refresh_sessions", "email_verification_tokens", "product_variant_option_values",
     "product_variants", "product_option_values", "product_options", "products", "users", "categories", "audit_logs"
 ];

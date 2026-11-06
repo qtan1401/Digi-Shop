@@ -63,6 +63,9 @@ async function ensureDefaultAdmin(transaction, password = requiredDefaultAdminPa
 }
 
 const CLEAR_TABLES = [
+    ["order_vouchers", "OrderVoucher"],
+    ["vouchers", "Voucher"],
+    ["product_reviews", "ProductReview"],
     ["payment_attempts", "PaymentAttempt"],
     ["order_items", "OrderItem"],
     ["orders", "Order"],
@@ -99,12 +102,13 @@ class SeedConflictError extends Error {
     }
 }
 
-const ENTITY_NAMES = ["products", "orders", "audits"];
+const ENTITY_NAMES = ["products", "users", "vouchers", "orders", "orderVouchers", "reviews", "audits"];
 
 function createSummary(normalized) {
+    const counters = () => Object.fromEntries([...ENTITY_NAMES.map((entity) => [entity, 0]), ["total", 0]]);
     return {
-        inserted: { products: 0, orders: 0, audits: 0, total: 0 },
-        unchanged: { products: 0, orders: 0, audits: 0, total: 0 },
+        inserted: counters(),
+        unchanged: counters(),
         normalized: {
             records: normalized.normalizedRecords,
             fields: normalized.changes.length,
@@ -264,12 +268,12 @@ async function loadProductConfigurations(transaction, products, candidates) {
 
 async function loadOrderCandidates(transaction, orders) {
     if (orders.length === 0) {
-        return { orders: [], items: [] };
+        return { orders: [], items: [], vouchers: [] };
     }
     const orderRequest = transaction.request();
     const ids = bindList(orderRequest, "orderId", sql.NVarChar(64), orders.map(({ id }) => id));
     const orderResult = await orderRequest.query(`
-        SELECT [id], [subtotal], [shipping_fee] AS [shippingFee], [discount], [total_price] AS [totalPrice],
+        SELECT [id], [user_id] AS [userId], [subtotal], [shipping_fee] AS [shippingFee], [discount], [total_price] AS [totalPrice],
                [customer_name] AS [customerName], [customer_phone] AS [customerPhone],
                [customer_address] AS [customerAddress], [customer_note] AS [customerNote],
                [payment_method] AS [paymentMethod], [order_status] AS [orderStatus],
@@ -288,7 +292,60 @@ async function loadOrderCandidates(transaction, orders) {
         FROM [dbo].[order_items] WITH (UPDLOCK, HOLDLOCK)
         WHERE [order_id] IN (${itemIds});
     `);
-    return { orders: orderResult.recordset, items: itemResult.recordset };
+    const voucherRequest = transaction.request();
+    const voucherOrderIds = bindList(voucherRequest, "voucherOrderId", sql.NVarChar(64), orders.map(({ id }) => id));
+    const voucherResult = await voucherRequest.query(`
+        SELECT [order_id] AS [orderId], [code_snapshot] AS [codeSnapshot], [type_snapshot] AS [typeSnapshot],
+               [percent_snapshot] AS [percentSnapshot], [discount_amount] AS [discountAmount]
+        FROM [dbo].[order_vouchers] WITH (UPDLOCK, HOLDLOCK)
+        WHERE [order_id] IN (${voucherOrderIds});
+    `);
+    return { orders: orderResult.recordset, items: itemResult.recordset, vouchers: voucherResult.recordset };
+}
+
+async function loadUserCandidates(transaction, users) {
+    if (users.length === 0) {
+        return [];
+    }
+    const request = transaction.request();
+    const ids = bindList(request, "userId", sql.NVarChar(36), users.map(({ id }) => id));
+    const emails = bindList(request, "userEmail", sql.NVarChar(320), users.map(({ email }) => email));
+    const usernames = bindList(request, "userUsername", sql.NVarChar(64), users.map(({ username }) => username));
+    const result = await request.query(`
+        SELECT [id], [email], [username], [role], [status]
+        FROM [dbo].[users] WITH (UPDLOCK, HOLDLOCK)
+        WHERE [id] IN (${ids}) OR [email] IN (${emails}) OR [username] IN (${usernames});
+    `);
+    return result.recordset;
+}
+
+async function loadVoucherCandidates(transaction, vouchers) {
+    if (vouchers.length === 0) {
+        return [];
+    }
+    const request = transaction.request();
+    const codes = bindList(request, "voucherCode", sql.NVarChar(20), vouchers.map(({ code }) => code));
+    const result = await request.query(`
+        SELECT [id], [code], [description], [type], [percent], [max_discount] AS [maxDiscount]
+        FROM [dbo].[vouchers] WITH (UPDLOCK, HOLDLOCK)
+        WHERE [code] IN (${codes});
+    `);
+    return result.recordset;
+}
+
+async function loadReviewCandidates(transaction, reviews) {
+    if (reviews.length === 0) {
+        return [];
+    }
+    const request = transaction.request();
+    const productIds = bindList(request, "reviewProduct", sql.Int, [...new Set(reviews.map(({ productId }) => productId))]);
+    const userIds = bindList(request, "reviewUser", sql.NVarChar(36), [...new Set(reviews.map(({ userId }) => userId))]);
+    const result = await request.query(`
+        SELECT [product_id] AS [productId], [user_id] AS [userId], [rating], [comment]
+        FROM [dbo].[product_reviews] WITH (UPDLOCK, HOLDLOCK)
+        WHERE [product_id] IN (${productIds}) AND [user_id] IN (${userIds});
+    `);
+    return result.recordset;
 }
 
 async function loadAuditCandidates(transaction, audits) {
@@ -385,7 +442,16 @@ function canonicalOrderItems(items) {
 }
 
 
-function classifyOrders(seedRecords, existingRecords, existingItems, conflicts, summary) {
+function canonicalOrderVouchers(vouchers, orderId) {
+    return stableJson(vouchers.map((voucher) => ({
+        code: (voucher.code || voucher.codeSnapshot).toUpperCase(),
+        type: voucher.type || voucher.typeSnapshot,
+        percent: voucher.percent === undefined ? voucher.percentSnapshot : voucher.percent,
+        discountAmount: canonicalMoney(voucher.discountAmount, "discountAmount", `order:${orderId}`)
+    })).sort((left, right) => left.code.localeCompare(right.code)), `order:${orderId}`);
+}
+
+function classifyOrders(seedRecords, existingRecords, existingItems, existingVouchers, conflicts, summary) {
     const byId = new Map(existingRecords.map((record) => [comparisonKey(record.id), record]));
     const itemsByOrder = new Map();
     for (const item of existingItems) {
@@ -393,6 +459,13 @@ function classifyOrders(seedRecords, existingRecords, existingItems, conflicts, 
         const items = itemsByOrder.get(key) || [];
         items.push(item);
         itemsByOrder.set(key, items);
+    }
+    const vouchersByOrder = new Map();
+    for (const voucher of existingVouchers) {
+        const key = comparisonKey(voucher.orderId);
+        const vouchers = vouchersByOrder.get(key) || [];
+        vouchers.push(voucher);
+        vouchersByOrder.set(key, vouchers);
     }
     const inserts = [];
 
@@ -410,7 +483,7 @@ function classifyOrders(seedRecords, existingRecords, existingItems, conflicts, 
             totalPrice: canonicalMoney(existing.totalPrice, "totalPrice", `order:${seed.id}`)
         };
         compareFields(conflicts, "order", seed.id, seed, canonical, [
-            "id", "subtotal", "shippingFee", "discount", "totalPrice", "customerName", "customerPhone",
+            "id", "userId", "subtotal", "shippingFee", "discount", "totalPrice", "customerName", "customerPhone",
             "customerAddress", "customerNote", "paymentMethod", "orderStatus", "paymentStatus"
         ]);
         const expectedItems = canonicalOrderItems(seed.items.map((item) => ({ ...item, orderId: seed.id })));
@@ -418,9 +491,73 @@ function classifyOrders(seedRecords, existingRecords, existingItems, conflicts, 
         if (JSON.stringify(expectedItems) !== JSON.stringify(actualItems)) {
             addConflict(conflicts, "order", seed.id, "items", expectedItems, actualItems);
         }
+        const expectedVouchers = canonicalOrderVouchers(seed.vouchers, seed.id);
+        const actualVouchers = canonicalOrderVouchers(vouchersByOrder.get(comparisonKey(seed.id)) || [], seed.id);
+        if (expectedVouchers !== actualVouchers) {
+            addConflict(conflicts, "order", seed.id, "vouchers", expectedVouchers, actualVouchers);
+        }
         if (!conflicts.some(({ identity }) => identity === `order:${seed.id}`)) {
             summary.unchanged.orders += 1;
+            summary.unchanged.orderVouchers += seed.vouchers.length;
         }
+    }
+    return inserts;
+}
+
+function classifyUsers(seedRecords, existingRecords, conflicts, summary) {
+    const byId = new Map(existingRecords.map((record) => [record.id, record]));
+    const byEmail = new Map(existingRecords.filter((record) => record.email).map((record) => [comparisonKey(record.email), record]));
+    const byUsername = new Map(existingRecords.filter((record) => record.username).map((record) => [comparisonKey(record.username), record]));
+    const inserts = [];
+    for (const seed of seedRecords) {
+        const emailOwner = byEmail.get(comparisonKey(seed.email));
+        if (emailOwner && emailOwner.id !== seed.id) addConflict(conflicts, "user", seed.id, "email", seed.email, `owned by user:${emailOwner.id}`);
+        const usernameOwner = byUsername.get(comparisonKey(seed.username));
+        if (usernameOwner && usernameOwner.id !== seed.id) addConflict(conflicts, "user", seed.id, "username", seed.username, `owned by user:${usernameOwner.id}`);
+        const existing = byId.get(seed.id);
+        if (!existing) {
+            inserts.push(seed);
+            continue;
+        }
+        compareFields(conflicts, "user", seed.id, seed, { ...existing, email: existing.email && existing.email.toLowerCase() }, ["email", "username", "role", "status"]);
+        if (!conflicts.some(({ identity }) => identity === `user:${seed.id}`)) summary.unchanged.users += 1;
+    }
+    return inserts;
+}
+
+// Only the identity of a voucher is compared: quantity, redeemed_count, enabled/listed flags and dates change at runtime.
+function classifyVouchers(seedRecords, existingRecords, conflicts, summary) {
+    const byCode = new Map(existingRecords.map((record) => [comparisonKey(record.code), record]));
+    const inserts = [];
+    for (const seed of seedRecords) {
+        const existing = byCode.get(comparisonKey(seed.code));
+        if (!existing) {
+            inserts.push(seed);
+            continue;
+        }
+        const canonical = {
+            ...existing,
+            maxDiscount: existing.maxDiscount === null ? null : canonicalMoney(existing.maxDiscount, "maxDiscount", `voucher:${seed.code}`)
+        };
+        compareFields(conflicts, "voucher", seed.code, seed, canonical, ["description", "type", "percent", "maxDiscount"]);
+        if (!conflicts.some(({ identity }) => identity === `voucher:${seed.code}`)) summary.unchanged.vouchers += 1;
+    }
+    return inserts;
+}
+
+// Only the author-written content is compared: administrators can hide a review at runtime.
+function classifyReviews(seedRecords, existingRecords, conflicts, summary) {
+    const byKey = new Map(existingRecords.map((record) => [`${record.productId}|${record.userId}`, record]));
+    const inserts = [];
+    for (const seed of seedRecords) {
+        const identity = `${seed.productId}/${seed.userId}`;
+        const existing = byKey.get(`${seed.productId}|${seed.userId}`);
+        if (!existing) {
+            inserts.push(seed);
+            continue;
+        }
+        compareFields(conflicts, "review", identity, seed, existing, ["rating", "comment"]);
+        if (!conflicts.some((conflict) => conflict.identity === `review:${identity}`)) summary.unchanged.reviews += 1;
     }
     return inserts;
 }
@@ -555,13 +692,15 @@ async function insertOrders(transaction, records) {
         request.input("paymentStatus", sql.NVarChar(32), record.paymentStatus);
         request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
         request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
+        request.input("userId", sql.NVarChar(36), record.userId);
         await request.query(`
             INSERT INTO [dbo].[orders]
                 ([id], [subtotal], [shipping_fee], [discount], [total_price], [customer_name], [customer_phone],
-                 [customer_address], [customer_note], [payment_method], [order_status], [payment_status], [created_at], [updated_at])
+                 [customer_address], [customer_note], [payment_method], [order_status], [payment_status], [created_at], [updated_at], [user_id], [cancelled_at])
             VALUES
                 (@id, @subtotal, @shippingFee, @discount, @totalPrice, @customerName, @customerPhone,
-                 @customerAddress, @customerNote, @paymentMethod, @orderStatus, @paymentStatus, @createdAt, @updatedAt);
+                 @customerAddress, @customerNote, @paymentMethod, @orderStatus, @paymentStatus, @createdAt, @updatedAt, @userId,
+                 CASE WHEN @orderStatus = N'CANCELLED' THEN @updatedAt ELSE NULL END);
         `);
 
         for (const item of record.items) {
@@ -588,6 +727,105 @@ async function insertOrders(transaction, records) {
                 VALUES (@orderId, @variantId, @name, @image, @skuSnapshot, @optionsSnapshot, @unitPrice, @quantity, @lineTotal);
             `);
         }
+        await insertOrderVouchers(transaction, record.id, record.vouchers);
+    }
+}
+
+async function insertUsers(transaction, records) {
+    for (const record of records) {
+        const request = transaction.request();
+        request.input("id", sql.NVarChar(36), record.id);
+        request.input("email", sql.NVarChar(320), record.email);
+        request.input("username", sql.NVarChar(64), record.username);
+        request.input("role", sql.NVarChar(16), record.role);
+        request.input("status", sql.NVarChar(20), record.status);
+        request.input("emailVerifiedAt", sql.DateTime2(3), new Date(record.emailVerifiedAt));
+        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
+        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
+        // No password hash: seeded customers cannot log in.
+        await request.query(`
+            INSERT INTO [dbo].[users]
+                ([id], [email], [username], [role], [status], [email_verified_at], [created_at], [updated_at])
+            VALUES
+                (@id, @email, @username, @role, @status, @emailVerifiedAt, @createdAt, @updatedAt);
+        `);
+    }
+}
+
+// redeemed_count starts at 0 and is incremented by insertOrders for each unreleased order voucher,
+// so it stays equal to the order_vouchers rows even when the voucher already existed.
+async function insertVouchers(transaction, records) {
+    for (const record of records) {
+        const request = transaction.request();
+        request.input("code", sql.NVarChar(20), record.code);
+        request.input("description", sql.NVarChar(200), record.description);
+        request.input("type", sql.NVarChar(16), record.type);
+        request.input("percent", sql.Int, record.percent);
+        request.input("maxDiscount", sql.Decimal(18, 2), record.maxDiscount);
+        request.input("startsAt", sql.DateTime2(3), new Date(record.startsAt));
+        request.input("endsAt", sql.DateTime2(3), new Date(record.endsAt));
+        request.input("quantity", sql.Int, record.quantity);
+        request.input("isEnabled", sql.Bit, record.isEnabled);
+        request.input("isListed", sql.Bit, record.isListed);
+        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
+        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
+        await request.query(`
+            INSERT INTO [dbo].[vouchers]
+                ([code], [description], [type], [percent], [max_discount], [starts_at], [ends_at], [quantity],
+                 [redeemed_count], [is_enabled], [is_listed], [created_at], [updated_at])
+            VALUES
+                (@code, @description, @type, @percent, @maxDiscount, @startsAt, @endsAt, @quantity,
+                 0, @isEnabled, @isListed, @createdAt, @updatedAt);
+        `);
+    }
+}
+
+async function insertOrderVouchers(transaction, orderId, vouchers) {
+    for (const voucher of vouchers) {
+        const lookup = transaction.request();
+        lookup.input("code", sql.NVarChar(20), voucher.code);
+        const found = await lookup.query(`
+            SELECT [id] FROM [dbo].[vouchers] WITH (UPDLOCK, HOLDLOCK) WHERE [code] = @code;
+        `);
+        if (found.recordset.length !== 1) throw new Error(`Seed order voucher ${voucher.code} could not be resolved`);
+        const request = transaction.request();
+        request.input("orderId", sql.NVarChar(64), orderId);
+        request.input("voucherId", sql.Int, found.recordset[0].id);
+        request.input("code", sql.NVarChar(20), voucher.code);
+        request.input("type", sql.NVarChar(16), voucher.type);
+        request.input("percent", sql.Int, voucher.percent);
+        request.input("discountAmount", sql.Decimal(18, 2), voucher.discountAmount);
+        request.input("releasedAt", sql.DateTime2(3), voucher.releasedAt === null ? null : new Date(voucher.releasedAt));
+        await request.query(`
+            INSERT INTO [dbo].[order_vouchers]
+                ([order_id], [voucher_id], [code_snapshot], [type_snapshot], [percent_snapshot], [discount_amount], [released_at])
+            VALUES (@orderId, @voucherId, @code, @type, @percent, @discountAmount, @releasedAt);
+        `);
+        if (voucher.releasedAt === null) {
+            const redeem = transaction.request();
+            redeem.input("voucherId", sql.Int, found.recordset[0].id);
+            await redeem.query(`
+                UPDATE [dbo].[vouchers] SET [redeemed_count] = [redeemed_count] + 1 WHERE [id] = @voucherId;
+            `);
+        }
+    }
+}
+
+async function insertReviews(transaction, records) {
+    for (const record of records) {
+        const request = transaction.request();
+        request.input("productId", sql.Int, record.productId);
+        request.input("userId", sql.NVarChar(36), record.userId);
+        request.input("rating", sql.TinyInt, record.rating);
+        request.input("comment", sql.NVarChar(1000), record.comment);
+        request.input("isHidden", sql.Bit, record.isHidden);
+        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
+        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
+        await request.query(`
+            INSERT INTO [dbo].[product_reviews]
+                ([product_id], [user_id], [rating], [comment], [is_hidden], [created_at], [updated_at])
+            VALUES (@productId, @userId, @rating, @comment, @isHidden, @createdAt, @updatedAt);
+        `);
     }
 }
 
@@ -610,13 +848,18 @@ async function insertAudits(transaction, records) {
 }
 
 async function seedDatabase() {
-    if (!Array.isArray(seedData.commerce.products) || !Array.isArray(seedData.commerce.orders) || !Array.isArray(seedData.commerce.audits)) {
+    const commerce = seedData.commerce;
+    const requiredArrays = ["products", "users", "vouchers", "orders", "reviews", "audits"];
+    if (!requiredArrays.every((entity) => Array.isArray(commerce[entity]))) {
         throw new Error("Normal seed data must export commerce entity arrays");
     }
     const normalized = normalizeSeedData({
-        products: seedData.commerce.products,
-        orders: seedData.commerce.orders,
-        audits: seedData.commerce.audits
+        products: commerce.products,
+        users: commerce.users,
+        vouchers: commerce.vouchers,
+        orders: commerce.orders,
+        reviews: commerce.reviews,
+        audits: commerce.audits
     });
     normalized.orders = resolveSeedOrderItems(normalized.products, normalized.orders);
     const summary = createSummary(normalized);
@@ -640,19 +883,26 @@ async function seedDatabase() {
         const existingVariants = await loadVariantSkuCandidates(transaction, normalized.products);
         const existingConfigurations = await loadProductConfigurations(transaction, normalized.products, existingProducts);
         const existingOrderData = await loadOrderCandidates(transaction, normalized.orders);
+        const existingUsers = await loadUserCandidates(transaction, normalized.users);
+        const existingVouchers = await loadVoucherCandidates(transaction, normalized.vouchers);
+        const existingReviews = await loadReviewCandidates(transaction, normalized.reviews);
         const existingAudits = await loadAuditCandidates(transaction, normalized.audits);
 
         const conflicts = [];
         const productInserts = classifyProducts(
             normalized.products, existingProducts, existingVariants, existingConfigurations, conflicts, summary
         );
+        const userInserts = classifyUsers(normalized.users, existingUsers, conflicts, summary);
+        const voucherInserts = classifyVouchers(normalized.vouchers, existingVouchers, conflicts, summary);
         const orderInserts = classifyOrders(
             normalized.orders,
             existingOrderData.orders,
             existingOrderData.items,
+            existingOrderData.vouchers,
             conflicts,
             summary
         );
+        const reviewInserts = classifyReviews(normalized.reviews, existingReviews, conflicts, summary);
         const auditInserts = classifyAudits(normalized.audits, existingAudits, conflicts, summary);
 
         if (conflicts.length > 0) {
@@ -661,11 +911,18 @@ async function seedDatabase() {
         }
 
         await insertProducts(transaction, productInserts);
+        await insertUsers(transaction, userInserts);
+        await insertVouchers(transaction, voucherInserts);
         await insertOrders(transaction, orderInserts);
+        await insertReviews(transaction, reviewInserts);
         await insertAudits(transaction, auditInserts);
 
         summary.inserted.products = productInserts.length;
+        summary.inserted.users = userInserts.length;
+        summary.inserted.vouchers = voucherInserts.length;
         summary.inserted.orders = orderInserts.length;
+        summary.inserted.orderVouchers = orderInserts.reduce((total, order) => total + order.vouchers.length, 0);
+        summary.inserted.reviews = reviewInserts.length;
         summary.inserted.audits = auditInserts.length;
 
         await transaction.commit();
@@ -880,6 +1137,12 @@ if (require.main === module) {
 
 module.exports = {
     SeedConflictError,
+    classifyOrders,
+    classifyReviews,
+    classifyUsers,
+    classifyVouchers,
+    createSummary,
+    resolveSeedOrderItems,
     seedDatabase,
     resetDatabase,
     verifyResetRollback

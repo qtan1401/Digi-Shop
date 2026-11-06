@@ -21,7 +21,7 @@ const findUserByEmail = async (email, client = getPrismaClient()) =>
     mapUser(await client.user.findFirst({ where: { email }, select: USER_SELECT }));
 
 const findUserByUsername = async (username, client = getPrismaClient()) =>
-    mapUser(await client.user.findUnique({ where: { username }, select: USER_SELECT }));
+    mapUser(await client.user.findFirst({ where: { username }, select: USER_SELECT }));
 
 const findUserById = async (id, client = getPrismaClient()) =>
     mapUser(await client.user.findUnique({ where: { id }, select: USER_SELECT }));
@@ -34,6 +34,16 @@ const findUserByIdentifier = async (identifier, client = getPrismaClient()) =>
 
 const createUser = async (data, client = getPrismaClient()) =>
     mapUser(await client.user.create({ data, select: USER_SELECT }));
+
+// Race-safe set-once: only a customer row whose username is still NULL is updated.
+const setUsernameIfUnset = async ({ userId, username }, client = getPrismaClient()) => {
+    const result = await client.user.updateMany({
+        where: { id: userId, role: "user", username: null },
+        data: { username }
+    });
+    if (result.count !== 1) return null;
+    return findUserById(userId, client);
+};
 
 const createUserWithGoogle = async ({ user, identity }, client = getPrismaClient()) => {
     return client.$transaction(async (tx) => {
@@ -218,6 +228,7 @@ module.exports = {
     findUserById,
     findUserByIdentifier,
     createUser,
+    setUsernameIfUnset,
     createUserWithGoogle,
     findOAuthIdentity,
     createOAuthIdentity,

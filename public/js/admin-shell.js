@@ -1,6 +1,6 @@
 /* ===== ADMIN SHELL: khung (sidebar, thanh đầu trang, ☰) + router hash =====
  * Chạy sau admin.js (AdminUI), admin-orders.js (AdminOrders), admin-overview.js (AdminOverview).
- * Router: #/tong-quan (mặc định) · #/san-pham · #/don-hang[/<orderId>] · #/voucher · #/tai-khoan
+ * Router: #/tong-quan (mặc định) · #/san-pham · #/don-hang[/<orderId>] · #/voucher · #/danh-gia · #/tai-khoan
  * Mỗi màn là <section data-view="...">; đổi màn chỉ ẩn/hiện, bắn 'admin:view' trên document.
  */
 (() => {
@@ -13,6 +13,7 @@
         "san-pham": { title: "Sản phẩm" },
         "don-hang": { title: "Đơn hàng" },
         "voucher": { title: "Voucher" },
+        "danh-gia": { title: "Đánh giá" },
         "tai-khoan": { title: "Tài khoản" }
     };
     const DEFAULT_VIEW = "tong-quan";
@@ -118,7 +119,8 @@
 
     /* ---------- Màn Voucher và Đánh giá (module riêng, mount một lần khi mở lần đầu) ---------- */
     const MODULES = {
-        "voucher": { global: "AdminVouchers", root: "vouchers-root", mounted: false, label: "Voucher" }
+        "voucher": { global: "AdminVouchers", root: "vouchers-root", mounted: false, label: "Voucher" },
+        "danh-gia": { global: "AdminReviews", root: "reviews-root", mounted: false, label: "Đánh giá" }
     };
     const syncModule = (key) => {
         const entry = MODULES[key];

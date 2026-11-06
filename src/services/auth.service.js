@@ -41,6 +41,33 @@ const maskEmail = (email) => {
 const validPassword = (password) => typeof password === "string" && password.length >= PASSWORD_MIN_LENGTH && password.length <= 1024;
 const isUniqueConflict = (error) => error && error.code === "P2002";
 
+const USERNAME_MIN_LENGTH = 3;
+const USERNAME_MAX_LENGTH = 30;
+const USERNAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const USERNAME_SEPARATORS_REPEATED = /[._-]{2}/;
+const RESERVED_USERNAMES = Object.freeze(["admin", "administrator", "root", "system", "support", "nodeshop"]);
+const USERNAME_INVALID_MESSAGE = "Username phải dài 3-30 ký tự, chỉ gồm chữ, số và . _ -, bắt đầu và kết thúc bằng chữ hoặc số, không có hai dấu phân cách liền nhau";
+const USERNAME_RESERVED_MESSAGE = "Username này không được phép sử dụng";
+
+// Single shared rule set for every path that assigns a Username. Returns "INVALID", "RESERVED" or null.
+const usernameProblem = (value) => {
+    if (typeof value !== "string") return "INVALID";
+    if (value.length < USERNAME_MIN_LENGTH || value.length > USERNAME_MAX_LENGTH) return "INVALID";
+    if (!USERNAME_PATTERN.test(value) || USERNAME_SEPARATORS_REPEATED.test(value)) return "INVALID";
+    const squashed = value.toLowerCase().replace(/[._-]/g, "");
+    if (RESERVED_USERNAMES.includes(squashed)) return "RESERVED";
+    return null;
+};
+const validUsername = (value) => usernameProblem(value) === null;
+const cleanUsername = (value) => typeof value === "string" ? value.trim() : "";
+const usernameInvalidError = (value, statusCode) => new AuthError(
+    "VALIDATION_FAILED",
+    usernameProblem(value) === "RESERVED" ? USERNAME_RESERVED_MESSAGE : USERNAME_INVALID_MESSAGE,
+    statusCode,
+    { username: true }
+);
+const usernameTakenError = () => new AuthError("USERNAME_TAKEN", "Username đã được sử dụng", 409, { username: true });
+
 const hashPassword = async (password) => {
     if (!validPassword(password)) throw new AuthError("VALIDATION_FAILED", "Password is invalid", 400);
     return argon2.hash(password, { type: argon2.argon2id });
@@ -77,12 +104,14 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         return { accessToken, refreshToken, csrfToken, refreshExpiresAt, remembered: Boolean(remember) };
     };
 
-    const register = async ({ email, password }) => {
+    const register = async ({ email, password, username }) => {
         const normalizedEmail = normalizeEmail(email);
-        if (!EMAIL_PATTERN.test(normalizedEmail) || !validPassword(password)) {
-            throw new AuthError("VALIDATION_FAILED", "Email và mật khẩu không hợp lệ", 400, {
+        const trimmedUsername = cleanUsername(username);
+        if (!EMAIL_PATTERN.test(normalizedEmail) || !validPassword(password) || !validUsername(trimmedUsername)) {
+            throw new AuthError("VALIDATION_FAILED", "Email, mật khẩu hoặc username không hợp lệ", 400, {
                 email: !EMAIL_PATTERN.test(normalizedEmail),
-                password: !validPassword(password)
+                password: !validPassword(password),
+                username: !validUsername(trimmedUsername)
             });
         }
 
@@ -98,12 +127,16 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
             return { email: maskEmail(normalizedEmail), verificationRequired: true, duplicate: true };
         }
 
+        // Email duplicates are answered first so the response never reveals whether an email exists via the username error.
+        if (await authRepository.findUserByUsername(trimmedUsername)) throw usernameTakenError();
+
         const passwordHash = await hashPassword(password);
         let user;
         try {
             user = await authRepository.createUser({
                 id: crypto.randomUUID(),
                 email: normalizedEmail,
+                username: trimmedUsername,
                 passwordHash,
                 role: "user",
                 status: "UNVERIFIED",
@@ -113,7 +146,10 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
             });
         } catch (error) {
             if (!isUniqueConflict(error)) throw error;
-            return { email: maskEmail(normalizedEmail), verificationRequired: true, duplicate: true };
+            if (await authRepository.findUserByEmail(normalizedEmail)) {
+                return { email: maskEmail(normalizedEmail), verificationRequired: true, duplicate: true };
+            }
+            throw usernameTakenError();
         }
 
         let verificationSent = true;
@@ -337,7 +373,27 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         return { user: userSummary(updated), session };
     };
 
-    return { register, verifyEmail, resendVerification, loginPassword, loginGoogle, refresh, logout, recover, changePassword, issueSession };
+    const setUsername = async ({ user, username }) => {
+        if (!user || !user.id) throw new AuthError("AUTH_REQUIRED", "Authentication is required", 401);
+        if (user.role !== "user") throw new AuthError("FORBIDDEN", "You do not have permission for this resource", 403);
+        const trimmedUsername = cleanUsername(username);
+        if (!validUsername(trimmedUsername)) throw usernameInvalidError(trimmedUsername, 422);
+        const current = await authRepository.findUserById(user.id);
+        if (!current || current.role !== "user") throw new AuthError("FORBIDDEN", "You do not have permission for this resource", 403);
+        if (current.username) throw new AuthError("USERNAME_ALREADY_SET", "Username đã được đặt và không thể thay đổi", 409);
+        if (await authRepository.findUserByUsername(trimmedUsername)) throw usernameTakenError();
+        let updated;
+        try {
+            updated = await authRepository.setUsernameIfUnset({ userId: user.id, username: trimmedUsername });
+        } catch (error) {
+            if (isUniqueConflict(error)) throw usernameTakenError();
+            throw error;
+        }
+        if (!updated) throw new AuthError("USERNAME_ALREADY_SET", "Username đã được đặt và không thể thay đổi", 409);
+        return { user: userSummary(updated) };
+    };
+
+    return { register, verifyEmail, resendVerification, loginPassword, loginGoogle, refresh, logout, recover, changePassword, setUsername, issueSession };
 }
 
 const defaultService = createAuthService();
@@ -350,6 +406,8 @@ module.exports = {
     hashPassword,
     validPassword,
     userSummary,
+    validUsername,
+    usernameProblem,
     maskEmail,
     ...defaultService
 };

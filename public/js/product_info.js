@@ -112,6 +112,7 @@ const loadProductInfo = async () => {
                 <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" class="product-info__image" id="product-info-image">
                 <div class="product-info__content">
                     <h1 class="product-info__name">${escapeHtml(product.name)}</h1>
+                    <a href="#danh-gia" class="product-info__rating" id="product-rating-link" ${Number(product.ratingCount) > 0 ? "" : "hidden"}>${Number(product.ratingCount) > 0 ? `${CatalogRenderer.renderStars(product.ratingAverage)}<span>${CatalogRenderer.formatRating(product.ratingAverage)} · ${Number(product.ratingCount).toLocaleString("vi-VN")} đánh giá</span>` : ""}</a>
                     <div class="product-info__price" id="variant-price">${selectedVariant ? formatPrice(selectedVariant.price) : "Tạm hết hàng"}</div>
                     ${optionControls ? `<div class="product-info__options" aria-label="Chọn phiên bản">${optionControls}</div>` : ""}
                     <div class="product-info__sku">SKU: <strong id="variant-sku">${escapeHtml(selectedVariant?.sku || "—")}</strong></div>
@@ -137,6 +138,7 @@ const loadProductInfo = async () => {
                     </div>
                 </section>
             ` : ""}`;
+        try { ProductReviews.mount({ container, product }); } catch (error) { console.error("Không dựng được khối đánh giá", error); }
 
         const updateSelectedVariant = () => {
             const selectedOptions = Object.fromEntries(

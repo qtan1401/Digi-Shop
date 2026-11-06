@@ -27,7 +27,9 @@ test("normal seed inputs include five image-backed color and storage products pe
         deviceTypes: ["phone", "tablet", "laptop"]
     });
     assert.equal(seedData.administrator.username, "admin123");
-    assert.deepEqual(seedData.commerce.orders, []);
+    assert.equal(seedData.commerce.orders.length, 48);
+    assert.equal(seedData.commerce.users.length, 12);
+    assert.equal(seedData.commerce.vouchers.length, 8);
     assert.deepEqual(seedData.commerce.audits, []);
     assert.equal(seedData.commerce.products.length, 15);
     const normalized = normalizeSeedData(seedData.commerce);

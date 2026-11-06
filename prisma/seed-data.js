@@ -1,4 +1,6 @@
-module.exports = {
+const { buildSeedFixtures } = require("./seed-fixtures");
+
+const seedData = {
     "administrator": {
         "username": "admin123"
     },
@@ -1500,7 +1502,12 @@ module.exports = {
                 "updatedAt": "2026-10-22T00:00:00.000Z"
             }
         ],
-        "orders": [],
         "audits": []
     }
 };
+
+// Demo customers, vouchers, orders and reviews are generated deterministically (see seed-fixtures.js);
+// only their timestamps are relative to the moment this module is loaded.
+Object.assign(seedData.commerce, buildSeedFixtures(seedData.commerce.products, new Date()));
+
+module.exports = seedData;

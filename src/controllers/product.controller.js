@@ -29,7 +29,7 @@ const getAll = async (req, res) => {
 const getProductID = async (req, res) => {
     try {
         const id = req.params.id;
-        const product = await productService.getProductByID(id);
+        const product = await productService.getProductByID(id, { includeRatings: true });
         res.json({ success: true, data: product });
     } catch (error) {
         res.status(404).json({ success: false, message: error.message });

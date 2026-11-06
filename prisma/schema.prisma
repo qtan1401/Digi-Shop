@@ -21,6 +21,7 @@ model Product {
   updatedAt   DateTime         @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
   options     ProductOption[]
   variants    ProductVariant[]
+  reviews     ProductReview[]
 
   @@index([isDeleted, updatedAt], map: "products_is_deleted_updated_at_idx")
   @@map("products")
@@ -109,6 +110,7 @@ model User {
   cart                   Cart?
   cartMergeOperations    CartMergeOperation[]
   orders                 Order[]
+  reviews                ProductReview[]
 
   @@map("users")
 }
@@ -315,4 +317,21 @@ model OrderVoucher {
   @@id([orderId, voucherId])
   @@index([voucherId], map: "order_vouchers_voucher_id_idx")
   @@map("order_vouchers")
+}
+
+model ProductReview {
+  id        Int      @id @default(autoincrement())
+  productId Int      @map("product_id")
+  userId    String   @map("user_id") @db.NVarChar(36)
+  rating    Int?     @db.TinyInt
+  comment   String?  @db.NVarChar(1000)
+  isHidden  Boolean  @default(false) @map("is_hidden")
+  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  product   Product  @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user      User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([productId, userId], map: "product_reviews_product_user_key")
+  @@index([productId, isHidden, createdAt], map: "product_reviews_product_idx")
+  @@map("product_reviews")
 }

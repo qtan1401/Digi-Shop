@@ -1414,3 +1414,125 @@ body.home { display: flex; flex-direction: column; line-height: 1.5; }
     .checkout-summary { position: static; }
 }
 
+/* ============================================================================
+   ĐÁNH GIÁ SẢN PHẨM — sao (the-sao C), khối đánh giá + hộp thoại (danhgia-sanpham C)
+   ============================================================================ */
+.icon--fill { fill: currentColor; }
+.stars { position: relative; display: inline-flex; flex-shrink: 0; color: color-mix(in srgb, var(--text-primary) 15%, transparent); }
+.stars__base, .stars__row { display: inline-flex; }
+.stars__fill { position: absolute; top: 0; bottom: 0; left: 0; overflow: hidden; color: var(--warning); }
+.stars .icon { width: 16px; height: 16px; }
+.stars--lg .icon { width: 20px; height: 20px; }
+
+.product-info__rating { display: inline-flex; align-items: center; gap: 8px; width: fit-content; min-height: 32px; margin: -4px 0 8px; font-size: 0.85rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.product-info__rating:hover { color: var(--text-primary); }
+.product-info__rating[hidden] { display: none; }
+
+.reviews { margin-top: 24px; padding: 24px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); }
+.reviews__title { margin-bottom: 16px; font-size: 1.25rem; font-weight: 600; color: var(--text-primary); scroll-margin-top: 80px; }
+.reviews__summary { display: grid; gap: 20px; }
+.reviews__score { font: 600 36px/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.reviews__score small { font: 400 16px/1 var(--font-body); color: var(--text-secondary); }
+.reviews__score--empty { color: var(--text-muted); }
+.reviews__score-stars { margin-top: 8px; }
+.reviews__score-note { margin-top: 4px; font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.reviews__bars { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 448px; }
+.reviews__bar { display: flex; align-items: center; gap: 12px; font-size: 14px; line-height: 20px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.reviews__bar-label { display: inline-flex; flex-shrink: 0; align-items: center; gap: 2px; width: 28px; }
+.reviews__bar-label .icon { width: 12px; height: 12px; }
+.reviews__bar-track { flex: 1; min-width: 0; height: 8px; overflow: hidden; border-radius: 9999px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
+.reviews__bar-fill { height: 100%; border-radius: 9999px; background: var(--accent); }
+.reviews__bar-count { flex-shrink: 0; width: 28px; text-align: right; }
+.reviews__cta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.reviews__cta > * { min-width: 0; }
+.reviews__hint { display: flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.reviews__hint .icon { width: 16px; height: 16px; margin-top: 2px; }
+.reviews .btn { min-height: 40px; }
+.reviews__list { margin-top: 4px; }
+.review { display: flex; gap: 12px; padding: 20px 0; border-bottom: 1px solid var(--border); }
+.review:last-child { border-bottom: 0; }
+.review__avatar { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 9999px; background: var(--secondary); font-size: 12px; font-weight: 500; line-height: 16px; color: color-mix(in srgb, var(--text-primary) 70%, transparent); }
+.review__main { min-width: 0; flex: 1; }
+.review__head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.review__name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 20px; }
+.review__mine { padding: 2px 8px; border-radius: 9999px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); font-size: 12px; font-weight: 500; line-height: 16px; }
+.review__date { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.review__stars { margin-top: 4px; }
+.review__text { margin-top: 8px; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 14px; line-height: 24px; color: color-mix(in srgb, var(--text-primary) 90%, transparent); }
+.review__text--clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+.review__more, .review__action { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border-radius: 12px; font-size: 14px; font-weight: 500; color: var(--text-primary); transition: background-color 0.15s; }
+.review__more { margin-left: -12px; text-underline-offset: 4px; }
+.review__more:hover { text-decoration: underline; }
+.review__action { color: color-mix(in srgb, var(--text-primary) 70%, transparent); }
+.review__action:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.review__actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0 -12px; }
+.review__note { display: flex; gap: 8px; margin-top: 12px; padding: 12px; border-radius: var(--radius-md); font-size: 14px; line-height: 20px; }
+.review__note .icon { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
+.review__note--warn { background: var(--warning-bg); color: var(--warning); }
+.review__note--confirm { display: block; background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.review__note--confirm p + p { margin-top: 2px; color: var(--text-secondary); }
+.review__confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.review--own { margin-top: 8px; padding: 0 16px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); }
+.review--own .review { border-bottom: 0; }
+.review--skeleton .skeleton { height: 12px; }
+.reviews__empty { padding: 40px 0; text-align: center; }
+.reviews__empty .icon { width: 28px; height: 28px; margin: 0 auto 8px; color: var(--text-secondary); }
+.reviews__empty p { font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.reviews__empty p:first-of-type { font-weight: 500; color: var(--text-primary); }
+.reviews__error { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 0; text-align: center; }
+.reviews__error p:first-child { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--error-text); }
+.reviews__error p + p { margin-top: 4px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.reviews__pager { margin-top: 8px; }
+.reviews button, .rv-dialog button { font-family: inherit; }
+.review__more, .review__action, .rv-star, .rv-dialog .icon-btn { border: 0; background: none; cursor: pointer; }
+.review__more { color: var(--text-primary); }
+.rv-dialog .icon-btn:hover, .rv-dialog .icon-btn:focus-visible { background: color-mix(in srgb, var(--text-primary) 5%, transparent); }
+.btn--danger { background: var(--danger); color: #fff; }
+.btn--danger:hover { background: var(--danger); filter: brightness(0.92); transform: none; }
+.reviews .btn:focus-visible, .rv-dialog .btn:focus-visible, .review__action:focus-visible, .review__more:focus-visible, .rv-star:focus-visible, .reviews a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Hộp thoại viết/sửa đánh giá: bottom sheet ở mobile, hộp giữa màn hình từ 640px */
+.rv-dialog { position: fixed; inset: 0; z-index: 200; display: flex; align-items: flex-end; justify-content: center; }
+.rv-dialog[hidden] { display: none; }
+.rv-dialog__backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / 0.3); }
+.rv-dialog__panel { position: relative; display: flex; flex-direction: column; width: 100%; max-height: 88dvh; border-radius: 16px 16px 0 0; background: var(--bg-surface); box-shadow: var(--shadow-modal); }
+.rv-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--border); }
+.rv-dialog__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; line-height: 24px; }
+.rv-dialog__body { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+.rv-form { display: flex; flex-direction: column; gap: 16px; }
+.rv-form__label { display: block; font-size: 14px; font-weight: 500; line-height: 20px; }
+.rv-form__label small { font-size: inherit; font-weight: 400; color: var(--text-secondary); }
+.rv-form__help { margin-top: 2px; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.rv-form__hint { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.rv-form__error { display: flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: 20px; color: var(--error-text); }
+.rv-form__error .icon { width: 16px; height: 16px; margin-top: 2px; }
+.rv-form__alert { display: flex; gap: 8px; padding: 12px; border-radius: var(--radius-md); background: var(--error-bg); color: var(--error-strong); font-size: 14px; line-height: 20px; }
+.rv-form__alert .icon { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
+.rv-form__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.rv-form__counter { flex-shrink: 0; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.rv-form__counter--full { font-weight: 500; color: var(--warning); }
+.rv-form__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.rv-form__actions .btn { min-height: 44px; }
+.rv-input, .rv-textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-surface); font-family: var(--font-body); font-size: 16px; color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.rv-input { height: 44px; margin-top: 8px; padding: 0 16px; line-height: 24px; }
+.rv-textarea { display: block; min-height: 112px; margin-top: 6px; padding: 12px 16px; line-height: 24px; resize: vertical; }
+.rv-input:focus, .rv-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+.rv-input[aria-invalid="true"], .rv-textarea[aria-invalid="true"] { border-color: var(--error-text); }
+.rv-picker { display: flex; flex-wrap: wrap; align-items: center; margin: 4px 0 0 -6px; }
+.rv-star { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 8px; color: color-mix(in srgb, var(--text-primary) 25%, transparent); transition: background-color 0.15s, color 0.15s; }
+.rv-star .icon { width: 28px; height: 28px; }
+.rv-star:hover { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: color-mix(in srgb, var(--warning) 60%, transparent); }
+.rv-star.is-on, .rv-star.is-on:hover { color: var(--warning); }
+.rv-picker__label { margin-left: 8px; font-size: 14px; color: var(--text-secondary); }
+@media (min-width: 640px) {
+    .reviews__summary { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 40px; }
+    .rv-dialog { align-items: center; padding: 24px; }
+    .rv-dialog__panel { max-width: 512px; border-radius: 16px; }
+    .rv-dialog__head { padding-left: 20px; }
+    .rv-dialog__body { padding: 16px 20px; }
+}
+@media (max-width: 768px) {
+    .reviews { padding: 18px; }
+    .reviews__cta .btn { flex: 0 1 auto; }
+}
+/* ===== HẾT: ĐÁNH GIÁ SẢN PHẨM ===== */

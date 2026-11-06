@@ -1,6 +1,6 @@
 # Digi-Shop
 
-This context covers the product catalog, customer orders and their payment lifecycle through external payment providers, and the Vouchers customers redeem against orders.
+This context covers the product catalog, customer orders and their payment lifecycle through external payment providers, the Vouchers customers redeem against orders, and the reviews customers leave on Products.
 
 ## Language
 
@@ -69,3 +69,20 @@ A Voucher that is not shown in the checkout list and can only be redeemed by ent
 **Discount**:
 The amount deducted from an Order by the Vouchers redeemed on it. It never changes the Product variant's price.
 _Avoid_: Sale price, promotional price
+
+### Product reviews
+
+**Product review**:
+A customer's feedback on a Product, made of a Rating, a comment, or both. A customer is never required to leave one.
+_Avoid_: Feedback, testimonial
+
+**Rating**:
+The one-to-five star score in a Product review.
+_Avoid_: Score, stars
+
+**Verified reviewer**:
+A customer who has a delivered Order containing the Product, and is therefore allowed to review it.
+_Avoid_: Buyer
+
+**Username**:
+A customer's unique public name, chosen once, shown with their Product reviews.

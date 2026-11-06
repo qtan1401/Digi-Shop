@@ -56,14 +56,19 @@ const SAFE_MESSAGES = new Map([
     ["TOKEN_INVALID", "Verification token is invalid"],
     ["TOKEN_EXPIRED", "Verification token has expired"],
     ["CURRENT_PASSWORD_INVALID", "Current password is invalid"],
-    ["VALIDATION_FAILED", "Request validation failed"]
+    ["VALIDATION_FAILED", "Request validation failed"],
+    ["USERNAME_TAKEN", "Username đã được sử dụng"],
+    ["USERNAME_ALREADY_SET", "Username đã được đặt và không thể thay đổi"],
+    ["AUTH_REQUIRED", "Authentication is required"],
+    ["FORBIDDEN", "You do not have permission for this resource"]
 ]);
 
 const publicError = (error) => {
     const code = error?.code || "INTERNAL_ERROR";
+    const usernameRule = code === "VALIDATION_FAILED" && error?.details?.username === true && error.details.email === undefined;
     return {
         code,
-        message: SAFE_MESSAGES.get(code) || "Request failed",
+        message: usernameRule ? error.message : SAFE_MESSAGES.get(code) || "Request failed",
         ...(error?.details && code === "VALIDATION_FAILED" ? { fields: error.details } : {})
     };
 };
@@ -180,6 +185,15 @@ const changePassword = async (req, res) => {
     }
 };
 
+const setUsername = async (req, res) => {
+    try {
+        const data = await authService.setUsername({ user: req.user, username: req.body?.username });
+        return res.json({ success: true, data });
+    } catch (error) {
+        return sendError(res, error);
+    }
+};
+
 module.exports = {
     register,
     verifyEmail,
@@ -191,6 +205,7 @@ module.exports = {
     session,
     recover,
     changePassword,
+    setUsername,
     setSessionCookies,
     clearSessionCookies,
     sendError

@@ -2,6 +2,7 @@
 // Business logic and invariants for the Product domain.
 
 const productRepository = require("../repositories/product.repository");
+const reviewService = require("./review.service");
 
 const REQUIRED_FIELDS = ["name", "brand", "deviceType", "image", "description"];
 const EDITABLE_FIELDS = ["name", "brand", "deviceType", "image", "description"];
@@ -253,6 +254,7 @@ const getProductByID = async (id, options = {}) => {
     if (!product || (product.isDeleted === true && options.includeDeleted !== true)) {
         throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     }
+    if (options.includeRatings === true) await reviewService.attachRatings([product]);
     return product;
 };
 
@@ -286,6 +288,7 @@ const getAdminProducts = async (filters = {}) => {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const actualPage = Math.min(page, totalPages);
     const data = await productRepository.findAdminPage(where, actualPage, pageSize);
+    await reviewService.attachRatings(data);
     return { data, meta: { page: actualPage, pageSize, total, totalPages } };
 };
 
@@ -325,6 +328,7 @@ const getCatalogPage = async (filters = {}) => {
         category: allowed("category", DEVICE_TYPES),
         tag: allowed("tag", BRANDS), minPrice, maxPrice, sort, order
     });
+    await reviewService.attachRatings(result.data);
     return result;
 };
 

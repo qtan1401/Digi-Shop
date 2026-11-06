@@ -28,6 +28,7 @@ const matches = (row, where = {}) => Object.entries(where).every(([key, expected
     if (expected && typeof expected === "object" && "contains" in expected) {
         return String(row[key] ?? "").includes(expected.contains);
     }
+    if (expected && typeof expected === "object" && "in" in expected) return expected.in.includes(row[key]);
     return row[key] === expected;
 });
 const includeProduct = (row, include = {}) => {
@@ -91,6 +92,28 @@ const includeVariant = (row, include = {}) => {
 };
 
 const fakePrisma = {
+    $queryRaw: async (query) => {
+        let rows = products.filter((product) => !product.isDeleted).sort((a, b) => a.id - b.id);
+        const sql = query.sql || "";
+        const values = query.values || [];
+        const category = values.find((value) => ["phone", "tablet", "laptop"].includes(value));
+        const brand = values.find((value) => ["Apple", "Samsung", "MSI"].includes(value));
+        if (sql.includes("p.device_type IN") && category) rows = rows.filter((product) => product.deviceType === category);
+        if (sql.includes("p.brand IN") && brand) rows = rows.filter((product) => product.brand === brand);
+        if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
+        const pageRows = sql.includes("OFFSET")
+            ? rows.slice(Number(values.at(-2)), Number(values.at(-2)) + Number(values.at(-1)))
+            : rows;
+        return pageRows.map((product) => {
+            const prices = productVariants.filter((variant) => variant.productId === product.id && variant.isActive).map((variant) => Number(variant.price));
+            return {
+                id: product.id,
+                min_price: prices.length ? Math.min(...prices) : 0,
+                total: rows.length,
+                catalog_total: products.filter((candidate) => !candidate.isDeleted).length
+            };
+        });
+    },
     $transaction: async (work) => {
         const previous = {
             products, productOptions, productOptionValues, productVariants, variantOptionValues,
@@ -117,7 +140,7 @@ const fakePrisma = {
         }
     },
     product: {
-        findMany: async ({ where = {}, include = {}, orderBy } = {}) => {
+        findMany: async ({ where = {}, include = {}, orderBy, skip = 0, take } = {}) => {
             const rows = products.filter((row) => {
                 const direct = Object.fromEntries(Object.entries(where).filter(([key]) => key !== "OR"));
                 const directMatch = matches(row, direct);
@@ -131,8 +154,14 @@ const fakePrisma = {
                 return directMatch && orMatch;
             }).map((row) => includeProduct(row, include));
             if (orderBy?.id === "asc") rows.sort((a, b) => a.id - b.id);
+            rows.splice(0, skip);
+            if (take !== undefined) rows.splice(take);
             return rows;
         },
+        count: async ({ where = {} } = {}) => products.filter((row) => {
+            const direct = Object.fromEntries(Object.entries(where).filter(([key]) => key !== "OR"));
+            return matches(row, direct);
+        }).length,
         findUnique: async ({ where, include } = {}) => {
             const row = products.find((candidate) => matches(candidate, where));
             return row ? includeProduct(row, include) : null;
@@ -224,12 +253,17 @@ const fakePrisma = {
             return { count: before - variantOptionValues.length };
         }
     },
+    productReview: {
+        groupBy: async () => []
+    },
     user: {
         findUnique: async ({ where }) => where.id === "catalog-admin"
             ? { id: "catalog-admin", role: "admin", status: "ACTIVE", authVersion: 1, forcePasswordChange: false }
             : null
     },
     auditLog: {
+        findMany: async ({ take } = {}) => audits.slice().sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))).slice(0, take),
+        count: async () => audits.length,
         create: async ({ data }) => {
             const row = clone(data);
             audits.push(row);
@@ -475,7 +509,125 @@ test("admin creates supported taxonomy and public listing returns both fields", 
         { brand: payload.data[0].brand, deviceType: payload.data[0].deviceType },
         { brand: "Apple", deviceType: "phone" }
     );
+    assert.deepEqual(payload.meta, { page: 1, pageSize: 12, total: 1, totalPages: 1, catalogTotal: 1 });
 });
+
+test("public catalog validates pagination and returns stable empty-page metadata", async () => {
+    const invalid = await fetch(`${baseUrl}/api/products?page=0`);
+    assert.equal(invalid.status, 400);
+
+    const response = await fetch(`${baseUrl}/api/products?page=99&pageSize=48`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.meta, { page: 1, pageSize: 48, total: 0, totalPages: 1, catalogTotal: 0 });
+});
+
+test("public catalog applies page size and clamps a non-empty out-of-range page", async () => {
+    await createProduct(productInput({ name: "iPhone Alpha", sku: "IP-ALPHA" }));
+    await createProduct(productInput({ name: "iPhone Beta", sku: "IP-BETA" }));
+    await createProduct(productInput({ name: "Tablet Gamma", sku: "TAB-GAMMA", brand: "Samsung", deviceType: "tablet" }));
+    const response = await fetch(`${baseUrl}/api/products?page=99&pageSize=1&category=phone&tag=Apple&sort=name&order=asc`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.meta, { page: 2, pageSize: 1, total: 2, totalPages: 2, catalogTotal: 3 });
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.data[0].name, "iPhone Beta");
+
+    const invalidFilter = await fetch(`${baseUrl}/api/products?category=watch`);
+    assert.equal(invalidFilter.status, 400);
+    const invalidSearch = await fetch(`${baseUrl}/api/products?q=${"x".repeat(121)}`);
+    assert.equal(invalidSearch.status, 400);
+});
+
+test("admin catalog pages non-empty results and clamps to the last page", async () => {
+    await createProduct(productInput({ name: "Admin Alpha", sku: "ADMIN-ALPHA" }));
+    await createProduct(productInput({ name: "Admin Beta", sku: "ADMIN-BETA" }));
+
+    const response = await fetch(`${baseUrl}/api/admin/products?page=99&pageSize=1`, { headers: adminHeaders });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.meta, { page: 2, pageSize: 1, total: 2, totalPages: 2 });
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.data[0].name, "Admin Beta");
+});
+
+test("admin product listing returns paginated metadata", async () => {
+    const response = await fetch(`${baseUrl}/api/admin/products?page=1&pageSize=10`, { headers: adminHeaders });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.meta, { page: 1, pageSize: 10, total: 0, totalPages: 1 });
+});
+
+test("audit panel requests and returns only the first eight logs", async () => {
+    audits = Array.from({ length: 10 }, (_, index) => ({
+        id: `AUD-${index}`,
+        actor: "admin",
+        action: "CREATE",
+        entity: "product",
+        entityId: String(index),
+        changesJson: "null",
+        timestamp: new Date(Date.UTC(2026, 0, index + 1))
+    }));
+    const response = await fetch(`${baseUrl}/api/admin/audit-logs`, { headers: adminHeaders });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.data.length, 8);
+    assert.equal(payload.total, 10);
+});
+test("category and brand pages render server-side with canonical pagination and sitemap entries", async () => {
+    for (let index = 1; index <= 13; index++) {
+        const response = await createProduct(productInput({
+            name: `Phone ${String(index).padStart(2, "0")}`,
+            sku: `PHONE-${index}`
+        }));
+        assert.equal(response.status, 201);
+    }
+
+    const categoryPageOne = await fetch(`${baseUrl}/danh-muc/phone`);
+    assert.equal(categoryPageOne.status, 200);
+    const categoryHtml = await categoryPageOne.text();
+    assert.equal((categoryHtml.match(/<title>/g) || []).length, 1);
+    assert.match(categoryHtml, /<title>Điện thoại — Sản phẩm công nghệ \| NodeShop<\/title>/);
+    assert.match(categoryHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
+    assert.match(categoryHtml, /name="robots" content="index,follow"/);
+    assert.match(categoryHtml, /aria-current="page">1<\/span>/);
+    assert.match(categoryHtml, /href="\/danh-muc\/phone\?page=2"/);
+    assert.equal((categoryHtml.match(/class="product-card"/g) || []).length, 12);
+
+    const categoryPageTwo = await fetch(`${baseUrl}/danh-muc/phone?page=2`);
+    assert.equal(categoryPageTwo.status, 200);
+    const pageTwoHtml = await categoryPageTwo.text();
+    assert.match(pageTwoHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone\?page=2"/);
+    assert.match(pageTwoHtml, /rel="prev" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
+    assert.match(pageTwoHtml, /Phone 13/);
+    assert.match(pageTwoHtml, /aria-current="page">2<\/span>/);
+
+    const filtered = await fetch(`${baseUrl}/danh-muc/phone?tag=Apple&sort=name&order=asc`);
+    const filteredHtml = await filtered.text();
+    assert.match(filteredHtml, /name="robots" content="noindex,follow"/);
+    assert.match(filteredHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
+    assert.match(filteredHtml, /href="\/danh-muc\/phone\?sort=name&amp;order=asc&amp;tag=Apple&amp;page=2"/);
+
+    const brandPage = await fetch(`${baseUrl}/the/apple?page=2`);
+    assert.equal(brandPage.status, 200);
+    assert.match(await brandPage.text(), /rel="canonical" href="https:\/\/catalog\.example\.test\/the\/apple\?page=2"/);
+
+    const emptyPage = await fetch(`${baseUrl}/danh-muc/tablet`);
+    const emptyHtml = await emptyPage.text();
+    assert.equal(emptyPage.status, 200);
+    assert.match(emptyHtml, /aria-current="page">1<\/span>/);
+    assert.match(emptyHtml, /Không có sản phẩm phù hợp/);
+
+    const robots = await fetch(`${baseUrl}/robots.txt`);
+    assert.match(await robots.text(), /Sitemap: https:\/\/catalog\.example\.test\/sitemap\.xml/);
+    const sitemap = await fetch(`${baseUrl}/sitemap.xml`);
+    const sitemapXml = await sitemap.text();
+    assert.equal(sitemap.status, 200);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/danh-muc\/phone\?page=2/);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/the\/apple\?page=2/);
+    assert.equal((sitemapXml.match(/product_info\.html\?id=/g) || []).length, 13);
+});
+
 
 test("public product detail API returns the product identified by its numeric ID", async () => {
     const createResponse = await createProduct(productInput());
