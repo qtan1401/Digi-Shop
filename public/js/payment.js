@@ -49,14 +49,55 @@ const computeSubtotal = () => {
 };
 const computeShipping = () => SHIPPING_FEE;
 
+const updatePayButton = () => {
+    const button = document.getElementById("btn-checkout");
+    if (!button || checkoutLoading) return;
+    let label;
+    let disabled = false;
+    if (checkoutBlocked) {
+        disabled = true;
+        label = "Xử lý sản phẩm trước khi thanh toán";
+    } else {
+        const pay = window.CheckoutVouchers?.payState?.() || { ready: true, total: null, reason: "" };
+        disabled = !pay.ready;
+        label = pay.ready
+            ? (pay.total !== null ? `Thanh toán ${formatPrice(pay.total)}` : "Xác nhận thanh toán")
+            : pay.reason === "blocked" ? "Chưa thanh toán được"
+                : pay.reason === "error" ? "Thử lại voucher để thanh toán"
+                    : "Thanh toán";
+    }
+    button.disabled = disabled;
+    if (disabled) button.setAttribute("aria-disabled", "true"); else button.removeAttribute("aria-disabled");
+    button.textContent = label;
+};
+
 const refreshSummary = () => {
-    const subtotal = computeSubtotal();
-    const shipping = computeShipping(subtotal);
-    const setEl = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
-    setEl("summary-subtotal", formatPrice(subtotal));
-    setEl("summary-shipping", formatPrice(shipping));
-    setEl("summary-total", formatPrice(subtotal + shipping));
-    if (currentVariant) setEl("checkout-total-price", formatPrice(Number(currentVariant.price || 0) * currentQuantity));
+    if (!Array.isArray(cartItems) && currentVariant) {
+        const line = document.querySelector(".checkout-summary__item-price");
+        if (line) line.textContent = `${formatPrice(currentVariant.price)} × ${currentQuantity}`;
+    }
+    window.CheckoutVouchers?.renderBreakdown?.();
+    updatePayButton();
+};
+
+// Mặt hàng gửi đi báo giá voucher: chỉ phiên bản còn hàng, đúng số lượng đang chọn.
+const quoteItems = () => {
+    if (Array.isArray(cartItems)) {
+        return cartItems.filter((item) => item.available !== false).map((item) => ({ variantId: item.variantId, quantity: item.quantity }));
+    }
+    return currentVariant && currentVariant.stock > 0 && currentVariant.isActive === true
+        ? [{ variantId: currentVariant.id, quantity: currentQuantity }]
+        : [];
+};
+
+// DigiAuth.api chỉ giữ thông điệp chung; thông điệp tiếng Việt của máy chủ nằm trong payload.
+const serverError = (error) => {
+    const detail = error?.payload?.error || {};
+    return {
+        status: error?.status || 0,
+        code: detail.code || error?.payload?.code || "",
+        message: detail.message || error?.payload?.message || ""
+    };
 };
 
 const updateQtyDisplay = () => {
@@ -69,6 +110,7 @@ const increaseQty = () => {
         currentQuantity += 1;
         refreshSummary();
         updateQtyDisplay();
+        window.CheckoutVouchers?.refresh?.();
     }
 };
 const decreaseQty = () => {
@@ -76,6 +118,7 @@ const decreaseQty = () => {
         currentQuantity -= 1;
         refreshSummary();
         updateQtyDisplay();
+        window.CheckoutVouchers?.refresh?.();
     }
 };
 const updateTotal = refreshSummary;
@@ -235,16 +278,7 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
         ${renderMergeBanner()}
         ${renderUnavailableNotice(items)}
         <div class="checkout-layout">
-            <div class="checkout-summary">
-                <div class="checkout-summary__title">Đơn hàng của bạn</div>
-
-                ${summaryHtml}
-                <div class="checkout-summary__row checkout-summary__row--subtotal"><span>Tạm tính</span><span id="summary-subtotal">—</span></div>
-                <div class="checkout-summary__row"><span>Phí vận chuyển</span><span id="summary-shipping">—</span></div>
-                <div class="checkout-summary__row checkout-summary__row--total"><span>Tổng cộng</span><span id="summary-total">—</span></div>
-            </div>
             <div class="checkout-card__form">
-                <div id="checkout-error-alert" class="checkout-alert-error" role="alert" tabindex="-1" style="display:none;"></div>
                 ${qtyControls}
                 ${qtyControls ? '<div class="checkout-divider"></div>' : ''}
                 <div class="checkout-section-title">Thông tin giao hàng</div>
@@ -275,11 +309,28 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
                         <input type="text" id="customer-note" class="checkout-input" autocomplete="off">
                     </div>
                 </div>
-                <div class="checkout-divider"></div>
-                <button class="btn btn--primary btn--checkout" id="btn-checkout" type="button" onclick="handleCheckout()" ${checkoutBlocked ? "disabled aria-disabled=\"true\"" : ""}>${checkoutBlocked ? "Xử lý sản phẩm trước khi thanh toán" : "Xác nhận thanh toán"}</button>
             </div>
+            <aside class="checkout-summary" aria-label="Tóm tắt đơn hàng">
+                <div id="voucher-banner" class="vc-banner" role="alert" tabindex="-1" hidden></div>
+                <div class="checkout-summary__title">Đơn hàng của bạn</div>
+                ${summaryHtml}
+                <hr class="vc-rule">
+                <section id="voucher-block" class="vc-block" aria-label="Voucher"></section>
+                <hr class="vc-rule">
+                <dl id="summary-breakdown" class="vc-sum" aria-live="polite"></dl>
+                <div id="checkout-error-alert" class="checkout-alert-error" role="alert" tabindex="-1" style="display:none;"></div>
+                <button class="btn btn--primary btn--checkout" id="btn-checkout" type="button" onclick="handleCheckout()" ${checkoutBlocked ? "disabled aria-disabled=\"true\"" : ""}>${checkoutBlocked ? "Xử lý sản phẩm trước khi thanh toán" : "Xác nhận thanh toán"}</button>
+            </aside>
         </div>`;
+    container.closest(".payment-container")?.classList.add("payment-container--wide");
     attachLiveValidation();
+    window.CheckoutVouchers?.mount({
+        getItems: quoteItems,
+        getLocalTotals: () => { const subtotal = computeSubtotal(); return { subtotal, shipping: computeShipping(subtotal) }; },
+        isEnabled: () => isUserSession() && !CartService.getMergeError(),
+        onChange: updatePayButton,
+        goLogin: () => { if (saveCheckoutDraft()) window.location.assign("/auth.html?tab=login"); else showCheckoutError("Không thể lưu phiên checkout trong tab này. Hãy bật sessionStorage rồi thử lại."); }
+    });
     refreshSummary();
     applyDraftForm();
 };
@@ -326,7 +377,9 @@ const renderPaymentAttempt = (attempt) => {
     if (!panel) return;
     const momoOverLimit = attempt?.provider === "MOMO" && Number(attempt.amount) > MOMO_MAX_AMOUNT;
     const defaultStateCopy = {
-        PENDING: ["Chờ thanh toán", "Quét mã QR trước khi giao dịch hết hạn."],
+        PENDING: attempt?.provider === "VNPAY"
+            ? ["Chờ thanh toán", "Quét mã QR để mở trang VNPay trên thiết bị khác hoặc bấm nút bên dưới."]
+            : ["Chờ thanh toán", "Quét mã QR bằng ứng dụng MoMo trước khi giao dịch hết hạn."],
         SUCCEEDED: ["Đã thanh toán", "MoMo/VNPay đã xác nhận giao dịch."],
         EXPIRED: ["Giao dịch đã hết hạn", "Hàng đã được trả lại kho. Bạn có thể thử thanh toán lại trên cùng đơn nếu hàng còn."],
         FAILED: ["Chưa khởi tạo được giao dịch", "Không có khoản thanh toán nào được xác nhận. Bạn có thể thử lại."],
@@ -336,11 +389,16 @@ const renderPaymentAttempt = (attempt) => {
         ? ["MoMo vượt giới hạn giao dịch", `MoMo chỉ hỗ trợ tối đa ${formatPrice(MOMO_MAX_AMOUNT)} mỗi giao dịch. Đơn này là ${formatPrice(attempt.amount)}; hãy chọn VNPay để thử lại trên cùng đơn.`]
         : defaultStateCopy;
     const canRetry = ["EXPIRED", "FAILED"].includes(attempt?.status) && activePaymentOrder?.paymentStatus === "UNPAID";
+    const vnpayLinkQr = attempt?.provider === "VNPAY" && Boolean(attempt?.qrDataUrl);
+    const qrAlt = vnpayLinkQr ? "Mã QR mở liên kết thanh toán VNPay" : `Mã QR thanh toán ${paymentProviderName(attempt?.provider)}`;
+    const qrNote = vnpayLinkQr
+        ? `<p class="payment-attempt__qr-note">Quét bằng camera để mở liên kết trên điện thoại rồi thanh toán tại VNPay. Đây là QR chứa liên kết, không phải QR chuyển khoản trực tiếp.</p>`
+        : "";
     const qrHtml = attempt?.qrDataUrl
-        ? `<img class="payment-qr" src="${escapeHtml(attempt.qrDataUrl)}" alt="Mã QR thanh toán ${escapeHtml(paymentProviderName(attempt.provider))}">`
+        ? `<img class="payment-qr" src="${escapeHtml(attempt.qrDataUrl)}" alt="${escapeHtml(qrAlt)}">${qrNote}`
         : "";
     const providerAction = attempt?.paymentUrl && attempt.status === "PENDING"
-        ? `<a class="btn btn--primary" href="${escapeHtml(attempt.paymentUrl)}" target="_blank" rel="noopener noreferrer">Mở trang ${escapeHtml(paymentProviderName(attempt.provider))} để quét QR</a>`
+        ? `<a class="btn btn--primary" href="${escapeHtml(attempt.paymentUrl)}" target="_blank" rel="noopener noreferrer">Mở trang ${escapeHtml(paymentProviderName(attempt.provider))} để thanh toán</a>`
         : "";
     panel.innerHTML = `
         <div class="payment-attempt" role="status" data-attempt-id="${escapeHtml(attempt?.id)}">
@@ -402,7 +460,7 @@ const retryPaymentAttempt = async () => {
         const panel = document.getElementById("payment-attempt-panel");
         const message = document.createElement("p");
         message.className = "payment-attempt__error";
-        message.textContent = error?.message || "Không thể tạo giao dịch mới.";
+        message.textContent = serverError(error).message || error?.message || "Không thể tạo giao dịch mới.";
         panel?.append(message);
     } finally {
         paymentRetryLoading = false;
@@ -428,6 +486,8 @@ const renderOrderSuccess = (order) => {
         order?.paymentMethod === "VNPAY" ? "VNPay" : order?.paymentMethod;
     const onlineUnpaid = ["MOMO", "VNPAY"].includes(order?.paymentMethod) && order?.paymentStatus !== "PAID";
     const successTitle = onlineUnpaid ? "Đơn hàng chờ thanh toán" : "Đặt hàng thành công!";
+    const voucherRows = (Array.isArray(order?.vouchers) ? order.vouchers : []).map((voucher) => `<div class="order-detail-row"><span class="order-detail-label">Voucher <span class="font-mono">${escapeHtml(voucher.code)}</span></span><span class="order-detail-value">−${formatPrice(voucher.amount)}</span></div>`).join("");
+    container.closest(".payment-container")?.classList.remove("payment-container--wide");
     container.innerHTML = `
         <div class="order-success-card" role="status" tabindex="-1">
             <div class="order-success-icon" aria-hidden="true">✓</div>
@@ -443,6 +503,7 @@ const renderOrderSuccess = (order) => {
                 ${itemsHtml}
                 <div class="order-detail-row"><span class="order-detail-label">Tạm tính</span><span class="order-detail-value">${formatPrice(order?.subtotal)}</span></div>
                 <div class="order-detail-row"><span class="order-detail-label">Phí vận chuyển</span><span class="order-detail-value">${formatPrice(order?.shippingFee)}</span></div>
+                ${voucherRows}
                 <div class="order-detail-row"><span class="order-detail-label">Tổng thanh toán</span><span class="order-detail-value order-detail-value--highlight">${formatPrice(order?.totalPrice)}</span></div>
             </div>
             ${order?.paymentAttempt ? '<section id="payment-attempt-panel" aria-label="Trạng thái thanh toán"></section>' : ""}
@@ -476,20 +537,22 @@ const handleCheckout = async () => {
     const values = formValues();
     try {
         let response;
+        const voucherCodes = window.CheckoutVouchers?.getCodes?.() || [];
         if (Array.isArray(cartItems)) {
             response = await authApi("/api/checkout/batch", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     items: cartItems.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
-                    ...values
+                    ...values,
+                    voucherCodes
                 })
             });
         } else {
             response = await authApi(`/api/checkout/${encodeURIComponent(currentVariant.id)}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ quantity: currentQuantity, ...values })
+                body: JSON.stringify({ quantity: currentQuantity, ...values, voucherCodes })
             });
         }
         const data = unwrap(response) || {};
@@ -499,6 +562,7 @@ const handleCheckout = async () => {
         }
         window.DigiCheckoutState?.clearDraft?.();
         window.DigiCheckoutState?.clearMergeReport?.();
+        window.CheckoutVouchers?.clearStored?.();
         renderOrderSuccess(data);
     } catch (error) {
         checkoutLoading = false;
@@ -507,8 +571,16 @@ const handleCheckout = async () => {
             window.location.assign("/auth.html?tab=login");
             return;
         }
-        if (button) { button.disabled = false; button.textContent = "Xác nhận thanh toán"; }
-        showCheckoutError(error?.message || "Không thể hoàn tất thanh toán. Vui lòng thử lại.");
+        const detail = serverError(error);
+        if (detail.code === "VOUCHER_UNAVAILABLE") {
+            updatePayButton();
+            window.CheckoutVouchers?.setBlocked?.(detail.message);
+            updatePayButton();
+            return;
+        }
+        updatePayButton();
+        if (detail.code.startsWith("VOUCHER_")) window.CheckoutVouchers?.reload?.();
+        showCheckoutError(detail.message || error?.message || "Không thể hoàn tất thanh toán. Vui lòng thử lại.");
     }
 };
 
