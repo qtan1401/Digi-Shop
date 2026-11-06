@@ -343,6 +343,14 @@
         button.textContent = busy ? label : button.dataset.label;
     };
 
+    const USERNAME_FORMAT_MESSAGE = "Username dài 3-30 ký tự, chỉ gồm chữ, số và . _ -, bắt đầu và kết thúc bằng chữ hoặc số, không có hai dấu phân cách liền nhau.";
+    const USERNAME_RESERVED_MESSAGE = "Username này không được phép sử dụng.";
+    const usernameProblem = (value) => {
+        if (value.length < 3 || value.length > 30 || !/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(value) || /[._-]{2}/.test(value)) return USERNAME_FORMAT_MESSAGE;
+        if (["admin", "administrator", "root", "system", "support", "nodeshop"].includes(value.toLowerCase().replace(/[._-]/g, ""))) return USERNAME_RESERVED_MESSAGE;
+        return "";
+    };
+
     const initAuthPage = async () => {
         const loginForm = document.querySelector("#login-form");
         const registerForm = document.querySelector("#register-form");
@@ -403,20 +411,25 @@
             clearFormErrors(registerForm);
             showAuthMessage("");
             const email = registerForm.email.value.trim();
+            const username = registerForm.username.value.trim();
             const password = registerForm.password.value;
             const confirmation = registerForm.confirmPassword.value;
             let invalid = false;
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setFormError("email", "Nhập email hợp lệ.", registerForm); invalid = true; }
+            const usernameMessage = usernameProblem(username);
+            if (usernameMessage) { setFormError("username", usernameMessage, registerForm); invalid = true; }
             if (password.length < 6) { setFormError("password", "Mật khẩu phải có ít nhất 6 ký tự.", registerForm); invalid = true; }
             if (password !== confirmation) { setFormError("confirmPassword", "Mật khẩu nhập lại chưa khớp.", registerForm); invalid = true; }
             if (invalid) { firstInvalid(registerForm)?.focus(); return; }
             setSubmitBusy(registerForm, true, "Đang tạo tài khoản…");
             try {
-                const payload = await api("/api/auth/register", { method: "POST", body: { email, password } });
+                const payload = await api("/api/auth/register", { method: "POST", body: { email, username, password } });
                 setVerificationContext({ email: email, maskedEmail: payload.data?.email });
                 registerForm.reset();
                 window.location.assign("/verify-email.html");
             } catch (error) {
+                if (error.code === "USERNAME_TAKEN") setFormError("username", "Username đã được sử dụng. Hãy chọn tên khác.", registerForm);
+                else if (error.fields?.username) setFormError("username", usernameProblem(registerForm.username.value.trim()) || USERNAME_FORMAT_MESSAGE, registerForm);
                 showAuthMessage(error.message, "error");
                 registerForm.password.value = "";
                 registerForm.confirmPassword.value = "";
@@ -603,6 +616,15 @@
 
     bootstrapPromise = bootstrap();
     const api = (path, options = {}) => request(path, options);
+    // Username đặt một lần cho tài khoản chưa có (hỏi ngay trong hộp thoại đánh giá). Làm mới phiên để thanh điều hướng và `session.user.username` cập nhật.
+    const setUsername = async (value) => {
+        const payload = await request("/api/auth/username", { method: "POST", body: { username: value } });
+        try {
+            const current = await request("/api/auth/session", { method: "GET" }, false);
+            notify(current.data || { authenticated: false }, "username");
+        } catch (_) { /* Username đã lưu; phiên sẽ làm mới ở lần tải sau. */ }
+        return payload;
+    };
     window.DigiAuth = {
         ready: bootstrapPromise,
         api,
@@ -615,7 +637,9 @@
         clearVerificationContext,
         finishLogin,
         showMessage: showAuthMessage,
-        errorMessage
+        errorMessage,
+        usernameProblem,
+        setUsername
     };
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initAuthSurfaces, { once: true });
     else initAuthSurfaces();
