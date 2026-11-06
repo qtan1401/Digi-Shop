@@ -6,22 +6,35 @@
     <meta name="description" content="Giỏ hàng của bạn — NodeShop">
     <title>Giỏ hàng | NodeShop</title>
     <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/auth.css">
     <link rel="stylesheet" href="/css/checkout-auth.css">
 </head>
 <body>
-    <nav class="navbar" aria-label="Điều hướng chính">
-        <a href="/" class="navbar-brand">NodeShop</a>
-        <ul class="navbar-links">
-            <li><a href="/">Trang chủ</a></li>
-            <li><a href="/#products">Sản phẩm</a></li>
-            <li>
-                <a href="/cart.html" class="cart-nav-link cart-nav-link--active" aria-label="Giỏ hàng">
-                    🛒 <span class="cart-badge cart-badge--hidden" id="cart-badge">0</span>
-                </a>
-            </li>
-        </ul>
-        <div data-auth-nav aria-live="polite"></div>
-    </nav>
+    <!-- BIỂU TƯỢNG (lucide) cho thanh điều hướng -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="i-shopping-cart" viewBox="0 0 24 24"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></symbol>
+        </defs>
+    </svg>
+
+    <!-- THANH ĐIỀU HƯỚNG -->
+    <header class="site-header">
+        <div class="site-header__inner">
+            <a href="/" class="site-brand">NodeShop</a>
+            <nav class="site-nav" aria-label="Chính">
+                <a href="/">Trang chủ</a>
+            </nav>
+            <ul class="site-header__actions">
+                <li>
+                    <a href="/cart.html" class="cart-nav-link" aria-label="Giỏ hàng" aria-current="page">
+                        <svg class="icon icon--20" aria-hidden="true"><use href="#i-shopping-cart"/></svg>
+                        <span class="cart-badge cart-badge--hidden" id="cart-badge">0</span>
+                    </a>
+                </li>
+                <li class="auth-nav" data-auth-nav aria-live="polite"></li>
+            </ul>
+        </div>
+    </header>
 
     <section class="cart-page container">
         <h1 class="cart-page__title">Giỏ hàng của bạn</h1>

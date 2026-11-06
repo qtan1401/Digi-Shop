@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Every storefront page (cart, product, checkout, profile, login, recovery, email verification, 403) now uses the same header as the homepage, and the old `.navbar` styles were removed; the cart page keeps its side padding on mobile.
 - Added **order history for customers**: a new `/orders.html` page (reached from "Đơn hàng của tôi" in the account menu) lists the customer's own orders with status tabs and counts, pagination and a detail panel (status steps, payment, items, voucher lines, delivery details); the selected order, filter and page are kept in the URL. Items of delivered orders link to "Đánh giá" or "Sửa đánh giá", which opens the review dialog on the product page (`#danh-gia`). New API `GET /api/orders/mine`; order details now include `productId`, `productAvailable` and, for the owner of a delivered order, the review state of each item.
 - Order details now carry `cancelledAt` (new nullable `orders.cancelled_at`, migration `20261106000000_order_cancelled_at` backfills existing cancelled orders from their last update) and the latest MoMo/VNPay `paymentAttempt` (`provider`, `status`, `expiresAt`; an overdue pending attempt reads as `EXPIRED`), so "Đơn hàng của tôi" shows the real cancellation date and whether the payment session is still open or has expired.
 - Logging in from the orders page, a product's review block or the header now returns to that page (`/auth.html?next=…`, limited to same-origin storefront pages so it cannot redirect elsewhere).
