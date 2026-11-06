@@ -2,6 +2,9 @@
 // Prisma persistence only; checkout sequencing remains in the checkout service.
 
 const { getPrismaClient } = require("../db/prisma");
+const voucherRepository = require("./voucher.repository");
+
+const CANCELLABLE_STATUSES = ["PENDING", "PROCESSING"];
 
 const toIsoString = (value) =>
     value === undefined || value === null
@@ -62,12 +65,23 @@ const mapOrder = (row, { includeUserId = false } = {}) => {
         updatedAt: toIsoString(row.updatedAt)
     };
     if (includeUserId) order.userId = row.userId;
+    if (row.vouchers) {
+        order.vouchers = row.vouchers.map((entry) => ({
+            code: entry.codeSnapshot,
+            type: entry.typeSnapshot,
+            percent: entry.percentSnapshot ?? null,
+            amount: toNumber(entry.discountAmount)
+        }));
+    }
     return order;
 };
 
 const itemsInclude = {
     items: {
         orderBy: { id: "asc" }
+    },
+    vouchers: {
+        orderBy: { voucherId: "asc" }
     }
 };
 
@@ -148,8 +162,39 @@ const updateStatus = async (id, data) => {
     return mapOrder(row);
 };
 
+/**
+ * Administrator cancel: the status change and the Voucher give-back commit together.
+ * The order row is locked first (the same lock payment attempts take), so a concurrent
+ * attempt expiry cannot interleave; give-back is idempotent through order_vouchers.released_at,
+ * so cancelling twice, or cancelling after the attempt expired, gives nothing back twice.
+ * Stock is deliberately not restored here (existing behaviour, out of scope).
+ */
+const cancelOrder = async (id) => {
+    if (id === undefined || id === null) return null;
+    const orderId = String(id);
+    return getPrismaClient().$transaction(async (transaction) => {
+        const locked = await transaction.$queryRaw`
+            SELECT [id] FROM [dbo].[orders] WITH (UPDLOCK, ROWLOCK) WHERE [id] = ${orderId};
+        `;
+        if (locked.length === 0) return null;
+        const current = await transaction.order.findUnique({ where: { id: orderId } });
+        if (!CANCELLABLE_STATUSES.includes(current.orderStatus) && current.orderStatus !== "CANCELLED") {
+            const error = new Error(`Không thể chuyển trạng thái đơn hàng từ ${current.orderStatus} sang CANCELLED`);
+            error.code = "INVALID_ORDER_TRANSITION";
+            error.statusCode = 400;
+            throw error;
+        }
+        if (current.orderStatus !== "CANCELLED") {
+            await transaction.order.updateMany({ where: { id: orderId }, data: { orderStatus: "CANCELLED" } });
+        }
+        await voucherRepository.releaseForOrder(transaction, orderId, new Date());
+        const row = await transaction.order.findUnique({ where: { id: orderId }, include: itemsInclude });
+        return mapOrder(row);
+    });
+};
+
 const updateOrderStatus = async (id, status) =>
-    updateStatus(id, { orderStatus: status });
+    status === "CANCELLED" ? cancelOrder(id) : updateStatus(id, { orderStatus: status });
 
 const updatePaymentStatus = async (id, status) =>
     updateStatus(id, { paymentStatus: status });
