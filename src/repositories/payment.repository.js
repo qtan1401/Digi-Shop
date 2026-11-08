@@ -1,5 +1,6 @@
 const { getPrismaClient } = require("../db/prisma");
 const voucherRepository = require("./voucher.repository");
+const loyaltyRepository = require("./loyalty.repository");
 
 const ACTIVE = "PENDING";
 
@@ -60,6 +61,7 @@ const releaseAttempt = async (transaction, attempt, status, now) => {
     if (changed.count !== 1) return transaction.paymentAttempt.findUnique({ where: { id: attempt.id } });
     await restoreInventory(transaction, attempt.orderId);
     await voucherRepository.releaseForOrder(transaction, attempt.orderId, now);
+    await loyaltyRepository.releaseForOrder(transaction, attempt.orderId, now);
     return transaction.paymentAttempt.findUnique({ where: { id: attempt.id } });
 };
 
@@ -141,6 +143,14 @@ const createRetryAttempt = async ({ id, orderId, provider, amount, expiresAt, no
                 409
             );
         }
+        const pointsReserved = await loyaltyRepository.reserveReleasedForOrder(transaction, orderId);
+        if (!pointsReserved.ok) {
+            throw new PaymentError(
+                "PAYMENT_POINTS_UNAVAILABLE",
+                `Số điểm hiện có (${pointsReserved.balance.toLocaleString("vi-VN")}) không đủ để giữ lại ${pointsReserved.points.toLocaleString("vi-VN")} điểm đã dùng cho đơn này, vui lòng tạo đơn hàng mới`,
+                409
+            );
+        }
         const row = await transaction.paymentAttempt.create({
             data: { id, orderId, provider, amount, status: ACTIVE, expiresAt }
         });
@@ -151,9 +161,9 @@ const createRetryAttempt = async ({ id, orderId, provider, amount, expiresAt, no
 const getAttempt = async (id) => {
     const row = await getPrismaClient().paymentAttempt.findUnique({
         where: { id },
-        include: { order: { select: { id: true, userId: true, orderStatus: true, paymentStatus: true } } }
+        include: { order: { select: { id: true, userId: true, guestAccessTokenHash: true, orderStatus: true, paymentStatus: true } } }
     });
-    return row && { ...mapAttempt(row), userId: row.order.userId, orderStatus: row.order.orderStatus, paymentStatus: row.order.paymentStatus };
+    return row && { ...mapAttempt(row), userId: row.order.userId, guestAccessTokenHash: row.order.guestAccessTokenHash ?? null, orderStatus: row.order.orderStatus, paymentStatus: row.order.paymentStatus };
 };
 
 
@@ -214,7 +224,9 @@ const processCallback = async ({ provider, providerReference, amount, successful
             where: { id: current.id },
             data: { status: "SUCCEEDED", providerTransactionId, completedAt: now }
         });
-        return { outcome: "SUCCEEDED", attempt: mapAttempt(paid) };
+        // First success only (LATE_SUCCESS and repeats returned above): the Order's points become usable now.
+        await loyaltyRepository.creditForOrder(transaction, order.id, now);
+        return { outcome: "SUCCEEDED", attempt: mapAttempt(paid), firstTransition: true };
     }
 
     if (current.status === ACTIVE) {

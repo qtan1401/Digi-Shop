@@ -1,4 +1,8 @@
 const paymentService = require("../services/payment.service");
+const { tokenFromRequest } = require("../services/guest-access");
+
+// Only a signed-in customer counts as the owner; any other session (an administrator) must come with a guest token.
+const customerActor = (req) => (req.user?.role === "user" ? req.user : null);
 
 const sendError = (res, error) => {
     return res.status(error?.statusCode || 500).json({
@@ -12,7 +16,7 @@ const sendError = (res, error) => {
 
 const createRetry = async (req, res) => {
     try {
-        const attempt = await paymentService.createRetry(req.params.orderId, req.body?.provider, req.user, req);
+        const attempt = await paymentService.createRetry(req.params.orderId, req.body?.provider, customerActor(req), req, { guestToken: tokenFromRequest(req) });
         return res.status(201).json({ success: true, data: attempt });
     } catch (error) {
         return sendError(res, error);
@@ -21,7 +25,7 @@ const createRetry = async (req, res) => {
 
 const getAttempt = async (req, res) => {
     try {
-        const attempt = await paymentService.getAttempt(req.params.id, req.user);
+        const attempt = await paymentService.getAttempt(req.params.id, customerActor(req), { guestToken: tokenFromRequest(req) });
         return res.status(200).json({ success: true, data: attempt });
     } catch (error) {
         return sendError(res, error);

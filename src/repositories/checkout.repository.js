@@ -3,6 +3,8 @@
 
 const { getPrismaClient } = require("../db/prisma");
 const voucherRepository = require("./voucher.repository");
+const loyaltyRepository = require("./loyalty.repository");
+const { redeemPoints: priceRedemption } = require("../services/loyalty-calculator");
 const { calculateDiscount, unusableReason } = require("../services/voucher-calculator");
 
 const toIsoString = (value) =>
@@ -75,6 +77,10 @@ const mapOrder = (row) => ({
     subtotal: toNumber(row.subtotal),
     shippingFee: toNumber(row.shippingFee),
     discount: toNumber(row.discount),
+    pointsRedeemed: row.pointsRedeemed ?? 0,
+    pointsDiscount: toNumber(row.pointsDiscount ?? 0),
+    pointsEarned: row.pointsEarned ?? 0,
+    pointsCredited: Boolean(row.pointsCreditedAt),
     totalPrice: toNumber(row.totalPrice),
     customer: {
         name: row.customerName,
@@ -143,11 +149,15 @@ const lockVariant = async (transaction, variantId) => {
 const createOrder = async (transaction, orderData) => {
     const customer = orderData.customer || {};
     const data = {
-        userId: String(orderData.userId),
+        // Null only for a guest order whose email belongs to an administrator (no customer account to attach).
+        userId: orderData.userId === null || orderData.userId === undefined ? null : String(orderData.userId),
         id: String(orderData.id),
         subtotal: orderData.subtotal,
         shippingFee: orderData.shippingFee,
         discount: orderData.discount,
+        pointsRedeemed: orderData.pointsRedeemed ?? 0,
+        pointsDiscount: orderData.pointsDiscount ?? 0,
+        pointsEarned: orderData.pointsEarned ?? 0,
         totalPrice: orderData.totalPrice,
         customerName: customer.name,
         customerPhone: customer.phone,
@@ -156,6 +166,7 @@ const createOrder = async (transaction, orderData) => {
         paymentMethod: orderData.paymentMethod,
         orderStatus: orderData.orderStatus,
         paymentStatus: orderData.paymentStatus,
+        statusHistory: { create: [{ status: orderData.orderStatus }] },
         items: {
             create: (orderData.items || []).map((item) => ({
                 variantId: item.variantId,
@@ -169,6 +180,8 @@ const createOrder = async (transaction, orderData) => {
             }))
         }
     };
+    if (orderData.customerEmail) data.customerEmail = orderData.customerEmail;
+    if (orderData.guestAccessTokenHash) data.guestAccessTokenHash = orderData.guestAccessTokenHash;
     if (orderData.createdAt !== undefined) data.createdAt = toDate(orderData.createdAt);
     if (orderData.updatedAt !== undefined) data.updatedAt = toDate(orderData.updatedAt);
 
@@ -186,8 +199,9 @@ const createOrder = async (transaction, orderData) => {
  * Execute checkout atomically. Business validation/calculation runs after every
  * requested variant has been locked and read, before stock mutation.
  */
-const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [] } = {}) => {
-    if (typeof userId !== "string" || userId.trim().length === 0) {
+const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [], pointsToUse = 0, allowUnowned = false } = {}) => {
+    const unowned = allowUnowned && userId === null;
+    if (!unowned && (typeof userId !== "string" || userId.trim().length === 0)) {
         throw new TypeError("Checkout repository requires an authenticated user ID");
     }
     const normalizedItems = normalizeRequestedItems(requestedItems);
@@ -219,8 +233,19 @@ const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [] 
             return pricing;
         };
 
+        // Optionally called after redeemVouchers with the amount still payable. Locks the user's balance row
+        // (UPDLOCK, after the variant and voucher locks, always in that order), validates, deducts and prices the
+        // points in the same transaction. Not called, or nothing requested: no lock, no change.
+        const redeemPoints = async ({ payable }) => {
+            if (pointsToUse === 0 || unowned) return { used: 0, discount: 0, totalPrice: payable };
+            const balance = (await loyaltyRepository.lockBalance(transaction, userId)) ?? 0;
+            const pricing = priceRedemption({ payable, balance, requested: pointsToUse });
+            await loyaltyRepository.deduct(transaction, userId, pricing.used);
+            return pricing;
+        };
+
         const orderData = {
-            ...(await buildOrder(lockedItems, { redeemVouchers })),
+            ...(await buildOrder(lockedItems, { redeemVouchers, redeemPoints })),
             userId
         };
         if (!redemption) throw new TypeError("Checkout order builder must price the order through redeemVouchers");

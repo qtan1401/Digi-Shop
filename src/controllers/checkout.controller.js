@@ -2,17 +2,18 @@
 // Tiếp nhận HTTP request thanh toán; gọi checkout service; map lỗi → HTTP status
 
 const checkoutService = require("../services/checkout.service");
+const guestAccount = require("../services/guest-account.service");
 
 // Map error message → HTTP status code
 const errorToStatus = (msg) => {
     if (msg.includes("không tồn tại") || msg.includes("không tìm thấy") || msg.includes("Không tìm thấy")) return 404;
-    if (msg.includes("hết hàng") || msg.includes("không đủ") || msg.includes("không hợp lệ") || msg.includes("trống") || msg.includes("Không thể") || msg.includes("ngừng kinh doanh")) return 400;
+    if (msg.includes("hết hàng") || msg.includes("chỉ còn") || msg.includes("không đủ") || msg.includes("không hợp lệ") || msg.includes("trống") || msg.includes("Không thể") || msg.includes("ngừng kinh doanh")) return 400;
     return 500;
 };
 
 // Voucher failures carry a code and HTTP status (409 VOUCHER_UNAVAILABLE, 422 VOUCHER_*);
 // everything else keeps the legacy message-based mapping. `message` stays for existing clients.
-const VOUCHER_CODE = /^VOUCHER_/;
+const VOUCHER_CODE = /^(VOUCHER_|POINTS_|GUEST_)/;
 const sendCheckoutError = (res, error) => {
     if (VOUCHER_CODE.test(error.code || "") && Number.isInteger(error.statusCode)) {
         return res.status(error.statusCode).json({
@@ -46,10 +47,10 @@ const checkVariantInStock = async (req, res) => {
 const processCheckout = async (req, res) => {
     try {
         const variantId = req.params.id || req.body.variantId;
-        const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes } = req.body;
+        const { quantity = 1, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes, pointsToUse } = req.body;
 
         const result = await checkoutService.processCheckout(req.user.id, {
-            variantId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes
+            variantId, quantity, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes, pointsToUse
         }, req);
 
         res.status(201).json({
@@ -70,9 +71,9 @@ const processCheckout = async (req, res) => {
 
 const cartCheckout = async (req, res) => {
     try {
-        const { items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes } = req.body;
+        const { items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes, pointsToUse } = req.body;
         const result = await checkoutService.processCartCheckout(req.user.id, {
-            items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes
+            items, customerName, customerPhone, customerAddress, paymentMethod, note, voucherCodes, pointsToUse
         }, req);
 
         res.status(201).json({
@@ -85,4 +86,30 @@ const cartCheckout = async (req, res) => {
     }
 };
 
-module.exports = { checkVariantInStock, processCheckout, cartCheckout };
+/**
+ * Guest checkout: the same bodies as the two handlers above plus a required `email`. The buyer is not signed in; the
+ * service attaches the Order to the account of that email (never signing anyone in) and returns an access token once.
+ */
+const guestCheckout = (run) => async (req, res) => {
+    try {
+        const body = req.body || {};
+        const email = guestAccount.parseGuestRequest(body);
+        const result = await run(body, req, { email });
+        res.status(201).json({ success: true, message: "Đặt hàng thành công!", data: result.order, remainingStock: result.remainingStock });
+    } catch (error) {
+        sendCheckoutError(res, error);
+    }
+};
+
+const pickFields = (body, fields) => Object.fromEntries(fields.map((field) => [field, body[field]]));
+const CUSTOMER_FIELDS = ["customerName", "customerPhone", "customerAddress", "paymentMethod", "note", "voucherCodes", "pointsToUse"];
+
+const guestProcessCheckout = guestCheckout((body, req, guest) =>
+    checkoutService.processCheckout(null, {
+        variantId: req.params.id || body.variantId, quantity: body.quantity ?? 1, ...pickFields(body, CUSTOMER_FIELDS)
+    }, req, guest));
+
+const guestCartCheckout = guestCheckout((body, req, guest) =>
+    checkoutService.processCartCheckout(null, { items: body.items, ...pickFields(body, CUSTOMER_FIELDS) }, req, guest));
+
+module.exports = { checkVariantInStock, processCheckout, cartCheckout, guestProcessCheckout, guestCartCheckout };

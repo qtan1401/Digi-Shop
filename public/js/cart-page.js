@@ -1,6 +1,7 @@
 // ===== CART-PAGE.JS =====
 // Cart UI for Guest local storage and User server Account carts.
 
+// Must equal what the server charges: cart.service SHIPPING_FEE_DEFAULT (a flat fee, whatever the cart holds).
 const SHIPPING_FEE = 100000;
 const formatPrice = (price) => Number(price || 0).toLocaleString("vi-VN") + "₫";
 let validatedItems = [];
@@ -126,6 +127,7 @@ const renderCart = (items) => {
                 <div class="cart-summary">
                     <div class="cart-summary__title">Tóm tắt đơn hàng</div>
                     <div class="cart-summary__row"><span>Tạm tính</span><span>${formatPrice(subtotal)}</span></div>
+                    <div class="cart-summary__row cart-summary__row--note" id="cart-vat"><span>${DigiVat.label}</span><span>${formatPrice(DigiVat.includedVat(subtotal))}</span></div>
                     <div class="cart-summary__row"><span>Phí ship</span><span>${formatPrice(shippingFee)}</span></div>
                     <div class="cart-summary__row cart-summary__row--total"><span>Tổng cộng</span><span>${formatPrice(total)}</span></div>
                     ${unavailableItems.length

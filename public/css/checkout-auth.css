@@ -194,9 +194,7 @@
 .vc-row__body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .vc-row__top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .vc-row__code { font: 500 14px/20px var(--font-mono); }
-.vc-row__soon { padding: 2px 8px; border-radius: 9999px; background: var(--warning-bg); font-size: 12px; font-weight: 500; line-height: 16px; white-space: nowrap; color: var(--warning); }
 .vc-row__desc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; color: color-mix(in srgb, var(--text-primary) 80%, transparent); }
-.vc-row__exp { font-size: 12px; line-height: 16px; color: var(--text-secondary); }
 .vc-row__note { display: flex; align-items: flex-start; gap: 6px; margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
 .vc-row__note .icon { width: 14px; height: 14px; margin-top: 1px; }
 .vc-row__note.is-warn { color: var(--warning); }
@@ -254,3 +252,9 @@
     .vc-row__check { width: 24px; height: 24px; }
 }
 /* ===== HẾT: VOUCHER THANH TOÁN ===== */
+
+/* ===== Địa chỉ đã lưu (khách đã đăng nhập) ===== */
+.saved-address[hidden] { display: none; }
+.saved-address .checkout-select { width: 100%; min-height: 44px; }
+.saved-address__manage { justify-self: start; margin-top: 6px; color: var(--accent); font-size: .78rem; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.saved-address__manage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

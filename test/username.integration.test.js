@@ -94,12 +94,6 @@ const setUsername = (userId, username, role) => fetch(`${baseUrl}/api/auth/usern
     body: JSON.stringify({ username })
 });
 
-const register = (body) => fetch(`${baseUrl}/api/auth/register`, {
-    method: "POST",
-    headers: anonymousHeaders,
-    body: JSON.stringify(body)
-});
-
 before(async () => {
     server = app.listen(0, "127.0.0.1");
     await new Promise((resolve) => server.once("listening", resolve));
@@ -209,39 +203,10 @@ test("the same customer racing two usernames keeps exactly one", async () => {
     assert.equal((await loser.json()).error.code, "USERNAME_ALREADY_SET");
 });
 
-test("register requires a valid username", async () => {
-    const base = { email: "new@example.test", password: "secret123" };
-    for (const username of [undefined, "", "ab", "bad name", "admin"]) {
-        const response = await register({ ...base, username });
-        assert.equal(response.status, 400, `username ${JSON.stringify(username)}`);
-        const payload = await response.json();
-        assert.equal(payload.error.code, "VALIDATION_FAILED");
-        assert.equal(payload.error.fields.username, true);
-    }
-    assert.equal(users.some((user) => user.email === "new@example.test"), false);
-});
-
-test("register persists the username and rejects a taken one", async () => {
-    const created = await register({ email: "new@example.test", password: "secret123", username: "Newbie" });
-    assert.equal(created.status, 201);
-    const row = users.find((user) => user.email === "new@example.test");
-    assert.equal(row.username, "Newbie");
-
-    const taken = await register({ email: "other@example.test", password: "secret123", username: "newbie" });
-    assert.equal(taken.status, 409);
-    assert.equal((await taken.json()).error.code, "USERNAME_TAKEN");
-    assert.equal(users.some((user) => user.email === "other@example.test"), false);
-});
-
-test("register keeps the generic duplicate answer for a taken email, whatever the username", async () => {
-    users.push(makeUser("holder", { email: "held@example.test", username: "Holder", status: "ACTIVE" }));
-    const sameUsername = await register({ email: "held@example.test", password: "secret123", username: "holder" });
-    const otherUsername = await register({ email: "held@example.test", password: "secret123", username: "Fresh.Name" });
-    assert.equal(sameUsername.status, 201);
-    assert.equal(otherUsername.status, 201);
-    const first = await sameUsername.json();
-    const second = await otherUsername.json();
-    assert.equal(first.data.duplicate, true);
-    assert.deepEqual(first, second);
-    assert.equal(users.length, 3);
+test("registration collects no username; a customer without one can still set it later", async () => {
+    // Nothing here may block an account without a username: the setter is the only way to get one.
+    users = [makeUser("no-name", { username: null })];
+    assert.equal(users[0].username, null);
+    assert.equal((await setUsername("no-name", "Later.Name")).status, 200);
+    assert.equal(users[0].username, "Later.Name");
 });

@@ -4,6 +4,7 @@
 
 const { Prisma } = require("@prisma/client");
 const { getPrismaClient } = require("../db/prisma");
+const { isCompliantCode } = require("../services/voucher-calculator");
 
 const toNumber = (value) => value === undefined || value === null ? value : Number(value);
 const toIso = (value) => value === undefined || value === null ? value : new Date(value).toISOString();
@@ -49,12 +50,13 @@ const mapRow = (row) => row && ({
     updatedAt: row.updatedAt
 });
 
-// Admin-facing shape: ISO dates plus the derived remaining/status.
+// Admin-facing shape: derived remaining/status. Vouchers never expire, so no validity dates are exposed.
+// "legacy": a row from before the 5-character / no-expiry rules (longer code, or an end date already past). It stays
+// visible to the administrator but customers cannot redeem it, so it must not be reported as running.
 const statusOf = (voucher, now) => {
     if (!voucher.isEnabled) return "disabled";
-    if (new Date(voucher.endsAt) < now) return "expired";
+    if (!isCompliantCode(voucher.code) || new Date(voucher.endsAt) < now) return "legacy";
     if (voucher.redeemedCount >= voucher.quantity) return "exhausted";
-    if (new Date(voucher.startsAt) > now) return "scheduled";
     return "active";
 };
 
@@ -65,8 +67,6 @@ const toAdminVoucher = (voucher, now) => ({
     type: voucher.type,
     percent: voucher.percent,
     maxDiscount: voucher.maxDiscount,
-    startsAt: toIso(voucher.startsAt),
-    endsAt: toIso(voucher.endsAt),
     quantity: voucher.quantity,
     redeemedCount: voucher.redeemedCount,
     remaining: voucher.quantity - voucher.redeemedCount,
@@ -203,17 +203,17 @@ const findListedInWindow = async (now) => {
         where: { isEnabled: true, isListed: true, startsAt: { lte: now }, endsAt: { gte: now } },
         orderBy: [{ endsAt: "asc" }, { id: "asc" }]
     });
-    return rows.map(mapRow).filter((voucher) => voucher.redeemedCount < voucher.quantity);
+    return rows.map(mapRow).filter((voucher) => voucher.redeemedCount < voucher.quantity && isCompliantCode(voucher.code));
 };
 
 // ── Administrator CRUD ──────────────────────────────────────────────────────
 
+// Same precedence as statusOf: disabled, then legacy (listed under "all" only), then exhausted / active.
+const LEGACY_CONDITION = Prisma.sql`(LEN(v.[code]) <> 5 OR v.[code] LIKE '%[^A-Za-z0-9]%' OR v.[ends_at] < SYSUTCDATETIME())`;
 const STATUS_PREDICATES = Object.freeze({
     disabled: () => Prisma.sql`v.[is_enabled] = 0`,
-    expired: () => Prisma.sql`v.[is_enabled] = 1 AND v.[ends_at] < SYSUTCDATETIME()`,
-    exhausted: () => Prisma.sql`v.[is_enabled] = 1 AND v.[ends_at] >= SYSUTCDATETIME() AND v.[redeemed_count] >= v.[quantity]`,
-    scheduled: () => Prisma.sql`v.[is_enabled] = 1 AND v.[starts_at] > SYSUTCDATETIME() AND v.[redeemed_count] < v.[quantity]`,
-    active: () => Prisma.sql`v.[is_enabled] = 1 AND v.[starts_at] <= SYSUTCDATETIME() AND v.[ends_at] >= SYSUTCDATETIME() AND v.[redeemed_count] < v.[quantity]`
+    exhausted: () => Prisma.sql`v.[is_enabled] = 1 AND NOT ${LEGACY_CONDITION} AND v.[redeemed_count] >= v.[quantity]`,
+    active: () => Prisma.sql`v.[is_enabled] = 1 AND NOT ${LEGACY_CONDITION} AND v.[redeemed_count] < v.[quantity]`
 });
 
 const listAdmin = async ({ q, status = "all", page = 1, pageSize = 20 }) => {
@@ -245,10 +245,40 @@ const listAdmin = async ({ q, status = "all", page = 1, pageSize = 20 }) => {
     };
 };
 
+const MAX_ORDERS_IN_DETAIL = 200;
+
+const toOrderUse = (entry) => ({
+    orderId: entry.order.id,
+    createdAt: toIso(entry.order.createdAt),
+    buyer: entry.order.customerName,
+    buyerEmail: entry.order.user?.email ?? null,
+    totalPrice: toNumber(entry.order.totalPrice),
+    discountAmount: toNumber(entry.discountAmount),
+    orderStatus: entry.order.orderStatus,
+    released: Boolean(entry.releasedAt)
+});
+
+/** One voucher for the administrator, with the orders it was applied to (newest first). */
 const getAdmin = async (id) => {
     const client = getPrismaClient();
-    const [row, now] = await Promise.all([client.voucher.findUnique({ where: { id } }), databaseNow(client)]);
-    return row ? toAdminVoucher(mapRow(row), now) : undefined;
+    const [row, now, uses] = await Promise.all([
+        client.voucher.findUnique({ where: { id } }),
+        databaseNow(client),
+        client.orderVoucher.findMany({
+            where: { voucherId: id },
+            include: {
+                order: {
+                    select: {
+                        id: true, createdAt: true, customerName: true, totalPrice: true, orderStatus: true,
+                        user: { select: { email: true } }
+                    }
+                }
+            },
+            orderBy: { order: { createdAt: "desc" } },
+            take: MAX_ORDERS_IN_DETAIL
+        })
+    ]);
+    return row ? { ...toAdminVoucher(mapRow(row), now), orders: uses.map(toOrderUse) } : undefined;
 };
 
 const create = async (data) => {

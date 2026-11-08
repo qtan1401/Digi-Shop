@@ -62,8 +62,11 @@ async function ensureDefaultAdmin(transaction, password = requiredDefaultAdminPa
     }
 }
 
+// Deletion order matters. order_status_history and user_addresses are listed explicitly (before their parents) so the
+// reset reports their counts; password-reset / verification tokens that cascade from users need no entry of their own.
 const CLEAR_TABLES = [
     ["order_vouchers", "OrderVoucher"],
+    ["order_status_history", "OrderStatusHistory"],
     ["vouchers", "Voucher"],
     ["product_reviews", "ProductReview"],
     ["payment_attempts", "PaymentAttempt"],
@@ -75,6 +78,7 @@ const CLEAR_TABLES = [
     ["oauth_identities", "OAuthIdentity"],
     ["refresh_sessions", "RefreshSession"],
     ["email_verification_tokens", "EmailVerificationToken"],
+    ["user_addresses", "UserAddress"],
     ["product_variant_option_values", "ProductVariantOptionValue"],
     ["product_variants", "ProductVariant"],
     ["product_option_values", "ProductOptionValue"],
@@ -693,15 +697,20 @@ async function insertOrders(transaction, records) {
         request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
         request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
         request.input("userId", sql.NVarChar(36), record.userId);
+        request.input("pointsEarned", sql.Int, record.pointsEarned);
+        request.input("pointsCreditedAt", sql.DateTime2(3), record.pointsCreditedAt === null ? null : new Date(record.pointsCreditedAt));
         await request.query(`
             INSERT INTO [dbo].[orders]
                 ([id], [subtotal], [shipping_fee], [discount], [total_price], [customer_name], [customer_phone],
-                 [customer_address], [customer_note], [payment_method], [order_status], [payment_status], [created_at], [updated_at], [user_id], [cancelled_at])
+                 [customer_address], [customer_note], [payment_method], [order_status], [payment_status], [created_at], [updated_at], [user_id], [cancelled_at],
+                 [points_earned], [points_credited_at])
             VALUES
                 (@id, @subtotal, @shippingFee, @discount, @totalPrice, @customerName, @customerPhone,
                  @customerAddress, @customerNote, @paymentMethod, @orderStatus, @paymentStatus, @createdAt, @updatedAt, @userId,
-                 CASE WHEN @orderStatus = N'CANCELLED' THEN @updatedAt ELSE NULL END);
+                 CASE WHEN @orderStatus = N'CANCELLED' THEN @updatedAt ELSE NULL END,
+                 @pointsEarned, @pointsCreditedAt);
         `);
+        await insertStatusHistory(transaction, record.id, record.statusHistory);
 
         for (const item of record.items) {
             const variantLookup = transaction.request();
@@ -731,25 +740,118 @@ async function insertOrders(transaction, records) {
     }
 }
 
+async function insertAddresses(transaction, userId, addresses) {
+    for (const address of addresses) {
+        const request = transaction.request();
+        request.input("id", sql.NVarChar(36), address.id);
+        request.input("userId", sql.NVarChar(36), userId);
+        request.input("recipientName", sql.NVarChar(200), address.recipientName);
+        request.input("phone", sql.NVarChar(20), address.phone);
+        request.input("addressLine", sql.NVarChar(500), address.addressLine);
+        request.input("isDefault", sql.Bit, address.isDefault);
+        request.input("createdAt", sql.DateTime2(3), new Date(address.createdAt));
+        await request.query(`
+            INSERT INTO [dbo].[user_addresses]
+                ([id], [user_id], [recipient_name], [phone], [address_line], [is_default], [created_at], [updated_at])
+            VALUES
+                (@id, @userId, @recipientName, @phone, @addressLine, @isDefault, @createdAt, @createdAt);
+        `);
+    }
+}
+
+async function insertStatusHistory(transaction, orderId, history) {
+    for (const entry of history) {
+        const request = transaction.request();
+        request.input("orderId", sql.NVarChar(64), orderId);
+        request.input("status", sql.NVarChar(32), entry.status);
+        request.input("createdAt", sql.DateTime2(3), new Date(entry.at));
+        await request.query(`
+            INSERT INTO [dbo].[order_status_history] ([order_id], [status], [created_at])
+            VALUES (@orderId, @status, @createdAt);
+        `);
+    }
+}
+
 async function insertUsers(transaction, records) {
     for (const record of records) {
         const request = transaction.request();
         request.input("id", sql.NVarChar(36), record.id);
         request.input("email", sql.NVarChar(320), record.email);
         request.input("username", sql.NVarChar(64), record.username);
+        request.input("fullName", sql.NVarChar(200), record.fullName);
         request.input("role", sql.NVarChar(16), record.role);
         request.input("status", sql.NVarChar(20), record.status);
+        request.input("loyaltyPoints", sql.Int, record.loyaltyPoints);
         request.input("emailVerifiedAt", sql.DateTime2(3), new Date(record.emailVerifiedAt));
         request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
         request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
         // No password hash: seeded customers cannot log in.
         await request.query(`
             INSERT INTO [dbo].[users]
-                ([id], [email], [username], [role], [status], [email_verified_at], [created_at], [updated_at])
+                ([id], [email], [username], [full_name], [role], [status], [loyalty_points], [email_verified_at], [created_at], [updated_at])
             VALUES
-                (@id, @email, @username, @role, @status, @emailVerifiedAt, @createdAt, @updatedAt);
+                (@id, @email, @username, @fullName, @role, @status, @loyaltyPoints, @emailVerifiedAt, @createdAt, @updatedAt);
         `);
+        await insertAddresses(transaction, record.id, record.addresses);
     }
+}
+
+/**
+ * Seed rows that already exist (an earlier seed, before full names, address books, loyalty points and status history
+ * existed) are never overwritten, but their missing pieces are filled in, each guarded so a re-run changes nothing:
+ * a missing full name, an empty address book, an order with no history, and the points of an order that still has
+ * none recorded (credited to the balance only by the run that records them).
+ */
+async function backfillSeedExtras(transaction, users, orders) {
+    let filled = 0;
+    for (const user of users) {
+        const named = transaction.request();
+        named.input("id", sql.NVarChar(36), user.id);
+        named.input("fullName", sql.NVarChar(200), user.fullName);
+        const result = await named.query(`
+            UPDATE [dbo].[users] SET [full_name] = @fullName WHERE [id] = @id AND [full_name] IS NULL;
+        `);
+        filled += result.rowsAffected?.[0] || 0;
+        if (user.addresses.length === 0) continue;
+        const count = transaction.request();
+        count.input("userId", sql.NVarChar(36), user.id);
+        const existing = await count.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[user_addresses] WHERE [user_id] = @userId;`);
+        if (Number(existing.recordset[0].count) === 0) {
+            await insertAddresses(transaction, user.id, user.addresses);
+            filled += user.addresses.length;
+        }
+    }
+    for (const order of orders) {
+        const history = transaction.request();
+        history.input("orderId", sql.NVarChar(64), order.id);
+        const stored = await history.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[order_status_history] WHERE [order_id] = @orderId;`);
+        if (Number(stored.recordset[0].count) === 0) {
+            await insertStatusHistory(transaction, order.id, order.statusHistory);
+            filled += order.statusHistory.length;
+        }
+        if (order.pointsEarned === 0) continue;
+        const points = transaction.request();
+        points.input("id", sql.NVarChar(64), order.id);
+        points.input("orderStatus", sql.NVarChar(32), order.orderStatus);
+        points.input("paymentStatus", sql.NVarChar(32), order.paymentStatus);
+        points.input("pointsEarned", sql.Int, order.pointsEarned);
+        points.input("pointsCreditedAt", sql.DateTime2(3), order.pointsCreditedAt === null ? null : new Date(order.pointsCreditedAt));
+        const recorded = await points.query(`
+            UPDATE [dbo].[orders] SET [points_earned] = @pointsEarned, [points_credited_at] = @pointsCreditedAt
+            WHERE [id] = @id AND [points_earned] = 0 AND [points_credited_at] IS NULL
+              AND [order_status] = @orderStatus AND [payment_status] = @paymentStatus;
+        `);
+        if ((recorded.rowsAffected?.[0] || 0) === 1) {
+            filled += 1;
+            if (order.pointsCreditedAt !== null && order.userId !== null) {
+                const credit = transaction.request();
+                credit.input("userId", sql.NVarChar(36), order.userId);
+                credit.input("pointsEarned", sql.Int, order.pointsEarned);
+                await credit.query(`UPDATE [dbo].[users] SET [loyalty_points] = [loyalty_points] + @pointsEarned WHERE [id] = @userId;`);
+            }
+        }
+    }
+    return filled;
 }
 
 // redeemed_count starts at 0 and is incremented by insertOrders for each unreleased order voucher,
@@ -916,6 +1018,13 @@ async function seedDatabase() {
         await insertOrders(transaction, orderInserts);
         await insertReviews(transaction, reviewInserts);
         await insertAudits(transaction, auditInserts);
+        const insertedUserIds = new Set(userInserts.map(({ id }) => id));
+        const insertedOrderIds = new Set(orderInserts.map(({ id }) => id));
+        summary.backfilled = await backfillSeedExtras(
+            transaction,
+            normalized.users.filter(({ id }) => !insertedUserIds.has(id)),
+            normalized.orders.filter(({ id }) => !insertedOrderIds.has(id))
+        );
 
         summary.inserted.products = productInserts.length;
         summary.inserted.users = userInserts.length;
@@ -1136,7 +1245,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+    CLEAR_TABLES,
     SeedConflictError,
+    backfillSeedExtras,
     classifyOrders,
     classifyReviews,
     classifyUsers,

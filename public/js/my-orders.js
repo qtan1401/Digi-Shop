@@ -183,7 +183,8 @@
         if (o.orderStatus === "CANCELLED") {
             const refund = o.paymentStatus === "REFUNDED" ? `Đã hoàn ${money(o.totalPrice)} về ${e(methodLabel(o.paymentMethod))}.` : "";
             const voucherText = vouchers.length ? `${vouchers.length > 1 ? "Các voucher" : "Voucher"} ${vouchers.map((v) => e(v.code)).join(", ")} đã được hoàn lại để bạn dùng cho đơn khác.` : "";
-            const sub = [refund, voucherText].filter(Boolean).join(" ");
+            const pointsText = Number(o.pointsRedeemed) > 0 ? `${Number(o.pointsRedeemed).toLocaleString("vi-VN")} điểm đã dùng được hoàn lại vào tài khoản.` : "";
+            const sub = [refund, voucherText, pointsText].filter(Boolean).join(" ");
             return `<div class="mo-cancelled"><p class="mo-cancelled__t">${icon("circle-x")}Đơn đã huỷ ngày ${fmtDate(o.cancelledAt || o.updatedAt)}</p>${sub ? `<p class="mo-cancelled__s">${sub}</p>` : ""}</div>`;
         }
         const cur = Math.max(0, STEPS.indexOf(o.orderStatus));
@@ -256,17 +257,39 @@
         </section>`;
     };
 
+    const historyBlock = (o) => {
+        const rows = Array.isArray(o.statusHistory) ? o.statusHistory : [];
+        if (!rows.length) return "";
+        return `<section class="mo-sec" aria-label="Lịch sử trạng thái">
+            <h3 class="mo-h3">Lịch sử trạng thái</h3>
+            <table class="mo-history">
+                <thead><tr><th scope="col">Trạng thái</th><th scope="col">Thời gian</th></tr></thead>
+                <tbody>${rows.map((r) => `<tr><td>${stBadge(r.status)}</td><td class="tabular">${fmtDateTime(r.at)}</td></tr>`).join("")}</tbody>
+            </table>
+        </section>`;
+    };
+
     const voucherLabel = (v) => (v.type === "FREE_SHIPPING" ? "Miễn phí vận chuyển" : v.percent ? `Giảm ${v.percent}%` : "");
     const totalsBlock = (o) => {
         const vouchers = Array.isArray(o.vouchers) ? o.vouchers : [];
         const row = (a, b) => `<div><dt>${a}</dt><dd class="tabular">${b}</dd></div>`;
         const voucherRows = vouchers.map((v) => row(`<span class="mo-vc"><span class="mo-vc__code">${icon("ticket")}<span>${e(v.code)}</span></span><span class="mo-vc__note">${e(voucherLabel(v))}</span></span>`, `<span class="mo-pos">−${money(v.amount)}</span>`)).join("");
         const loose = !vouchers.length && Number(o.discount) > 0 ? row("Giảm giá", `<span class="mo-pos">−${money(o.discount)}</span>`) : "";
+        const used = Number(o.pointsRedeemed) || 0;
+        const pointsRows = used > 0 ? row(`Điểm đã dùng<span class="mo-vc__note"> · ${used.toLocaleString("vi-VN")} điểm</span>`, `<span class="mo-pos">−${money(o.pointsDiscount)}</span>`) : "";
+        const earned = Number(o.pointsEarned) || 0;
+        const online = ["MOMO", "VNPAY"].includes(o.paymentMethod);
+        const open = !o.pointsCredited && o.orderStatus !== "CANCELLED";
+        const waitLabel = !open ? "" : online ? (o.paymentStatus !== "PAID" ? "Điểm thưởng sau khi thanh toán" : "") : (o.orderStatus !== "DELIVERED" ? "Điểm thưởng sau khi giao hàng" : "");
+        const earnedLine = earned > 0 && (o.pointsCredited || waitLabel)
+            ? `<p class="mo-vc__note" data-mo-points-earned>${o.pointsCredited ? "Điểm thưởng nhận được" : waitLabel}: +${earned.toLocaleString("vi-VN")} điểm (${money(earned * 1000)})</p>`
+            : "";
         return `<section class="mo-sec" aria-label="Tổng tiền">
             <h3 class="mo-h3">Tổng tiền</h3>
-            <dl class="mo-sum">${row("Tạm tính", money(o.subtotal))}${row("Phí vận chuyển", money(o.shippingFee))}${voucherRows}${loose}
+            <dl class="mo-sum">${row("Tạm tính", money(o.subtotal))}${row(`<span class="mo-vc__note">${DigiVat.label}</span>`, `<span class="mo-vc__note">${money(DigiVat.includedVat(o.subtotal))}</span>`)}${row("Phí vận chuyển", money(o.shippingFee))}${voucherRows}${loose}${pointsRows}
                 <div class="mo-sum__total"><dt>Tổng cộng</dt><dd class="tabular${o.orderStatus === "CANCELLED" ? " is-cancelled" : ""}">${money(o.totalPrice)}</dd></div>
             </dl>
+            ${earnedLine}
         </section>`;
     };
 
@@ -280,16 +303,19 @@
         </section>`;
     };
 
-    const detailCard = (o) => `<article class="mo-card mo-detail" aria-labelledby="mo-detail-title">
+    const detailCard = (o) => {
+        const history = historyBlock(o);
+        return `<article class="mo-card mo-detail" aria-labelledby="mo-detail-title">
         <header class="mo-detail__head">
             <h2 id="mo-detail-title" tabindex="-1" data-mo-focus>Đơn <span class="mo-mono">${e(o.id)}</span></h2>
             <div class="mo-detail__meta">${stBadge(o.orderStatus)}<span>Đặt lúc ${fmtDateTime(o.createdAt)}</span></div>
         </header>
         <div class="mo-detail__body">
-            ${progressBlock(o)}<hr class="mo-rule">${itemsBlock(o)}<hr class="mo-rule">
+            ${progressBlock(o)}<hr class="mo-rule">${itemsBlock(o)}<hr class="mo-rule">${history}${history ? '<hr class="mo-rule">' : ""}
             <div class="mo-lower">${totalsBlock(o)}<div class="mo-lower__end">${deliveryBlock(o)}</div></div>
         </div>
     </article>`;
+    };
 
     const detailSkeleton = () => `<div class="mo-card mo-detail mo-detail--sk" tabindex="-1" data-mo-focus aria-label="Đang tải chi tiết đơn hàng"><div class="mo-detail__body" aria-busy="true">
         <div class="mo-sk-steps">${bar("mo-sk--dot")}${bar("mo-sk--ln")}${bar("mo-sk--dot")}${bar("mo-sk--ln")}${bar("mo-sk--dot")}${bar("mo-sk--ln")}${bar("mo-sk--dot")}</div>

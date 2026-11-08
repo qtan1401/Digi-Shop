@@ -4,7 +4,7 @@ const { requireAuth, requireRole, requireCsrf, requireGoogleCsrf, rateLimitAuth 
 
 const router = express.Router();
 
-router.post("/register", requireCsrf, controller.register);
+router.post("/register", rateLimitAuth("register"), requireCsrf, controller.register);
 router.post("/verify-email", requireCsrf, controller.verifyEmail);
 router.post("/resend-verification", rateLimitAuth("resend"), requireCsrf, controller.resendVerification);
 router.post("/login", rateLimitAuth("login"), requireCsrf, controller.login);
@@ -13,6 +13,7 @@ router.post("/refresh", rateLimitAuth("refresh"), requireCsrf, controller.refres
 router.post("/logout", requireCsrf, controller.logout);
 router.get("/session", controller.session);
 router.post("/recover", rateLimitAuth("recover"), requireCsrf, controller.recover);
+router.post("/reset-password", rateLimitAuth("reset"), requireCsrf, controller.resetPassword);
 router.post("/change-password", requireAuth, requireCsrf, controller.changePassword);
 router.post("/username", requireRole("user"), requireCsrf, controller.setUsername);
 

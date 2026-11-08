@@ -168,3 +168,15 @@
 .ao .av-del-text { display: flex; min-width: 0; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 20px; text-wrap: pretty; color: var(--text-secondary); }
 .ao .av-del-text b { font-weight: 500; color: var(--text-primary); }
 .ao .av-del-ic { margin-top: 2px; }
+
+/* Danh sách đơn đã dùng voucher */
+.ao .av-th-orders { min-width: 7rem; }
+.ao .av-orders { gap: 12px; }
+.ao .av-orders-empty { padding: 24px 0; text-align: center; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.ao .av-orders-table { width: 100%; }
+@media (min-width: 640px) {
+    .ao .av-modal[data-role="orders-modal"] .av-modal-box { max-width: 48rem; }
+}
+
+/* The orders modal has no card layout, so its table must stay visible on phones (it scrolls sideways). */
+.ao .av-orders .ao-table-wrap { display: block; }

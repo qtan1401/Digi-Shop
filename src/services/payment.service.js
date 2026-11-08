@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const QRCode = require("qrcode");
 const paymentRepository = require("../repositories/payment.repository");
 const orderService = require("./order.service");
+const { tokenMatches } = require("./guest-access");
 const momo = require("./payment-providers/momo");
 const vnpay = require("./payment-providers/vnpay");
 
@@ -129,10 +130,10 @@ const createProviderPayment = async (order, attempt, request) => {
 
 const initializeAttempt = (order, attempt, request) => createProviderPayment(order, attempt, request);
 
-const createRetry = async (orderId, provider, actor, request) => {
+const createRetry = async (orderId, provider, actor, request, { guestToken } = {}) => {
     const normalizedProvider = String(provider || "").toUpperCase();
     if (!providers[normalizedProvider]) throw paymentError("PAYMENT_METHOD_INVALID", "Phương thức thanh toán không hợp lệ");
-    const order = await orderService.getOrderById(orderId, actor);
+    const order = await orderService.getOrderById(orderId, actor, { guestToken });
     const now = new Date();
     const amount = Number(order.totalPrice);
     if (!Number.isSafeInteger(amount) || amount <= 0) {
@@ -149,9 +150,12 @@ const createRetry = async (orderId, provider, actor, request) => {
     return createProviderPayment(order, attempt, request);
 };
 
-const getAttempt = async (id, actor) => {
+// The signed-in owner of the Order, or whoever holds its guest access token, may read an attempt. Anyone else gets the
+// same 404 as for an unknown id.
+const getAttempt = async (id, actor, { guestToken } = {}) => {
     let attempt = await paymentRepository.getAttempt(id);
-    if (!attempt || String(attempt.userId || "") !== String(actor?.id || "")) {
+    const isOwner = Boolean(actor?.id) && Boolean(attempt?.userId) && String(attempt.userId) === String(actor.id);
+    if (!attempt || !(isOwner || tokenMatches(guestToken, attempt.guestAccessTokenHash))) {
         throw paymentError("PAYMENT_ATTEMPT_NOT_FOUND", "Không tìm thấy giao dịch thanh toán", 404);
     }
     if (attempt.status === "PENDING" && new Date(attempt.expiresAt) <= new Date()) {
@@ -179,13 +183,18 @@ const handleCallback = async (provider, { body, query }) => {
     if (typeof parsed.providerReference !== "string" || !Number.isSafeInteger(parsed.amount) || parsed.amount <= 0) {
         return { accepted: false, code: "INVALID_CALLBACK" };
     }
-    const result = await paymentRepository.processCallback({
+    const { firstTransition, ...result } = await paymentRepository.processCallback({
+        now: new Date(),
         provider,
         providerReference: parsed.providerReference,
         amount: parsed.amount,
         successful: parsed.successful,
         providerTransactionId: parsed.callbackReference
     });
+    // The repository reports the transition it performed, so only the call that made it SUCCEEDED sends the email.
+    if (firstTransition) {
+        void orderService.sendOrderConfirmation(result.attempt.orderId);
+    }
     return {
         accepted: result.outcome !== "NOT_FOUND" && result.outcome !== "AMOUNT_MISMATCH",
         code: result.outcome,

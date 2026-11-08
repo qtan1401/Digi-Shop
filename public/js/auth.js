@@ -59,13 +59,14 @@
         AUTH_CONFIGURATION: "Dịch vụ xác thực tạm thời không khả dụng.",
         INVALID_CREDENTIALS: "Thông tin đăng nhập không đúng.",
         EMAIL_UNVERIFIED: "Email chưa được xác minh. Hãy gửi lại email xác minh.",
-        PASSWORD_LOCKED: "Đăng nhập bằng mật khẩu đang bị khóa. Hãy dùng phục hồi mật khẩu.",
+        PASSWORD_LOCKED: "Đăng nhập bằng mật khẩu đang bị khóa. Hãy đặt lại mật khẩu.",
         GOOGLE_TOKEN_INVALID: "Không thể xác minh tài khoản Google. Hãy thử lại hoặc dùng mật khẩu.",
         GOOGLE_LINK_REQUIRES_PASSWORD: "Hãy xác nhận mật khẩu hiện tại để liên kết Google.",
         MAIL_UNAVAILABLE: "Không thể gửi email lúc này. Vui lòng thử lại sau.",
         RATE_LIMITED: "Bạn đã thử quá nhiều lần. Hãy chờ một lát rồi thử lại.",
         REFRESH_INVALID: "Phiên đã hết hạn. Vui lòng đăng nhập lại.",
         REFRESH_REUSED: "Phiên đã bị thu hồi vì lý do bảo mật. Vui lòng đăng nhập lại.",
+        RESET_TOKEN_INVALID: "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.",
         TOKEN_INVALID: "Liên kết xác minh không hợp lệ.",
         TOKEN_EXPIRED: "Liên kết xác minh đã hết hạn. Hãy gửi lại email mới.",
         CURRENT_PASSWORD_INVALID: "Mật khẩu hiện tại không đúng.",
@@ -430,28 +431,24 @@
             clearFormErrors(registerForm);
             showAuthMessage("");
             const email = registerForm.email.value.trim();
-            const username = registerForm.username.value.trim();
-            const password = registerForm.password.value;
-            const confirmation = registerForm.confirmPassword.value;
+            const fullName = registerForm.fullName.value.trim().replace(/\s+/g, " ");
+            const address = registerForm.address.value.trim();
             let invalid = false;
+            if (fullName.length < 2) { setFormError("fullName", "Nhập họ và tên (ít nhất 2 ký tự).", registerForm); invalid = true; }
+            if (address.length < 5) { setFormError("address", "Nhập địa chỉ giao hàng (ít nhất 5 ký tự).", registerForm); invalid = true; }
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setFormError("email", "Nhập email hợp lệ.", registerForm); invalid = true; }
-            const usernameMessage = usernameProblem(username);
-            if (usernameMessage) { setFormError("username", usernameMessage, registerForm); invalid = true; }
-            if (password.length < 6) { setFormError("password", "Mật khẩu phải có ít nhất 6 ký tự.", registerForm); invalid = true; }
-            if (password !== confirmation) { setFormError("confirmPassword", "Mật khẩu nhập lại chưa khớp.", registerForm); invalid = true; }
             if (invalid) { firstInvalid(registerForm)?.focus(); return; }
-            setSubmitBusy(registerForm, true, "Đang tạo tài khoản…");
+            setSubmitBusy(registerForm, true, "Đang gửi…");
             try {
-                const payload = await api("/api/auth/register", { method: "POST", body: { email, username, password } });
-                setVerificationContext({ email: email, maskedEmail: payload.data?.email });
+                await api("/api/auth/register", { method: "POST", body: { email, fullName, address } });
                 registerForm.reset();
-                window.location.assign("/verify-email.html");
+                registerForm.hidden = true;
+                showAuthMessage("Hãy kiểm tra email để đặt mật khẩu cho tài khoản.", "success");
             } catch (error) {
-                if (error.code === "USERNAME_TAKEN") setFormError("username", "Username đã được sử dụng. Hãy chọn tên khác.", registerForm);
-                else if (error.fields?.username) setFormError("username", usernameProblem(registerForm.username.value.trim()) || USERNAME_FORMAT_MESSAGE, registerForm);
+                if (error.fields?.fullName) setFormError("fullName", "Nhập họ và tên (ít nhất 2 ký tự).", registerForm);
+                if (error.fields?.address) setFormError("address", "Nhập địa chỉ giao hàng (ít nhất 5 ký tự).", registerForm);
+                if (error.fields?.email) setFormError("email", "Nhập email hợp lệ.", registerForm);
                 showAuthMessage(error.message, "error");
-                registerForm.password.value = "";
-                registerForm.confirmPassword.value = "";
             } finally { setSubmitBusy(registerForm, false); }
         });
 
@@ -516,7 +513,7 @@
         tick();
         window.setInterval(tick, 1000);
         resend?.addEventListener("click", async () => {
-            if (!context?.email) { status.textContent = "Hãy đăng ký lại hoặc nhập email trong trang phục hồi."; status.dataset.state = "error"; return; }
+            if (!context?.email) { status.textContent = "Hãy đăng ký lại hoặc nhập email trong trang quên mật khẩu."; status.dataset.state = "error"; return; }
             resend.disabled = true;
             try {
                 await api("/api/auth/resend-verification", { method: "POST", body: { email: context.email } });
@@ -540,9 +537,44 @@
             try {
                 await api("/api/auth/recover", { method: "POST", body: { email } });
                 form.reset();
-                showAuthMessage("Nếu email khớp với tài khoản, hướng dẫn phục hồi đã được gửi. Hãy kiểm tra hộp thư.", "success");
+                showAuthMessage("Nếu email khớp với tài khoản, link đặt lại mật khẩu đã được gửi.", "success");
             } catch (error) { showAuthMessage(error.message, "error"); }
             finally { setSubmitBusy(form, false); }
+        });
+    };
+
+    const initResetPage = () => {
+        const form = document.querySelector("#reset-form");
+        if (!form) return;
+        // The token leaves the address bar (history, screenshots) as soon as it is read.
+        const token = new URLSearchParams(window.location.search).get("token") || "";
+        window.history.replaceState({}, "", "/reset-password.html");
+        const showInvalid = () => {
+            form.hidden = true;
+            showAuthMessage("Liên kết không hợp lệ hoặc đã hết hạn.", "error");
+            document.querySelector("[data-reset-again]")?.removeAttribute("hidden");
+        };
+        if (!token) { showInvalid(); return; }
+        form.hidden = false;
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            clearFormErrors(form);
+            const newPassword = form.newPassword.value;
+            let invalid = false;
+            if (newPassword.length < 6) { setFormError("newPassword", "Mật khẩu mới phải có ít nhất 6 ký tự.", form); invalid = true; }
+            if (newPassword !== form.confirmPassword.value) { setFormError("confirmPassword", "Mật khẩu nhập lại chưa khớp.", form); invalid = true; }
+            if (invalid) { firstInvalid(form)?.focus(); return; }
+            setSubmitBusy(form, true, "Đang lưu…");
+            try {
+                await api("/api/auth/reset-password", { method: "POST", body: { token, newPassword } });
+                form.reset();
+                form.hidden = true;
+                showAuthMessage("Mật khẩu đã được đặt. Bạn có thể đăng nhập.", "success");
+                document.querySelector("[data-reset-login]")?.removeAttribute("hidden");
+            } catch (error) {
+                if (error.code === "RESET_TOKEN_INVALID") showInvalid();
+                else showAuthMessage(error.message, "error");
+            } finally { setSubmitBusy(form, false); }
         });
     };
 
@@ -593,6 +625,7 @@
         initAuthPage();
         initVerificationPage();
         initRecoveryPage();
+        initResetPage();
         initProfilePage();
         initForbiddenPage();
     };

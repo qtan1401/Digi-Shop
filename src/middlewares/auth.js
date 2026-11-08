@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { readAuthConfig, AuthConfigError } = require("../auth/config");
 const { findUserById } = require("../repositories/auth.repository");
+const { tokenFromRequest } = require("../services/guest-access");
 
 const parseCookies = (req, _res, next) => {
     const cookies = {};
@@ -35,7 +36,14 @@ const RATE_LIMITS = Object.freeze({
     login: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 30, identifierMax: 10 }),
     resend: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 10, identifierMax: 5 }),
     recover: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 10, identifierMax: 5 }),
-    refresh: Object.freeze({ windowMs: 60 * 1000, ipMax: 60, identifierMax: 60 })
+    // The reset body carries no email, so only the per-IP bucket applies.
+    reset: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 20, identifierMax: 20 }),
+    // Registration sends mail now, like recover.
+    register: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 20, identifierMax: 5 }),
+    refresh: Object.freeze({ windowMs: 60 * 1000, ipMax: 60, identifierMax: 60 }),
+    // Guest checkout creates accounts and sends mail; the quote only prices a cart, so it may be asked far more often.
+    guestCheckout: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 30, identifierMax: 10 }),
+    guestQuote: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 300, identifierMax: 120 })
 });
 
 const normalizeRateIdentifier = (value) =>
@@ -157,6 +165,16 @@ const requireRole = (...roles) => (req, res, next) => {
     return next();
 };
 
+// A guest has no session; a request carrying a guest order token in its header may pass, and the service then checks
+// the token against the Order. Without a token the route behaves exactly like requireRole.
+const requireRoleOrGuestToken = (...roles) => {
+    const roleGate = requireRole(...roles);
+    return (req, res, next) => {
+        if (tokenFromRequest(req)) return next();
+        return roleGate(req, res, next);
+    };
+};
+
 const originAllowed = (origin, origins) => typeof origin === "string" && origins.includes(origin);
 
 const requireCsrf = (req, res, next) => {
@@ -212,6 +230,7 @@ module.exports = {
     attachUser,
     requireAuth,
     requireRole,
+    requireRoleOrGuestToken,
     requireCsrf,
     requireGoogleCsrf,
     rateLimitAuth

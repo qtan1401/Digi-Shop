@@ -918,6 +918,8 @@ body.home { display: flex; flex-direction: column; line-height: 1.5; }
     border-bottom: 1px dashed var(--border);
 }
 
+.order-detail-row:empty { display: none; }
+
 .order-detail-row:last-child {
     border-bottom: none;
 }
@@ -1271,6 +1273,7 @@ body.home { display: flex; flex-direction: column; line-height: 1.5; }
     color: var(--text-primary);
     padding-top: 12px;
 }
+.cart-summary__row--note { font-size: 0.8125rem; padding-top: 0; }
 .cart-summary__free { color: var(--accent); font-weight: 600; }
 .cart-summary__divider { border-top: 1px solid var(--border); margin: 8px 0; }
 .cart-checkout-btn { width: 100%; margin-top: 16px; text-align: center; }

@@ -80,14 +80,19 @@ test("the total Discount does not depend on voucher order", () => {
 test("unusableReason: disabled, not started, expired, exhausted, and inclusive boundaries", () => {
     const start = new Date("2030-01-01T00:00:00.000Z");
     const end = new Date("2030-01-02T00:00:00.000Z");
-    const base = { code: "X1", isEnabled: true, startsAt: start, endsAt: end, quantity: 2, redeemedCount: 1 };
+    const base = { code: "ABC12", isEnabled: true, startsAt: start, endsAt: end, quantity: 2, redeemedCount: 1 };
     assert.equal(unusableReason(base, start), null);
     assert.equal(unusableReason(base, end), null);
     assert.equal(unusableReason(base, new Date(start.getTime() - 1)).reason, "NOT_STARTED");
     assert.equal(unusableReason(base, new Date(end.getTime() + 1)).reason, "EXPIRED");
     assert.equal(unusableReason({ ...base, isEnabled: false }, start).reason, "DISABLED");
     assert.equal(unusableReason({ ...base, redeemedCount: 2 }, start).reason, "EXHAUSTED");
-    assert.match(unusableReason({ ...base, redeemedCount: 2 }, start).message, /X1/);
+    assert.match(unusableReason({ ...base, redeemedCount: 2 }, start).message, /ABC12/);
+    // Codes from before the 5-character rule are never redeemable, whatever else is true of them.
+    for (const code of ["WELCOME10", "FREESHIP", "ABCD", "AB-12", ""]) {
+        assert.equal(unusableReason({ ...base, code }, start).reason, "NOT_FOUND", code);
+    }
+    assert.equal(unusableReason({ ...base, code: "abc12" }, start), null, "stored case does not matter");
 });
 
 test("property: invariants hold over many random carts and voucher sets", () => {

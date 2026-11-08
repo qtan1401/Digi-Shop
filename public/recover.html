@@ -37,13 +37,11 @@
     <main class="state-main">
         <section class="state-card" aria-labelledby="recover-title">
             <div class="state-card__mark" aria-hidden="true">↺</div>
-            <p class="auth-kicker">Account recovery</p>
-            <h1 id="recover-title">Phục hồi quyền truy cập</h1>
-            <p>Nhập email đã đăng ký. Nếu thông tin hợp lệ, chúng tôi sẽ gửi hướng dẫn và mật khẩu tạm thời.</p>
+            <h1 id="recover-title">Quên mật khẩu</h1>
             <div class="auth-message" data-auth-message role="status" aria-live="polite" hidden></div>
             <form class="auth-form" id="recovery-form" novalidate style="max-width:430px;margin:26px auto 0;text-align:left;">
                 <div class="auth-field"><label for="recovery-email">Email</label><input id="recovery-email" name="email" type="email" autocomplete="email" required aria-describedby="recovery-email-error"><span class="auth-field__error" data-field-error="email" id="recovery-email-error" aria-live="polite"></span></div>
-                <button class="auth-submit" type="submit">Gửi hướng dẫn phục hồi</button>
+                <button class="auth-submit" type="submit">Gửi link đặt lại mật khẩu</button>
             </form>
             <div class="state-card__actions"><a class="secondary" href="/auth.html">Quay lại đăng nhập</a></div>
         </section>

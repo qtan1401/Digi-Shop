@@ -85,6 +85,44 @@
 .profile-form { max-width: 470px; display: grid; gap: 15px; margin-top: 28px; }
 .profile-form .auth-submit { margin-top: 4px; }
 .profile-warning { margin-top: 20px; border: 1px solid rgba(230,126,34,.35); border-radius: var(--radius-sm); padding: 12px 14px; background: rgba(230,126,34,.08); color: #8d5415; font-size: .8rem; }
+.profile-main { display: grid; gap: 20px; }
+.profile-card__section { font: 700 1.2rem var(--font-display); letter-spacing: -.02em; }
+.profile-form .profile-card__section { margin-bottom: -4px; }
+.profile-card > .profile-card__section + .profile-form { margin-top: 18px; }
+.profile-form__hint { font-size: .76rem; color: var(--text-muted); }
+.profile-form__status { font-size: .78rem; color: var(--accent); }
+.profile-form__status[data-state="error"] { color: #922d23; }
+.profile-form input[readonly] { background: var(--bg-secondary, var(--bg-primary)); color: var(--text-muted); }
+/* Saved delivery addresses */
+.addr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.addr-head__count { margin-top: 4px; color: var(--text-muted); font-size: .76rem; }
+.addr-list { display: grid; gap: 12px; margin: 18px 0 0; padding: 0; list-style: none; }
+.addr-item { display: grid; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 16px; background: var(--bg-primary); }
+.addr-item--default { border-color: var(--accent); background: var(--accent-light); }
+.addr-item__top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.addr-item__name { font-weight: 600; font-size: .9rem; }
+.addr-item__phone { color: var(--text-secondary); font-size: .84rem; }
+.addr-item__line { color: var(--text-secondary); font-size: .86rem; overflow-wrap: anywhere; }
+.addr-badge { border-radius: 999px; padding: 2px 9px; background: var(--accent); color: #fff; font-size: .68rem; font-weight: 600; }
+.addr-item__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.addr-btn { min-height: 40px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 14px; background: var(--bg-surface); color: var(--text-secondary); font: 600 .78rem var(--font-body); cursor: pointer; }
+.addr-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.addr-btn:disabled { cursor: wait; opacity: .55; }
+.addr-btn:focus-visible { outline: 3px solid rgba(27,94,59,.25); outline-offset: 2px; }
+.addr-btn--primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.addr-btn--primary:hover:not(:disabled) { background: var(--accent-hover); color: #fff; }
+.addr-btn--danger { color: #922d23; }
+.addr-btn--danger:hover:not(:disabled) { border-color: #b6372b; color: #922d23; }
+.addr-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: .8rem; color: #922d23; }
+.addr-status { margin-top: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; font-size: .82rem; color: var(--text-secondary); }
+.addr-status[data-state="error"] { border-color: rgba(192,57,43,.28); background: rgba(192,57,43,.06); color: #922d23; }
+.addr-status[data-state="success"] { border-color: rgba(27,94,59,.24); background: var(--accent-light); color: var(--accent); }
+.addr-status .addr-btn { margin-left: 10px; min-height: 34px; }
+.addr-empty { border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 22px 16px; color: var(--text-muted); font-size: .84rem; text-align: center; }
+.addr-form { display: grid; gap: 14px; margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px; }
+.addr-form__title { font: 600 1rem var(--font-body); }
+.addr-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.addr-form__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .auth-skip { position: absolute; top: 8px; left: 8px; transform: translateY(-200%); padding: 8px 12px; background: var(--bg-surface); color: var(--accent); }
 .auth-skip:focus { transform: translateY(0); }
 @media (max-width: 780px) {
@@ -98,6 +136,10 @@
     .auth-main { width: min(100% - 22px, 520px); padding-top: 22px; }
     .auth-card, .state-card, .profile-card { padding: 20px 16px; }
     .auth-options { align-items: flex-start; flex-direction: column; }
+    .addr-head { flex-direction: column; }
+    .addr-form__grid { grid-template-columns: 1fr; }
+    .addr-form__actions .addr-btn, .addr-item__actions .addr-btn { flex: 1 1 auto; }
     .auth-nav { gap: 8px; }
     .auth-nav__login, .auth-nav__register { font-size: .74rem; }
 }
+.auth-form[hidden] { display: none; }

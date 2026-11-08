@@ -183,6 +183,40 @@
         }
     };
 
+    // Guest order: a guest has no session, so the order they just placed and its access token stay in this tab's
+    // sessionStorage for an hour. That is how the payment page (and the return from MoMo/VNPay) keeps polling and
+    // retrying without signing in. Never written for a signed-in buyer; dropped once it expires or is cleared.
+    const GUEST_ORDER_KEY = "digi_guest_order_v1";
+    const GUEST_ORDER_TTL_MS = 60 * 60 * 1000;
+
+    const saveGuestOrder = (order, email) => {
+        if (!order || typeof order !== "object" || typeof order.guestAccessToken !== "string" || !order.guestAccessToken) return false;
+        const { guestAccessToken, ...rest } = order;
+        const attempt = rest.paymentAttempt ? { ...rest.paymentAttempt, qrDataUrl: null, paymentUrl: null } : undefined;
+        const now = Date.now();
+        return storageSet(GUEST_ORDER_KEY, JSON.stringify({
+            version: 1,
+            createdAt: now,
+            expiresAt: now + GUEST_ORDER_TTL_MS,
+            token: guestAccessToken,
+            email: typeof email === "string" ? email.slice(0, 320) : "",
+            order: attempt ? { ...rest, paymentAttempt: attempt } : rest
+        }));
+    };
+
+    const readGuestOrder = () => {
+        const raw = storageGet(GUEST_ORDER_KEY);
+        if (!raw) return null;
+        try {
+            const value = JSON.parse(raw);
+            if (value?.version === 1 && typeof value.token === "string" && value.order && Number(value.expiresAt) > Date.now()) return value;
+        } catch (_) { /* fall through and drop it */ }
+        storageRemove(GUEST_ORDER_KEY);
+        return null;
+    };
+
+    const clearGuestOrder = () => storageRemove(GUEST_ORDER_KEY);
+
     const clearMergeReport = () => storageRemove(MERGE_REPORT_KEY);
     const removeMergeAdjustment = (variantId) => {
         const id = toInteger(variantId);
@@ -206,6 +240,9 @@
         saveMergeReport,
         readMergeReport,
         clearMergeReport,
+        saveGuestOrder,
+        readGuestOrder,
+        clearGuestOrder,
         removeMergeAdjustment,
         normalizeItem,
         normalizeForm

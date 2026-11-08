@@ -8,8 +8,12 @@ const crypto = require("node:crypto");
 const productRepository = require("../repositories/product.repository");
 const checkoutRepository = require("../repositories/checkout.repository");
 const paymentService = require("./payment.service");
+const orderService = require("./order.service");
+const guestAccount = require("./guest-account.service");
+const guestAccess = require("./guest-access");
 const { calculateShipping } = require("./cart.service");
 const { VoucherRuleError, assertCombination, normalizeCode } = require("./voucher-calculator");
+const { PointsError, parsePointsToUse, earnedPoints } = require("./loyalty-calculator");
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
@@ -59,12 +63,40 @@ const buildPaymentAttempt = (method, orderId, amount) => {
         expiresAt: new Date(Date.now() + 5 * 60 * 1000)
     };
 };
-const initializePaymentOrRetainOrder = async (order, attempt, userId, request) => {
+const initializePaymentOrRetainOrder = async (order, attempt, buyer, request) => {
     try {
         return await paymentService.initializeAttempt(order, attempt, request);
     } catch {
-        return paymentService.getAttempt(attempt.id, { id: userId });
+        return paymentService.getAttempt(attempt.id, buyer.userId ? { id: buyer.userId, role: "user" } : null, { guestToken: buyer.token });
     }
+};
+
+/**
+ * Who the Order belongs to. A signed-in buyer is just their user id. A guest (`guest.email`, already validated and
+ * normalised) is attached to the customer account of that email, created here when there is none, and gets a fresh
+ * access token. Runs after the request was validated and before the checkout transaction opens.
+ */
+const resolveBuyer = async (userId, guest, customerName) => {
+    if (!guest) return { userId };
+    const account = await guestAccount.resolveBuyer({ email: guest.email, fullName: customerName });
+    const { token, hash } = guestAccess.issueToken();
+    return { userId: account.userId, created: account.created, email: guest.email, token, hash };
+};
+
+const guestOrderFields = (buyer) => buyer.token ? { customerEmail: buyer.email, guestAccessTokenHash: buyer.hash } : {};
+
+/** After the transaction committed: the guest gets the one-time token, and a brand-new account its welcome email. */
+const finishGuestOrder = (order, buyer) => {
+    if (!buyer.token) return order;
+    if (buyer.created) void guestAccount.sendAccountEmail(buyer.email);
+    return { ...order, guestAccessToken: buyer.token };
+};
+
+// Orders paid on delivery (COD, bank transfer) are confirmed once created; MoMo/VNPay orders are confirmed by
+// the payment service when the provider reports success. Called only after the checkout transaction committed;
+// the sender never rejects, and is deliberately not awaited so SMTP latency cannot delay the response.
+const confirmAfterCommit = (orderId) => {
+    void orderService.sendOrderConfirmation(orderId);
 };
 
 const generateOrderId = () => {
@@ -99,13 +131,36 @@ const normalizeVoucherCodes = (voucherCodes) => {
 
 /**
  * The single pricing step shared by buy-now and cart checkout. Runs inside the checkout
- * transaction (via redeemVouchers) so the Discount, order total and payment amount all
- * come from the same locked voucher state.
+ * transaction (via redeemVouchers, then redeemPoints) so the Discount, points, order total and payment
+ * amount all come from the same locked voucher and balance state. totalPrice = subtotal + shipping - discount - pointsDiscount.
  */
-const priceOrder = async (redeemVouchers, subtotal, shippingFee) => {
-    const { discount, totalPrice } = await redeemVouchers({ subtotal, shippingFee });
-    return { discount, totalPrice };
+const priceOrder = async ({ redeemVouchers, redeemPoints }, subtotal, shippingFee, formattedPayment) => {
+    const { discount, totalPrice: payable } = await redeemVouchers({ subtotal, shippingFee });
+    const points = await redeemPoints({ payable });
+    if (points.totalPrice < 1 && (formattedPayment === "MOMO" || formattedPayment === "VNPAY")) {
+        throw new PointsError(
+            "POINTS_TOTAL_ZERO",
+            `Điểm đã dùng bù hết tổng thanh toán nên không thể thanh toán qua ${formattedPayment === "MOMO" ? "MoMo" : "VNPay"}. Hãy chọn COD hoặc chuyển khoản, hoặc dùng ít điểm hơn.`
+        );
+    }
+    return {
+        discount,
+        pointsRedeemed: points.used,
+        pointsDiscount: points.discount,
+        totalPrice: points.totalPrice,
+        // Same for every order: whether an account is credited is the repository's call, so the response never tells
+        // an administrator's email from a customer's.
+        pointsEarned: earnedPoints(points.totalPrice)
+    };
 };
+
+const pricingFields = (pricing) => ({
+    discount: pricing.discount,
+    pointsRedeemed: pricing.pointsRedeemed,
+    pointsDiscount: pricing.pointsDiscount,
+    pointsEarned: pricing.pointsEarned,
+    totalPrice: pricing.totalPrice
+});
 
 // ─── Mua ngay 1 sản phẩm ─────────────────────────────────────────────────────
 
@@ -142,10 +197,11 @@ const checkVariant = async (variantId, quantity = 1) => {
 /**
  * Thanh toán 1 sản phẩm (Mua ngay) — giữ nguyên tương thích
  */
-const processCheckout = async (userId, checkoutData, request) => {
-    userId = requireUserId(userId);
-    const { variantId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "", voucherCodes } = checkoutData;
+const processCheckout = async (userId, checkoutData, request, guest) => {
+    if (!guest) userId = requireUserId(userId);
+    const { variantId, quantity = 1, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "", voucherCodes, pointsToUse } = checkoutData;
     const codes = normalizeVoucherCodes(voucherCodes);
+    const points = parsePointsToUse(pointsToUse);
     if (!variantId) throw new Error("Vui lòng cung cấp ID phiên bản sản phẩm.");
 
     validateCustomer({ customerName, customerPhone, customerAddress });
@@ -158,11 +214,12 @@ const processCheckout = async (userId, checkoutData, request) => {
         throw new Error("Không tìm thấy phiên bản sản phẩm cần thanh toán.");
     }
 
+    const buyer = await resolveBuyer(userId, guest, customerName);
     try {
         const result = await checkoutRepository.checkout(
             [{ variantId: normalizedVariantId, quantity: qty }],
-            userId,
-            async ([{ variant }], { redeemVouchers }) => {
+            buyer.userId,
+            async ([{ variant }], pricers) => {
                 if (!variant) throw new Error("Không tìm thấy phiên bản sản phẩm cần thanh toán.");
                 if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
                 if (variant.isActive !== true) throw new Error("Phiên bản sản phẩm hiện không khả dụng.");
@@ -171,10 +228,11 @@ const processCheckout = async (userId, checkoutData, request) => {
 
                 const subtotal = variant.price * qty;
                 const shippingFee = calculateShipping(subtotal);
-                const pricing = await priceOrder(redeemVouchers, subtotal, shippingFee);
+                const pricing = await priceOrder(pricers, subtotal, shippingFee, formattedPayment);
                 const timestamp = now();
                 const orderData = {
                     id: generateOrderId(),
+                    ...guestOrderFields(buyer),
                     items: [{
                         variantId: variant.id,
                         name: variant.name,
@@ -187,8 +245,7 @@ const processCheckout = async (userId, checkoutData, request) => {
                     }],
                     subtotal,
                     shippingFee,
-                    discount: pricing.discount,
-                    totalPrice: pricing.totalPrice,
+                    ...pricingFields(pricing),
                     customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
                     paymentMethod: formattedPayment,
                     orderStatus: "PENDING",
@@ -199,18 +256,20 @@ const processCheckout = async (userId, checkoutData, request) => {
                 orderData.paymentAttempt = buildPaymentAttempt(formattedPayment, orderData.id, orderData.totalPrice);
                 return orderData;
             },
-            { voucherCodes: codes }
+            { voucherCodes: codes, pointsToUse: guest ? 0 : points, allowUnowned: Boolean(guest) }
         );
 
         let order = result.order;
         if (result.paymentAttempt) {
             order = {
                 ...order,
-                paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, userId, request)
+                paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, buyer, request)
             };
+        } else {
+            confirmAfterCommit(order.id);
         }
         return {
-            order,
+            order: finishGuestOrder(order, buyer),
             remainingStock: result.remainingStockByVariantId[normalizedVariantId]
         };
     } catch (error) {
@@ -230,9 +289,10 @@ const processCheckout = async (userId, checkoutData, request) => {
  * Body: { items: [{ variantId, quantity }], customerName, customerPhone,
  *         customerAddress, paymentMethod, note }
  */
-const processCartCheckout = async (userId, { items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "", voucherCodes }, request) => {
+const processCartCheckout = async (userId, { items, customerName, customerPhone, customerAddress, paymentMethod = "COD", note = "", voucherCodes, pointsToUse }, request, guest) => {
     const codes = normalizeVoucherCodes(voucherCodes);
-    userId = requireUserId(userId);
+    const points = parsePointsToUse(pointsToUse);
+    if (!guest) userId = requireUserId(userId);
     if (!Array.isArray(items) || items.length === 0) {
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
@@ -255,8 +315,9 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
     const normalizedItems = [...qtyMap.entries()]
         .map(([variantId, quantity]) => ({ variantId, quantity }));
 
+    const buyer = await resolveBuyer(userId, guest, customerName);
     try {
-        const result = await checkoutRepository.checkout(normalizedItems, userId, async (lockedItems, { redeemVouchers }) => {
+        const result = await checkoutRepository.checkout(normalizedItems, buyer.userId, async (lockedItems, pricers) => {
             const validatedItems = lockedItems.map(({ variantId, quantity: qty, variant }) => {
                 if (!variant) throw new Error(`Phiên bản ID ${variantId} không tồn tại.`);
                 if (variant.isDeleted === true) throw new Error(discontinuedProductMessage(variant));
@@ -278,15 +339,15 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
             }));
             const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
             const shippingFee = calculateShipping(subtotal);
-            const pricing = await priceOrder(redeemVouchers, subtotal, shippingFee);
+            const pricing = await priceOrder(pricers, subtotal, shippingFee, formattedPayment);
             const timestamp = now();
             const orderData = {
                 id: generateOrderId(),
+                ...guestOrderFields(buyer),
                 items: orderItems,
                 subtotal,
                 shippingFee,
-                discount: pricing.discount,
-                totalPrice: pricing.totalPrice,
+                ...pricingFields(pricing),
                 customer: buildCustomer({ customerName, customerPhone, customerAddress, note }),
                 paymentMethod: formattedPayment,
                 orderStatus: "PENDING",
@@ -296,13 +357,15 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
             };
             orderData.paymentAttempt = buildPaymentAttempt(formattedPayment, orderData.id, orderData.totalPrice);
             return orderData;
-        }, { voucherCodes: codes });
+        }, { voucherCodes: codes, pointsToUse: guest ? 0 : points, allowUnowned: Boolean(guest) });
 
         let order = result.order;
         if (result.paymentAttempt) {
-            order = { ...order, paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, userId, request) };
+            order = { ...order, paymentAttempt: await initializePaymentOrRetainOrder(order, result.paymentAttempt, buyer, request) };
+        } else {
+            confirmAfterCommit(order.id);
         }
-        return { order };
+        return { order: finishGuestOrder(order, buyer) };
     } catch (error) {
         if (!(error instanceof checkoutRepository.CheckoutStockConflictError)) throw error;
         const variant = error.variant;

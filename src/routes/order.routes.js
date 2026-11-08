@@ -3,7 +3,7 @@
 
 const express = require("express");
 const orderController = require("../controllers/order.controller");
-const { requireRole, requireCsrf } = require("../middlewares/auth");
+const { requireRole, requireRoleOrGuestToken, requireCsrf } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -13,8 +13,8 @@ router.get("/", requireRole("admin"), orderController.getAllOrders);
 // [GET] /api/orders/mine → Đơn hàng của khách đang đăng nhập (User only; trước /:id)
 router.get("/mine", requireRole("user"), orderController.getMyOrders);
 
-// [GET] /api/orders/:id → Chi tiết đơn hàng (chủ đơn hoặc Admin)
-router.get("/:id", requireRole("user", "admin"), orderController.getOrderDetail);
+// [GET] /api/orders/:id → Chi tiết đơn hàng (chủ đơn, Admin, hoặc khách giữ guest token của đơn)
+router.get("/:id", requireRoleOrGuestToken("user", "admin"), orderController.getOrderDetail);
 
 // [PATCH] /api/orders/:id/status → Cập nhật orderStatus (Admin only)
 router.patch("/:id/status", requireRole("admin"), requireCsrf, orderController.updateOrderStatus);

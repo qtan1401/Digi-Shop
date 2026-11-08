@@ -7,8 +7,12 @@ const { GoogleIdentityVerifier } = require("../auth/google-verifier");
 const { NodemailerSmtpMailer } = require("../auth/mailer");
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_MAX_LENGTH = 320;
 const PASSWORD_MIN_LENGTH = 6;
 const VERIFICATION_TTL_MS = 15 * 60 * 1000;
+const RESET_TTL_MS = 30 * 60 * 1000;
+const ADDRESS_MIN_LENGTH = 5;
+const ADDRESS_MAX_LENGTH = 500;
 const DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$YWJjZGVmZ2hpamtsbW5vcA$B5xV7V6J8R3m9Y3s3VQJ8VQ2JmN6nZ8uJfYw2cY5e9k";
 
 class AuthError extends Error {
@@ -21,6 +25,7 @@ class AuthError extends Error {
     }
 }
 
+const isEmailAddress = (email) => typeof email === "string" && email.length <= EMAIL_MAX_LENGTH && EMAIL_PATTERN.test(email);
 const normalizeEmail = (value) => typeof value === "string" ? value.normalize("NFKC").trim().toLowerCase() : "";
 const normalizeUsername = (value) => typeof value === "string" ? value.normalize("NFKC").trim().toLowerCase() : "";
 const hashOpaque = (value) => crypto.createHash("sha256").update(value, "utf8").digest("hex");
@@ -29,6 +34,7 @@ const userSummary = (user) => user && ({
     id: user.id,
     email: user.email || undefined,
     username: user.username || undefined,
+    fullName: user.fullName || undefined,
     role: user.role,
     status: user.status,
     forcePasswordChange: Boolean(user.forcePasswordChange)
@@ -39,6 +45,10 @@ const maskEmail = (email) => {
     return `${local.slice(0, 1)}***@${domain}`;
 };
 const validPassword = (password) => typeof password === "string" && password.length >= PASSWORD_MIN_LENGTH && password.length <= 1024;
+const FULL_NAME_MIN_LENGTH = 2;
+const FULL_NAME_MAX_LENGTH = 200;
+const cleanFullName = (value) => typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+const validFullName = (value) => value.length >= FULL_NAME_MIN_LENGTH && value.length <= FULL_NAME_MAX_LENGTH;
 const isUniqueConflict = (error) => error && error.code === "P2002";
 
 const USERNAME_MIN_LENGTH = 3;
@@ -104,63 +114,71 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         return { accessToken, refreshToken, csrfToken, refreshExpiresAt, remembered: Boolean(remember) };
     };
 
-    const register = async ({ email, password, username }) => {
+    // Runs after the HTTP response has been decided, so neither the answer nor its timing reveals whether the email
+    // is known, eligible, or whether mail could be sent. Failures are logged without the address or the token.
+    const inBackground = (label, work) => {
+        Promise.resolve().then(work).catch((error) => {
+            console.error(`${label} failed:`, error?.code || error?.name || "error");
+        });
+    };
+
+    // A password link (set for a new account, reset for an existing one). Storing a new token voids earlier ones.
+    const sendPasswordLink = async (user, kind) => {
+        const rawToken = randomToken();
+        const expiresAt = new Date(Date.now() + RESET_TTL_MS);
+        await authRepository.createPasswordResetToken({ userId: user.id, tokenHash: hashOpaque(rawToken), expiresAt });
+        await getMailer().sendPasswordResetEmail({ to: user.email, token: rawToken, expiresAt, kind });
+    };
+
+    // Accounts that may receive a password link: an active customer, or a passwordless one (guest checkout or
+    // registration) whose mailbox is not proven yet.
+    const isPasswordlessAccount = (user) => user.role === "user" && user.status === "UNVERIFIED" && !user.passwordHash;
+    const canReceivePasswordLink = (user) => user.role === "user" && (user.status === "ACTIVE" || isPasswordlessAccount(user));
+
+    // Registration takes only email, full name and shipping address. It always answers the same way; the account is
+    // created in the background as a passwordless one and the password is set through the emailed link.
+    const register = async ({ email, fullName, address } = {}) => {
         const normalizedEmail = normalizeEmail(email);
-        const trimmedUsername = cleanUsername(username);
-        if (!EMAIL_PATTERN.test(normalizedEmail) || !validPassword(password) || !validUsername(trimmedUsername)) {
-            throw new AuthError("VALIDATION_FAILED", "Email, mật khẩu hoặc username không hợp lệ", 400, {
-                email: !EMAIL_PATTERN.test(normalizedEmail),
-                password: !validPassword(password),
-                username: !validUsername(trimmedUsername)
+        const cleanName = cleanFullName(fullName);
+        const addressLine = typeof address === "string" ? address.trim() : "";
+        const addressInvalid = addressLine.length < ADDRESS_MIN_LENGTH || addressLine.length > ADDRESS_MAX_LENGTH;
+        if (!EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > EMAIL_MAX_LENGTH || !validFullName(cleanName) || addressInvalid) {
+            throw new AuthError("VALIDATION_FAILED", "Thông tin đăng ký không hợp lệ", 400, {
+                email: !EMAIL_PATTERN.test(normalizedEmail) || normalizedEmail.length > EMAIL_MAX_LENGTH,
+                fullName: !validFullName(cleanName),
+                address: addressInvalid
             });
         }
+        inBackground("Registration", () => completeRegistration({ email: normalizedEmail, fullName: cleanName, addressLine }));
+        return { accepted: true };
+    };
 
-        const existing = await authRepository.findUserByEmail(normalizedEmail);
-        if (existing) {
-            if (existing.status === "UNVERIFIED") {
-                try {
-                    await sendVerification(existing);
-                } catch {
-                    // Preserve the generic duplicate response; resend remains available.
-                }
+    const completeRegistration = async ({ email, fullName, addressLine }) => {
+        let user = await authRepository.findUserByEmail(email);
+        if (!user) {
+            try {
+                user = await authRepository.createUser({
+                    id: crypto.randomUUID(),
+                    email,
+                    fullName,
+                    role: "user",
+                    status: "UNVERIFIED",
+                    failedPasswordAttempts: 0,
+                    forcePasswordChange: false,
+                    authVersion: 1,
+                    // The first address is created atomically with the account. Registration collects no phone;
+                    // the empty string is replaced when the customer edits the address, and checkout asks for it.
+                    addresses: { create: [{ id: crypto.randomUUID(), recipientName: fullName, phone: "", addressLine, isDefault: true }] }
+                });
+            } catch (error) {
+                if (!isUniqueConflict(error)) throw error;
+                user = await authRepository.findUserByEmail(email);
+                if (!user) return;
             }
-            return { email: maskEmail(normalizedEmail), verificationRequired: true, duplicate: true };
         }
-
-        // Email duplicates are answered first so the response never reveals whether an email exists via the username error.
-        if (await authRepository.findUserByUsername(trimmedUsername)) throw usernameTakenError();
-
-        const passwordHash = await hashPassword(password);
-        let user;
-        try {
-            user = await authRepository.createUser({
-                id: crypto.randomUUID(),
-                email: normalizedEmail,
-                username: trimmedUsername,
-                passwordHash,
-                role: "user",
-                status: "UNVERIFIED",
-                failedPasswordAttempts: 0,
-                forcePasswordChange: false,
-                authVersion: 1
-            });
-        } catch (error) {
-            if (!isUniqueConflict(error)) throw error;
-            if (await authRepository.findUserByEmail(normalizedEmail)) {
-                return { email: maskEmail(normalizedEmail), verificationRequired: true, duplicate: true };
-            }
-            throw usernameTakenError();
-        }
-
-        let verificationSent = true;
-        try {
-            await sendVerification(user);
-        } catch (error) {
-            if (error && error.code === "AUTH_CONFIGURATION") verificationSent = false;
-            else if (error && error.code === "MAIL_UNAVAILABLE") verificationSent = false;
-            else verificationSent = false;
-        }
-        return { email: maskEmail(normalizedEmail), verificationRequired: true, verificationSent };
+        if (isPasswordlessAccount(user)) return sendPasswordLink(user, "set");
+        // A legacy account that registered with a password and never verified keeps its verification link.
+        if (user.role === "user" && user.status === "UNVERIFIED" && user.passwordHash) return sendVerification(user);
     };
 
     const sendVerification = async (user) => {
@@ -179,6 +197,19 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         }
     };
 
+    // A guest account (UNVERIFIED, no password) must not be verified by link: that would make it ACTIVE with no way
+    // to log in. Its owner is pointed to the recover flow instead; the typed password is never stored here because
+    // the mailbox is not proven yet.
+    const sendGuestNotice = async (user) => {
+        try {
+            await getMailer().sendGuestAccountEmail({ to: user.email });
+        } catch {
+            throw new AuthError("MAIL_UNAVAILABLE", "Email service is unavailable", 503);
+        }
+    };
+
+    const sendVerificationOrGuestNotice = (user) => user.passwordHash ? sendVerification(user) : sendGuestNotice(user);
+
     const verifyEmail = async (token) => {
         if (typeof token !== "string" || token.length < 20 || token.length > 256) {
             throw new AuthError("TOKEN_INVALID", "Verification token is invalid", 400);
@@ -193,7 +224,7 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         const normalizedEmail = normalizeEmail(email);
         if (!EMAIL_PATTERN.test(normalizedEmail)) return { accepted: true };
         const user = await authRepository.findUserByEmail(normalizedEmail);
-        if (user && user.status === "UNVERIFIED") await sendVerification(user);
+        if (user && user.status === "UNVERIFIED") await sendVerificationOrGuestNotice(user);
         return { accepted: true };
     };
 
@@ -337,21 +368,27 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         if (resolvedUserId) await authRepository.revokeUserSessionsAndIncrementVersion(resolvedUserId);
     };
 
+    // Always answers the same. It only stores a token and mails a link; the password, lock and sessions stay as they are
+    // until the owner opens the link and chooses a new password (resetPassword).
     const recover = async (email) => {
         const normalizedEmail = normalizeEmail(email);
         if (!EMAIL_PATTERN.test(normalizedEmail)) return { accepted: true };
-        const user = await authRepository.findUserByEmail(normalizedEmail);
-        if (!user || user.role !== "user" || user.status !== "ACTIVE") return { accepted: true };
-        const temporaryPassword = randomToken(18);
-        const passwordHash = await hashPassword(temporaryPassword);
-        try {
-            await getMailer().sendTemporaryPasswordEmail({ to: user.email, temporaryPassword });
-        } catch {
-            throw new AuthError("MAIL_UNAVAILABLE", "Email service is unavailable", 503);
-        }
-        const committed = await authRepository.commitRecovery({ userId: user.id, expectedAuthVersion: user.authVersion, passwordHash });
-        if (!committed) return { accepted: true, concurrentChange: true };
+        inBackground("Password reset mail", async () => {
+            const user = await authRepository.findUserByEmail(normalizedEmail);
+            if (!user || !canReceivePasswordLink(user)) return;
+            await sendPasswordLink(user, isPasswordlessAccount(user) ? "set" : "reset");
+        });
         return { accepted: true };
+    };
+
+    const resetPassword = async ({ token, newPassword } = {}) => {
+        const invalid = () => new AuthError("RESET_TOKEN_INVALID", "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn", 400);
+        if (typeof token !== "string" || token.length < 20 || token.length > 256) throw invalid();
+        if (!validPassword(newPassword)) throw new AuthError("VALIDATION_FAILED", "Password is invalid", 400, { password: true });
+        const passwordHash = await hashPassword(newPassword);
+        const result = await authRepository.resetPasswordWithToken({ tokenHash: hashOpaque(token), passwordHash, now: new Date() });
+        if (result.state !== "RESET") throw invalid();
+        return { reset: true };
     };
 
     const changePassword = async ({ user, currentPassword, newPassword }) => {
@@ -393,7 +430,29 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         return { user: userSummary(updated) };
     };
 
-    return { register, verifyEmail, resendVerification, loginPassword, loginGoogle, refresh, logout, recover, changePassword, setUsername, issueSession };
+    const requireCustomer = async (user) => {
+        if (!user || !user.id) throw new AuthError("AUTH_REQUIRED", "Authentication is required", 401);
+        const current = await authRepository.findUserById(user.id);
+        if (!current || current.role !== "user") throw new AuthError("FORBIDDEN", "You do not have permission for this resource", 403);
+        return current;
+    };
+
+    const getProfile = async ({ user }) => {
+        const current = await requireCustomer(user);
+        return { profile: { email: current.email || undefined, username: current.username || undefined, fullName: current.fullName || "", loyaltyPoints: current.loyaltyPoints ?? 0 } };
+    };
+
+    const updateProfile = async ({ user, fullName }) => {
+        await requireCustomer(user);
+        const cleanName = cleanFullName(fullName);
+        if (!validFullName(cleanName)) {
+            throw new AuthError("VALIDATION_FAILED", "Họ và tên phải có 2-200 ký tự", 400, { fullName: true });
+        }
+        const updated = await authRepository.updateFullName({ userId: user.id, fullName: cleanName });
+        return { profile: { email: updated.email || undefined, username: updated.username || undefined, fullName: updated.fullName || "", loyaltyPoints: updated.loyaltyPoints ?? 0 } };
+    };
+
+    return { getProfile, updateProfile, register, verifyEmail, resendVerification, loginPassword, loginGoogle, refresh, logout, recover, resetPassword, changePassword, setUsername, issueSession };
 }
 
 const defaultService = createAuthService();
@@ -401,6 +460,7 @@ module.exports = {
     AuthError,
     createAuthService,
     normalizeEmail,
+    isEmailAddress,
     normalizeUsername,
     hashOpaque,
     hashPassword,
@@ -409,5 +469,7 @@ module.exports = {
     validUsername,
     usernameProblem,
     maskEmail,
+    isUniqueConflict,
+    FULL_NAME_MAX_LENGTH,
     ...defaultService
 };

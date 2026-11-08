@@ -36,11 +36,46 @@
     </header>
     <main class="profile-main">
         <section class="profile-card" aria-labelledby="profile-title">
-            <p class="auth-kicker">Account security</p>
+            <p class="auth-kicker">Tài khoản</p>
             <h1 id="profile-title">Hồ sơ của bạn</h1>
             <p class="profile-card__identity">Đang đăng nhập: <strong data-profile-identity>tài khoản</strong></p>
-            <div class="profile-warning" data-force-password hidden role="alert">Tài khoản quản trị mới cần đổi mật khẩu trước khi sử dụng các chức năng quản trị.</div>
+            <div class="profile-warning" data-force-password hidden role="alert">Bạn cần đổi mật khẩu trước khi tiếp tục.</div>
             <div class="auth-message" data-auth-message role="status" aria-live="polite" hidden></div>
+            <form class="profile-form" id="profile-info-form" data-customer-only novalidate hidden>
+                <h2 class="profile-card__section">Thông tin cá nhân</h2>
+                <div class="auth-field"><label for="profile-email">Email</label><input id="profile-email" name="email" type="email" readonly aria-readonly="true"></div>
+                <div class="auth-field"><label for="profile-points">Điểm thưởng</label><input id="profile-points" name="points" type="text" readonly aria-readonly="true" aria-describedby="profile-points-hint"><span class="profile-form__hint" id="profile-points-hint">Mỗi đơn hàng tích lũy 10% giá trị thành điểm (1 điểm = 1.000₫). Dùng điểm ngay ở bước thanh toán của đơn tiếp theo.</span></div>
+                <div class="auth-field"><label for="profile-fullname">Họ và tên</label><input id="profile-fullname" name="fullName" type="text" autocomplete="name" minlength="2" maxlength="200" required aria-describedby="profile-fullname-error"><span class="auth-field__error" data-field-error="fullName" id="profile-fullname-error" aria-live="polite"></span></div>
+                <div class="profile-form__status" data-info-status role="status" aria-live="polite" hidden></div>
+                <button class="auth-submit" type="submit">Lưu thông tin</button>
+            </form>
+        </section>
+        <section class="profile-card" id="profile-addresses" aria-labelledby="addresses-title" data-customer-only hidden>
+            <div class="addr-head">
+                <div>
+                    <h2 class="profile-card__section" id="addresses-title">Địa chỉ giao hàng</h2>
+                    <p class="addr-head__count" data-address-count aria-live="polite"></p>
+                </div>
+                <button class="addr-btn addr-btn--primary" type="button" data-address-add>Thêm địa chỉ</button>
+            </div>
+            <div class="addr-status" data-address-status role="status" aria-live="polite" hidden></div>
+            <ul class="addr-list" data-address-list></ul>
+            <form class="addr-form" data-address-form novalidate hidden aria-labelledby="addr-form-title">
+                <h3 class="addr-form__title" id="addr-form-title" data-address-form-title>Thêm địa chỉ mới</h3>
+                <div class="addr-form__grid">
+                    <div class="auth-field"><label for="addr-name">Họ và tên người nhận</label><input id="addr-name" name="recipientName" type="text" autocomplete="name" maxlength="200" required aria-describedby="addr-name-error"><span class="auth-field__error" data-field-error="recipientName" id="addr-name-error" aria-live="polite"></span></div>
+                    <div class="auth-field"><label for="addr-phone">Số điện thoại</label><input id="addr-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="0901234567" required aria-describedby="addr-phone-error"><span class="auth-field__error" data-field-error="phone" id="addr-phone-error" aria-live="polite"></span></div>
+                </div>
+                <div class="auth-field"><label for="addr-line">Địa chỉ</label><input id="addr-line" name="addressLine" type="text" autocomplete="street-address" maxlength="500" required aria-describedby="addr-line-error"><span class="auth-field__error" data-field-error="addressLine" id="addr-line-error" aria-live="polite"></span></div>
+                <label class="auth-check"><input name="isDefault" type="checkbox"> <span>Đặt làm địa chỉ mặc định</span></label>
+                <div class="addr-form__actions">
+                    <button class="addr-btn addr-btn--primary" type="submit">Lưu địa chỉ</button>
+                    <button class="addr-btn" type="button" data-address-cancel>Hủy</button>
+                </div>
+            </form>
+        </section>
+        <section class="profile-card" aria-labelledby="password-title">
+            <h2 class="profile-card__section" id="password-title">Đổi mật khẩu</h2>
             <form class="profile-form" id="profile-password-form" novalidate>
                 <div class="auth-field"><label for="current-password">Mật khẩu hiện tại</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required aria-describedby="current-password-error"><span class="auth-field__error" data-field-error="currentPassword" id="current-password-error" aria-live="polite"></span></div>
                 <div class="auth-field"><label for="new-password">Mật khẩu mới</label><input id="new-password" name="newPassword" type="password" minlength="6" autocomplete="new-password" required aria-describedby="new-password-error"><span class="auth-field__error" data-field-error="newPassword" id="new-password-error" aria-live="polite"></span></div>
@@ -50,6 +85,7 @@
         </section>
     </main>
     <script src="/js/auth.js"></script>
+    <script src="/js/profile-addresses.js"></script>
     <script src="/js/cart.js"></script>
 </body>
 </html>

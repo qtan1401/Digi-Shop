@@ -4,10 +4,15 @@
 
 const voucherRepository = require("../repositories/voucher.repository");
 const auditRepository = require("../repositories/audit.repository");
+const loyaltyRepository = require("../repositories/loyalty.repository");
 const cartService = require("./cart.service");
+const { parsePointsToUse, maxUsablePoints, redeemPoints, earnedPoints } = require("./loyalty-calculator");
 const {
     MAX_VOUCHERS_PER_ORDER,
     MAX_DISCOUNT_PER_VOUCHER,
+    NO_EXPIRY_DATE,
+    CODE_LENGTH,
+    MAX_USES_PER_CODE,
     TYPE_PERCENT,
     TYPE_FREE_SHIPPING,
     calculateDiscount,
@@ -16,9 +21,9 @@ const {
 } = require("./voucher-calculator");
 
 const MIN_MAX_DISCOUNT = 1_000;
-const MAX_QUANTITY = 1_000_000;
+const CODE_PATTERN = new RegExp(`^[A-Z0-9]{${CODE_LENGTH}}$`);
 const MAX_QUOTE_CODES = 20;
-const ADMIN_STATUSES = ["all", "active", "scheduled", "expired", "disabled", "exhausted"];
+const ADMIN_STATUSES = ["all", "active", "disabled", "exhausted"];
 
 class VoucherError extends Error {
     constructor(code, message, statusCode = 400, details) {
@@ -39,22 +44,15 @@ const toInteger = (value) => {
     return NaN;
 };
 
-const toDate = (value) => {
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
-    if (typeof value !== "string" || value.trim() === "") return undefined;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? undefined : date;
-};
-
 // ── Administrator ───────────────────────────────────────────────────────────
 
-const FIELDS = ["code", "description", "type", "percent", "maxDiscount", "startsAt", "endsAt", "quantity", "isEnabled", "isListed"];
+const FIELDS = ["code", "description", "type", "percent", "maxDiscount", "quantity", "isEnabled", "isListed"];
 
 /**
  * Merge `input` over `base` and validate the result against every Voucher rule.
  * Returns the persisted field set. Throws VoucherError(VALIDATION_FAILED) with field details.
  */
-const resolveFields = (base, input) => {
+const resolveFields = (base, input, { existing = false } = {}) => {
     const merged = { ...base };
     for (const field of FIELDS) {
         if (hasOwn(input, field) && input[field] !== undefined) merged[field] = input[field];
@@ -63,7 +61,9 @@ const resolveFields = (base, input) => {
     const fail = (field, message) => errors.push({ field, message });
 
     const code = typeof merged.code === "string" ? normalizeCode(merged.code) : "";
-    if (!/^[A-Z0-9]{3,20}$/.test(code)) fail("code", "Mã voucher gồm 3-20 ký tự chữ hoặc số (không dấu, không khoảng trắng).");
+    // An existing voucher keeps a legacy code/quantity it already has; anything new must meet the rules.
+    const codeUnchanged = existing && code === base.code;
+    if (!codeUnchanged && !CODE_PATTERN.test(code)) fail("code", `Mã voucher phải gồm đúng ${CODE_LENGTH} ký tự chữ hoặc số (không dấu, không khoảng trắng).`);
 
     const description = typeof merged.description === "string" ? merged.description.trim() : "";
     if (description.length < 1 || description.length > 200) fail("description", "Mô tả voucher phải có 1-200 ký tự.");
@@ -87,14 +87,11 @@ const resolveFields = (base, input) => {
         if (hasValue(input.maxDiscount)) fail("maxDiscount", "Voucher miễn phí vận chuyển không có mức giảm tối đa.");
     }
 
-    const startsAt = toDate(merged.startsAt);
-    const endsAt = toDate(merged.endsAt);
-    if (!startsAt) fail("startsAt", "Thời gian bắt đầu không hợp lệ.");
-    if (!endsAt) fail("endsAt", "Thời gian kết thúc không hợp lệ.");
-    if (startsAt && endsAt && endsAt <= startsAt) fail("endsAt", "Thời gian kết thúc phải sau thời gian bắt đầu.");
-
     const quantity = toInteger(merged.quantity);
-    if (!(quantity >= 1 && quantity <= MAX_QUANTITY)) fail("quantity", `Số lượng phải là số nguyên từ 1 đến ${MAX_QUANTITY.toLocaleString("vi-VN")}.`);
+    const quantityUnchanged = existing && quantity === base.quantity;
+    if (!(quantity >= 1) || (!quantityUnchanged && quantity > MAX_USES_PER_CODE)) {
+        fail("quantity", `Số lượt dùng tối đa phải là số nguyên từ 1 đến ${MAX_USES_PER_CODE}.`);
+    }
 
     for (const flag of ["isEnabled", "isListed"]) {
         if (typeof merged[flag] !== "boolean") fail(flag, "Giá trị phải là true hoặc false.");
@@ -104,7 +101,10 @@ const resolveFields = (base, input) => {
         throw new VoucherError("VALIDATION_FAILED", errors[0].message, 400, errors);
     }
     return {
-        code, description, type, percent, maxDiscount, startsAt, endsAt, quantity,
+        code, description, type, percent, maxDiscount, quantity,
+        // Never expires: a new voucher starts now, an existing one keeps its start.
+        startsAt: existing ? base.startsAt : new Date(),
+        endsAt: NO_EXPIRY_DATE,
         isEnabled: merged.isEnabled, isListed: merged.isListed
     };
 };
@@ -169,7 +169,7 @@ const updateVoucher = async (id, input = {}, actor) => {
     let result;
     try {
         result = await voucherRepository.update(voucherId, (current, referenced) => {
-            const fields = resolveFields(current, input || {});
+            const fields = resolveFields(current, input || {}, { existing: true });
             if (referenced && (
                 fields.type !== current.type
                 || fields.percent !== current.percent
@@ -259,7 +259,7 @@ const parseQuoteCodes = (codes) => {
  * shipping rules checkout applies) and the database clock for voucher validity.
  * Returns { quote, rejected }; rejected codes never block the quote for the valid ones.
  */
-const quote = async ({ items, codes } = {}) => {
+const quote = async ({ items, codes, userId, pointsToUse } = {}) => {
     if (!Array.isArray(items) || items.length === 0) {
         throw new VoucherError("VALIDATION_FAILED", "Giỏ hàng trống, vui lòng thêm sản phẩm trước khi áp dụng voucher.", 400);
     }
@@ -270,6 +270,7 @@ const quote = async ({ items, codes } = {}) => {
         throw new VoucherError("VALIDATION_FAILED", "Sản phẩm hoặc số lượng không hợp lệ.", 400);
     }
     const typedCodes = parseQuoteCodes(codes);
+    const requestedPoints = parsePointsToUse(pointsToUse);
     const cart = await cartService.validateCartItems(items);
     if (!cart.validatedItems.some((item) => item.available)) {
         throw new VoucherError("CART_UNAVAILABLE", "Không có sản phẩm nào còn hàng để áp dụng voucher.", 409);
@@ -313,19 +314,31 @@ const quote = async ({ items, codes } = {}) => {
                 type: voucher.type,
                 percent: voucher.percent,
                 maxDiscount: voucher.maxDiscount,
-                endsAt: voucher.endsAt.toISOString(),
                 estimatedDiscount,
                 selectable: !blocked,
                 reason: blocked ? blocked.message : null
             };
         });
 
+    // Loyalty points are priced on what is still payable after vouchers. Advisory only: a request above the balance is
+    // capped here (checkout itself rejects it), so the customer sees what they can actually spend.
+    const balance = userId ? await loyaltyRepository.getBalance(userId) : 0;
+    const redemption = redeemPoints({ payable: pricing.totalPrice, balance, requested: Math.min(requestedPoints, balance) });
+
     return {
         quote: {
             subtotal,
             shippingFee,
             discount: pricing.discount,
-            totalPrice: pricing.totalPrice,
+            points: {
+                balance,
+                requested: requestedPoints,
+                used: redemption.used,
+                discount: redemption.discount,
+                maxUsable: maxUsablePoints(pricing.totalPrice, balance),
+                earned: earnedPoints(redemption.totalPrice)
+            },
+            totalPrice: redemption.totalPrice,
             applied: applied.map((voucher) => describeApplied(voucher, amountById.get(voucher.id))),
             listed
         },

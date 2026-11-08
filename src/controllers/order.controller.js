@@ -2,6 +2,7 @@
 // Tiếp nhận HTTP request liên quan đến tra cứu và quản lý đơn hàng
 
 const orderService = require("../services/order.service");
+const { tokenFromRequest } = require("../services/guest-access");
 
 const SAFE_ERROR_MESSAGES = Object.freeze({
     AUTH_REQUIRED: "Authentication is required",
@@ -35,10 +36,18 @@ const getMyOrders = async (req, res) => {
     }
 };
 
+// The route lets a request carrying a guest token through without a role check, so the actor is re-checked here:
+// an administrator who must still change the password does not get admin reach through that door.
+const orderActor = (user) => {
+    if (!user || !["user", "admin"].includes(user.role)) return undefined;
+    if (user.role === "admin" && user.forcePasswordChange) return undefined;
+    return user;
+};
+
 /** [GET] /api/orders/:id — Chi tiết đơn hàng */
 const getOrderDetail = async (req, res) => {
     try {
-        const order = await orderService.getOrderById(req.params.id, req.user);
+        const order = await orderService.getOrderById(req.params.id, orderActor(req.user), { guestToken: tokenFromRequest(req) });
         return res.status(200).json({ success: true, data: order });
     } catch (error) {
         return sendOrderError(res, error);

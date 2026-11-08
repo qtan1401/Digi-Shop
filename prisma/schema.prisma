@@ -94,6 +94,7 @@ model User {
   id                     String                   @id @db.NVarChar(36)
   email                  String?                  @db.NVarChar(320)
   username               String?                  @db.NVarChar(64)
+  fullName               String?                  @map("full_name") @db.NVarChar(200)
   passwordHash           String?                  @map("password_hash") @db.NVarChar(255)
   role                   String                   @default("user") @db.NVarChar(16)
   status                 String                   @default("UNVERIFIED") @db.NVarChar(20)
@@ -102,17 +103,38 @@ model User {
   passwordLockedAt       DateTime?                @map("password_locked_at") @db.DateTime2
   forcePasswordChange    Boolean                  @default(false) @map("force_password_change")
   authVersion            Int                      @default(1) @map("auth_version")
+  // Loyalty points balance (1 point = 1.000đ). Never negative (CHECK users_loyalty_points_check).
+  loyaltyPoints          Int                      @default(0) @map("loyalty_points")
   createdAt              DateTime                 @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
   updatedAt              DateTime                 @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
   oauthIdentities        OAuthIdentity[]
   refreshSessions        RefreshSession[]
   emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens    PasswordResetToken[]
   cart                   Cart?
   cartMergeOperations    CartMergeOperation[]
   orders                 Order[]
   reviews                ProductReview[]
+  addresses              UserAddress[]
 
   @@map("users")
+}
+
+// Saved delivery addresses. At most 10 per user; exactly one has isDefault when any exist
+// (enforced in address.repository inside a transaction, backed by a filtered unique index).
+model UserAddress {
+  id            String   @id @db.NVarChar(36)
+  userId        String   @map("user_id") @db.NVarChar(36)
+  recipientName String   @map("recipient_name") @db.NVarChar(200)
+  phone         String   @db.NVarChar(20)
+  addressLine   String   @map("address_line") @db.NVarChar(500)
+  isDefault     Boolean  @default(false) @map("is_default")
+  createdAt     DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  updatedAt     DateTime @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId], map: "user_addresses_user_id_idx")
+  @@map("user_addresses")
 }
 
 model OAuthIdentity {
@@ -163,6 +185,20 @@ model EmailVerificationToken {
 
   @@index([userId, usedAt, expiresAt], map: "email_verification_tokens_user_id_used_at_expires_at_idx")
   @@map("email_verification_tokens")
+}
+
+// One-time password reset link. Only the SHA-256 of the raw token is stored; the raw token exists only in the email.
+model PasswordResetToken {
+  id        String   @id @db.NVarChar(36)
+  userId    String   @map("user_id") @db.NVarChar(36)
+  tokenHash String   @unique(map: "password_reset_tokens_token_hash_key") @map("token_hash") @db.Char(64)
+  expiresAt DateTime @map("expires_at") @db.DateTime2
+  usedAt    DateTime? @map("used_at") @db.DateTime2
+  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId], map: "password_reset_tokens_user_id_idx")
+  @@map("password_reset_tokens")
 }
 
 model Cart {
@@ -221,10 +257,22 @@ model Order {
   createdAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
   updatedAt       DateTime    @default(dbgenerated("SYSUTCDATETIME()")) @updatedAt @map("updated_at") @db.DateTime2
   cancelledAt     DateTime?   @map("cancelled_at") @db.DateTime2
+  // Loyalty points: `discount` stays the voucher discount; totalPrice = subtotal + shippingFee - discount - pointsDiscount.
+  pointsRedeemed  Int         @default(0) @map("points_redeemed")
+  pointsDiscount  Decimal     @default(0) @map("points_discount") @db.Decimal(18, 2)
+  pointsEarned    Int         @default(0) @map("points_earned")
+  // Idempotency, like order_vouchers.released_at: set when redeemed points were given back / earned points were credited.
+  pointsReleasedAt DateTime?  @map("points_released_at") @db.DateTime2
+  pointsCreditedAt DateTime?  @map("points_credited_at") @db.DateTime2
+  // Guest checkout: the email the buyer typed (the confirmation recipient) and the SHA-256 of the random token that
+  // lets the buyer, without signing in, read and retry this Order's payment attempts. The token itself is never stored.
+  customerEmail   String?     @map("customer_email") @db.NVarChar(320)
+  guestAccessTokenHash String? @map("guest_access_token_hash") @db.NVarChar(64)
   user            User?       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   items           OrderItem[]
   paymentAttempts PaymentAttempt[]
   vouchers        OrderVoucher[]
+  statusHistory   OrderStatusHistory[]
 
   @@index([userId, createdAt], map: "orders_user_id_created_at_idx")
   @@map("orders")
@@ -335,4 +383,16 @@ model ProductReview {
   @@unique([productId, userId], map: "product_reviews_product_user_key")
   @@index([productId, isHidden, createdAt], map: "product_reviews_product_idx")
   @@map("product_reviews")
+}
+
+// One row each time an Order enters a status (including its first), so customers can see the full timeline.
+model OrderStatusHistory {
+  id        BigInt   @id @default(autoincrement())
+  orderId   String   @map("order_id") @db.NVarChar(64)
+  status    String   @db.NVarChar(32)
+  createdAt DateTime @default(dbgenerated("SYSUTCDATETIME()")) @map("created_at") @db.DateTime2
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([orderId, createdAt], map: "order_status_history_order_id_created_at_idx")
+  @@map("order_status_history")
 }

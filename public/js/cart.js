@@ -227,6 +227,7 @@ const _handleSession = async (session) => {
         // when an authenticated session actually transitions to Guest/logout.
         if (wasAuthenticated) {
             _clearLocal();
+            window.DigiCheckoutState?.clearGuestOrder?.();
             window.DigiCheckoutState?.clearMergeReport?.();
             _storageRemove("digi_checkout_merge_report_v1");
         }
@@ -494,6 +495,7 @@ const completeLogin = async (session) => {
         _clearLocal();
         _clearMergeContext();
         window.DigiCheckoutState?.clearDraft();
+        window.DigiCheckoutState?.clearGuestOrder?.();
         window.DigiCheckoutState?.clearMergeReport();
         _storageRemove("digi_checkout_merge_report_v1");
         _authSession = { authenticated: true, user };
@@ -504,6 +506,7 @@ const completeLogin = async (session) => {
     }
 
     if (user.role !== "user") throw new Error("Tài khoản không có quyền mua hàng");
+    window.DigiCheckoutState?.clearGuestOrder?.(); // the guest's order token must not outlive the sign-in
     try {
         const result = await mergeGuestCartForUser(user);
         const draft = window.DigiCheckoutState?.readDraft?.();

@@ -255,3 +255,7 @@ img.mo-thumb { border: 1px solid var(--border); background: #fff; object-fit: co
 .mo-kv dd a:hover { text-decoration: underline; }
 .mo-kv__note { font-weight: 400; }
 @container (min-width: 24rem) { .mo-kv { grid-template-columns: 7rem minmax(0, 1fr); align-items: baseline; gap: 24px; } }
+
+.mo-history { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+.mo-history th, .mo-history td { text-align: left; padding: 8px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.mo-history th { font-weight: 600; color: var(--muted, #6b7280); }

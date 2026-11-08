@@ -3,6 +3,7 @@
 
 const { getPrismaClient } = require("../db/prisma");
 const voucherRepository = require("./voucher.repository");
+const loyaltyRepository = require("./loyalty.repository");
 
 const CANCELLABLE_STATUSES = ["PENDING", "PROCESSING"];
 
@@ -50,7 +51,20 @@ const mapOrderItem = (row) => {
 };
 
 
-const mapOrder = (row, { includeUserId = false } = {}) => {
+/**
+ * An order that has no stored history (it predates the table and was never backfilled, or was inserted around it) still
+ * gets a timeline from what it does record: placed as PENDING, and the current status at the last change. Newest first.
+ */
+const legacyStatusHistory = (row) => {
+    const timeline = [];
+    if (row.orderStatus !== "PENDING") {
+        timeline.push({ status: row.orderStatus, at: toIsoString(row.cancelledAt && row.orderStatus === "CANCELLED" ? row.cancelledAt : row.updatedAt) });
+    }
+    timeline.push({ status: "PENDING", at: toIsoString(row.createdAt) });
+    return timeline;
+};
+
+const mapOrder = (row, { includeUserId = false, includeGuestAccess = false } = {}) => {
     if (!row) return undefined;
 
     const order = {
@@ -59,6 +73,10 @@ const mapOrder = (row, { includeUserId = false } = {}) => {
         subtotal: toNumber(row.subtotal),
         shippingFee: toNumber(row.shippingFee),
         discount: toNumber(row.discount),
+        pointsRedeemed: row.pointsRedeemed ?? 0,
+        pointsDiscount: toNumber(row.pointsDiscount ?? 0),
+        pointsEarned: row.pointsEarned ?? 0,
+        pointsCredited: Boolean(row.pointsCreditedAt),
         totalPrice: toNumber(row.totalPrice),
         customer: {
             name: row.customerName,
@@ -73,7 +91,17 @@ const mapOrder = (row, { includeUserId = false } = {}) => {
         updatedAt: toIsoString(row.updatedAt),
         cancelledAt: row.cancelledAt ? toIsoString(row.cancelledAt) : null
     };
-    if (includeUserId) order.userId = row.userId;
+    if (includeUserId) {
+        order.userId = row.userId;
+        order.customerEmail = row.customerEmail ?? null;
+    }
+    if (includeGuestAccess) order.guestAccessTokenHash = row.guestAccessTokenHash ?? null;
+    // Detail reads only: every status the order entered, most recent first.
+    if (row.statusHistory) {
+        order.statusHistory = row.statusHistory.length > 0
+            ? row.statusHistory.map((entry) => ({ status: entry.status, at: toIsoString(entry.createdAt) }))
+            : legacyStatusHistory(row);
+    }
     if (row.vouchers) {
         order.vouchers = row.vouchers.map((entry) => ({
             code: entry.codeSnapshot,
@@ -116,6 +144,9 @@ const detailInclude = {
     vouchers: {
         orderBy: { voucherId: "asc" }
     },
+    statusHistory: {
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }]
+    },
     paymentAttempts: {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: 1,
@@ -130,6 +161,9 @@ const createOrder = async (orderData) => {
         subtotal: orderData.subtotal,
         shippingFee: orderData.shippingFee,
         discount: orderData.discount,
+        pointsRedeemed: orderData.pointsRedeemed ?? 0,
+        pointsDiscount: orderData.pointsDiscount ?? 0,
+        pointsEarned: orderData.pointsEarned ?? 0,
         totalPrice: orderData.totalPrice,
         customerName: customer.name,
         customerPhone: customer.phone,
@@ -138,6 +172,7 @@ const createOrder = async (orderData) => {
         paymentMethod: orderData.paymentMethod,
         orderStatus: orderData.orderStatus,
         paymentStatus: orderData.paymentStatus,
+        statusHistory: { create: [{ status: orderData.orderStatus }] },
         items: {
             create: (orderData.items || []).map((item) => ({
                 variantId: item.variantId,
@@ -251,26 +286,64 @@ const listByUser = async (userId, { status, skip, take }) => {
     }));
 };
 
+/** The account email of an order's owner, or null (no owner, or the account is gone). */
+const getOwnerEmail = async (userId) => {
+    if (userId === undefined || userId === null) return null;
+    const user = await getPrismaClient().user.findUnique({ where: { id: String(userId) }, select: { email: true } });
+    return user?.email || null;
+};
+
+const ONLINE_METHODS = ["MOMO", "VNPAY"];
+
+/**
+ * Status / payment-status update. Holds the order-row lock (the one cancelOrder and payment attempts take) and keeps
+ * the Loyalty ledger in step in the same transaction:
+ * - a transition to DELIVERED credits the earned points (COD / bank transfer; a MoMo/VNPay Order still unpaid earns nothing yet);
+ * - a transition to PAID credits them too and re-takes redeemed points that were given back (clamped at 0, never blocks).
+ * creditForOrder is idempotent, so DELIVERED after PAID, or a repeat, credits once. Other values change nothing else.
+ */
 const updateStatus = async (id, data) => {
     if (id === undefined || id === null) return null;
 
     const orderId = String(id);
     const prisma = getPrismaClient();
-    const result = await prisma.order.updateMany({
-        where: { id: orderId },
-        data
-    });
-    if (result.count === 0) return null;
-
-    const row = await prisma.order.findUnique({
-        where: { id: orderId },
-        include: itemsInclude
+    const row = await prisma.$transaction(async (transaction) => {
+        const locked = await transaction.$queryRaw`
+            SELECT [id] FROM [dbo].[orders] WITH (UPDLOCK, ROWLOCK) WHERE [id] = ${orderId};
+        `;
+        if (locked.length === 0) return null;
+        const before = await transaction.order.findUnique({ where: { id: orderId } });
+        const result = await transaction.order.updateMany({
+            where: { id: orderId },
+            data
+        });
+        if (result.count === 0) return null;
+        if (data.orderStatus) {
+            await transaction.orderStatusHistory.create({ data: { orderId, status: data.orderStatus } });
+        }
+        const now = new Date();
+        const status = data.orderStatus ?? before.orderStatus;
+        const paymentStatus = data.paymentStatus ?? before.paymentStatus;
+        if (status !== "CANCELLED") {
+            if (data.paymentStatus === "PAID" && before.paymentStatus !== "PAID") {
+                await loyaltyRepository.creditForOrder(transaction, orderId, now);
+                await loyaltyRepository.retakeReleasedForOrder(transaction, orderId);
+            }
+            const unpaidOnline = ONLINE_METHODS.includes(before.paymentMethod) && paymentStatus !== "PAID";
+            if (data.orderStatus === "DELIVERED" && before.orderStatus !== "DELIVERED" && !unpaidOnline) {
+                await loyaltyRepository.creditForOrder(transaction, orderId, now);
+            }
+        }
+        return transaction.order.findUnique({
+            where: { id: orderId },
+            include: itemsInclude
+        });
     });
     return mapOrder(row);
 };
 
 /**
- * Administrator cancel: the status change and the Voucher give-back commit together.
+ * Administrator cancel: the status change, the Voucher give-back and the Loyalty points reversal commit together.
  * The order row is locked first (the same lock payment attempts take), so a concurrent
  * attempt expiry cannot interleave; give-back is idempotent through order_vouchers.released_at,
  * so cancelling twice, or cancelling after the attempt expired, gives nothing back twice.
@@ -293,8 +366,13 @@ const cancelOrder = async (id) => {
         }
         if (current.orderStatus !== "CANCELLED") {
             await transaction.order.updateMany({ where: { id: orderId }, data: { orderStatus: "CANCELLED", cancelledAt: new Date() } });
+            await transaction.orderStatusHistory.create({ data: { orderId, status: "CANCELLED" } });
         }
-        await voucherRepository.releaseForOrder(transaction, orderId, new Date());
+        const now = new Date();
+        await voucherRepository.releaseForOrder(transaction, orderId, now);
+        // Points follow the vouchers: redeemed points go back once, earned points are taken back once (balance clamped at 0).
+        await loyaltyRepository.releaseForOrder(transaction, orderId, now);
+        await loyaltyRepository.clawBackForOrder(transaction, orderId);
         const row = await transaction.order.findUnique({ where: { id: orderId }, include: itemsInclude });
         return mapOrder(row);
     });
@@ -311,6 +389,7 @@ module.exports = {
     getAllOrders,
     getOrderById,
     countByStatus,
+    getOwnerEmail,
     listByUser,
     updateOrderStatus,
     updatePaymentStatus

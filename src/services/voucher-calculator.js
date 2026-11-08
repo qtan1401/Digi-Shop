@@ -8,6 +8,11 @@ const MAX_DISCOUNT_PER_VOUCHER = 500_000;
 const MAX_DISCOUNT_PER_ORDER = 1_000_000;
 const MIN_TOTAL_PRICE = 1_000;
 
+// Vouchers do not expire (course spec). The columns stay required, so every voucher gets this end date.
+const NO_EXPIRY_DATE = new Date("9999-12-31T00:00:00.000Z");
+const CODE_LENGTH = 5;
+const MAX_USES_PER_CODE = 10;
+
 const TYPE_PERCENT = "PERCENT";
 const TYPE_FREE_SHIPPING = "FREE_SHIPPING";
 
@@ -30,11 +35,22 @@ const ruleError = (code, voucherCode) => new VoucherRuleError(code, MESSAGES[cod
 
 const normalizeCode = (value) => typeof value === "string" ? value.trim().toUpperCase() : "";
 
+const CODE_PATTERN = new RegExp(`^[A-Z0-9]{${CODE_LENGTH}}$`);
+
+/**
+ * Course spec: a code is exactly 5 letters or digits. Rows created before that rule (8-9 characters, lower case, symbols)
+ * stay in the database and in the administrator's list, but customers can neither see nor redeem them.
+ */
+const isCompliantCode = (code) => typeof code === "string" && CODE_PATTERN.test(code.toUpperCase());
+
 /**
  * Reason a voucher cannot be redeemed right now, or null when it can.
  * `now` is a Date; the window is inclusive at both ends.
  */
 const unusableReason = (voucher, now) => {
+    if (!isCompliantCode(voucher.code)) {
+        return { reason: "NOT_FOUND", message: `Mã voucher ${voucher.code} không tồn tại.` };
+    }
     if (!voucher.isEnabled) {
         return { reason: "DISABLED", message: `Voucher ${voucher.code} đã bị vô hiệu hóa.` };
     }
@@ -134,9 +150,13 @@ module.exports = {
     MAX_DISCOUNT_PER_VOUCHER,
     MAX_DISCOUNT_PER_ORDER,
     MIN_TOTAL_PRICE,
+    NO_EXPIRY_DATE,
+    CODE_LENGTH,
+    MAX_USES_PER_CODE,
     TYPE_PERCENT,
     TYPE_FREE_SHIPPING,
     VoucherRuleError,
+    isCompliantCode,
     assertCombination,
     calculateDiscount,
     normalizeCode,

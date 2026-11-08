@@ -53,6 +53,7 @@ const SAFE_MESSAGES = new Map([
     ["MAIL_UNAVAILABLE", "Email service is unavailable"],
     ["REFRESH_INVALID", "Refresh session is invalid"],
     ["REFRESH_REUSED", "Refresh session reuse detected"],
+    ["RESET_TOKEN_INVALID", "Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn"],
     ["TOKEN_INVALID", "Verification token is invalid"],
     ["TOKEN_EXPIRED", "Verification token has expired"],
     ["CURRENT_PASSWORD_INVALID", "Current password is invalid"],
@@ -171,6 +172,15 @@ const recover = async (req, res) => {
     }
 };
 
+const resetPassword = async (req, res) => {
+    try {
+        const data = await authService.resetPassword({ token: req.body?.token, newPassword: req.body?.newPassword });
+        return res.json({ success: true, data });
+    } catch (error) {
+        return sendError(res, error);
+    }
+};
+
 const changePassword = async (req, res) => {
     try {
         const result = await authService.changePassword({
@@ -194,7 +204,25 @@ const setUsername = async (req, res) => {
     }
 };
 
+const getProfile = async (req, res) => {
+    try {
+        return res.json({ success: true, data: await authService.getProfile({ user: req.user }) });
+    } catch (error) {
+        return sendError(res, error);
+    }
+};
+
+const updateProfile = async (req, res) => {
+    try {
+        return res.json({ success: true, data: await authService.updateProfile({ user: req.user, fullName: req.body?.fullName }) });
+    } catch (error) {
+        return sendError(res, error);
+    }
+};
+
 module.exports = {
+    getProfile,
+    updateProfile,
     register,
     verifyEmail,
     resendVerification,
@@ -204,6 +232,7 @@ module.exports = {
     logout,
     session,
     recover,
+    resetPassword,
     changePassword,
     setUsername,
     setSessionCookies,

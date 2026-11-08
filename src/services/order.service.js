@@ -3,6 +3,8 @@
 
 const orderRepository = require("../repositories/order.repository");
 const reviewRepository = require("../repositories/review.repository");
+const { NodemailerSmtpMailer } = require("../auth/mailer");
+const { tokenMatches } = require("./guest-access");
 
 const VALID_ORDER_STATUSES = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
 const VALID_PAYMENT_STATUSES = ["UNPAID", "PAID", "REFUNDED"];
@@ -24,26 +26,32 @@ const domainError = (code, statusCode, message) => {
 };
 
 /**
- * Lấy chi tiết đơn hàng theo mã, chỉ cho chủ đơn hoặc Admin.
+ * Lấy chi tiết đơn hàng theo mã, chỉ cho chủ đơn, người giữ guest access token của đơn, hoặc Admin.
  * The repository owner field is requested only for this authorization check
- * and is removed before the order leaves the service boundary.
+ * and is removed before the order leaves the service boundary. A wrong guest token is
+ * indistinguishable from an unknown order (404).
  */
-const getOrderById = async (orderId, actor) => {
+const getOrderById = async (orderId, actor, { guestToken } = {}) => {
     if (!orderId) throw domainError("ORDER_NOT_FOUND", 404, "Không tìm thấy đơn hàng");
-    if (!actor || !actor.id) throw domainError("AUTH_REQUIRED", 401, "Authentication is required");
+    const hasActor = Boolean(actor && actor.id);
+    if (!hasActor && !guestToken) throw domainError("AUTH_REQUIRED", 401, "Authentication is required");
 
-    const order = await orderRepository.getOrderById(orderId, { includeUserId: true });
+    const order = await orderRepository.getOrderById(orderId, { includeUserId: true, includeGuestAccess: true });
     if (!order) throw domainError("ORDER_NOT_FOUND", 404, "Không tìm thấy đơn hàng");
 
-    const isAdmin = actor.role === "admin";
-    if (!isAdmin && String(order.userId || "") !== String(actor.id)) {
+    const isAdmin = hasActor && actor.role === "admin";
+    const isOwner = hasActor && Boolean(order.userId) && String(order.userId) === String(actor.id);
+    const holdsToken = tokenMatches(guestToken, order.guestAccessTokenHash);
+    if (!isAdmin && !isOwner && !holdsToken) {
         throw domainError("ORDER_NOT_FOUND", 404, "Không tìm thấy đơn hàng");
     }
 
     delete order.userId;
+    delete order.customerEmail;
+    delete order.guestAccessTokenHash;
 
-    // Review state is for the owner only; administrators viewing an order never get it.
-    if (!isAdmin && order.orderStatus === "DELIVERED") {
+    // Review state is for the owner only; administrators and guests viewing an order never get it.
+    if (isOwner && !isAdmin && order.orderStatus === "DELIVERED") {
         const productIds = [...new Set(order.items.map((item) => item.productId).filter((id) => id !== undefined))];
         const ratings = await reviewRepository.findOwnRatings(String(actor.id), productIds);
         for (const item of order.items) {
@@ -153,4 +161,39 @@ const updatePaymentStatus = async (orderId, status) => {
     return order;
 };
 
-module.exports = { getOrderById, listMyOrders, getAllOrders, updateOrderStatus, updatePaymentStatus };
+/**
+ * Who receives the confirmation: the email stored on a guest Order, otherwise the owner's account email.
+ * Returning null skips the email.
+ */
+const resolveConfirmationRecipient = async (order) => order.customerEmail || orderRepository.getOwnerEmail(order.userId);
+
+/**
+ * Order confirmation email. The returned function never rejects: a missing owner is skipped and any
+ * failure (SMTP down, mailer not configured) is logged, so callers can fire it after their transaction
+ * commits without it ever failing a checkout or a payment callback. Like the auth service, the mailer
+ * is injectable and created lazily.
+ */
+const createOrderConfirmationSender = ({ repository = orderRepository, mailer, resolveRecipient = resolveConfirmationRecipient, logger = console } = {}) => {
+    // Built on first use and reused; a failed construction is not cached, so the next email tries again.
+    let created;
+    const getMailer = () => mailer || (created ||= new NodemailerSmtpMailer());
+    return async (orderId) => {
+        try {
+            const order = await repository.getOrderById(orderId, { includeUserId: true });
+            if (!order) return false;
+            const to = await resolveRecipient(order);
+            if (!to) return false;
+            await getMailer().sendOrderConfirmationEmail({ to, order });
+            return true;
+        } catch (error) {
+            logger.error(`Order confirmation email for ${orderId} failed:`, error?.message || error);
+            return false;
+        }
+    };
+};
+
+const sendOrderConfirmation = createOrderConfirmationSender();
+
+module.exports = {
+    createOrderConfirmationSender,
+    sendOrderConfirmation, getOrderById, listMyOrders, getAllOrders, updateOrderStatus, updatePaymentStatus };

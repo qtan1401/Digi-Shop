@@ -2,7 +2,9 @@
 // Khối Voucher trong cột tóm tắt của trang thanh toán (thanhtoan-voucher A): ô nhập mã, chip đã áp dụng,
 // danh sách voucher (đã chọn trước, khoá sau cùng kèm lý do, gập sau 3 dòng), bảng giá và trạng thái bị chặn lúc trả tiền.
 // Mọi con số lấy từ POST /api/vouchers/quote (cùng hàm tính với lúc tạo đơn); mã đã chọn chỉ lưu trong sessionStorage.
-// Cần: ui-icons.js, auth.js (DigiAuth). payment.js nối các hook ở cuối tệp này.
+// Điểm thưởng đi cùng báo giá: `pointsToUse` được gửi kèm, máy chủ trả `points` (số dư, số điểm dùng được, giá trị) và tổng đã trừ điểm;
+// khối nhập điểm nằm ở checkout-points.js, dùng setPoints/subscribe bên dưới.
+// Cần: ui-icons.js, vat.js, auth.js (DigiAuth). payment.js nối các hook ở cuối tệp này.
 
 (function () {
     "use strict";
@@ -13,10 +15,9 @@
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     const vnd = (value) => Number(value || 0).toLocaleString("vi-VN") + "₫";
     const neg = (value) => "−" + vnd(value);
-    const fmtDate = (iso) => new Date(iso).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
-    const daysLeft = (iso) => Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
 
-    let hooks = null; // { getItems, getLocalTotals, isEnabled, onChange, goLogin }
+    let hooks = null; // { getItems, getLocalTotals, getPaymentMethod, isEnabled, isGuest, getEmail, onChange, goLogin }
+    const listeners = new Set();
     const state = {
         codes: [],
         quote: null,
@@ -27,8 +28,9 @@
         notice: "",
         blockedCode: "",
         blockedMessage: "",
-        meta: new Map(),      // code -> thông tin từ danh sách liệt kê (hạn dùng, trần giảm)
-        expanded: false
+        meta: new Map(),      // code -> thông tin từ danh sách liệt kê (trần giảm)
+        expanded: false,
+        points: 0            // số điểm khách muốn dùng (máy chủ có thể giảm xuống)
     };
     let seq = 0;
     let debounceTimer = null;
@@ -37,11 +39,12 @@
     const readStored = () => {
         try {
             const value = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "[]");
-            return Array.isArray(value) ? value.filter((code) => typeof code === "string").slice(0, MAX_VOUCHERS) : [];
+            // Only 5-character codes exist now: a code saved by an older version of the page would only be rejected.
+            return Array.isArray(value) ? value.filter((code) => typeof code === "string" && /^[A-Z0-9]{5}$/.test(code)).slice(0, MAX_VOUCHERS) : [];
         } catch (_) { return []; }
     };
     const persist = () => { try { window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state.codes)); } catch (_) { /* storage có thể bị tắt */ } };
-    const clearStored = () => { state.codes = []; try { window.sessionStorage.removeItem(STORAGE_KEY); } catch (_) { /* no-op */ } };
+    const clearStored = () => { state.codes = []; state.points = 0; try { window.sessionStorage.removeItem(STORAGE_KEY); } catch (_) { /* no-op */ } };
 
     const apiError = (error) => {
         const detail = error?.payload?.error || {};
@@ -52,12 +55,17 @@
     const announce = (text) => { const live = el("vc-live"); if (live) { live.textContent = ""; live.textContent = text; } };
     const quoteCodes = () => state.codes.filter((code) => code !== state.blockedCode);
     const enabled = () => Boolean(hooks?.isEnabled());
+    const isGuest = () => Boolean(hooks?.isGuest?.());
 
     // ---------- gọi báo giá ----------
     const requestQuote = async (codes) => {
         const items = hooks.getItems();
         try {
-            const payload = await window.DigiAuth.api("/api/vouchers/quote", { method: "POST", body: { items, codes } });
+            // Khách chưa đăng nhập báo giá qua /api/guest/vouchers/quote (cần email, không có điểm); khách đã đăng nhập như cũ.
+            const guest = isGuest();
+            const body = guest ? { items, codes, email: hooks.getEmail?.() || "" }
+                : state.points > 0 ? { items, codes, pointsToUse: state.points } : { items, codes };
+            const payload = await window.DigiAuth.api(guest ? "/api/guest/vouchers/quote" : "/api/vouchers/quote", { method: "POST", body });
             return { data: payload.data, rejected: [] };
         } catch (error) {
             const e = apiError(error);
@@ -83,6 +91,7 @@
             const dropped = rejected.filter((entry) => entry !== typedRejection);
             const keepBlocked = state.blockedCode && state.codes.includes(state.blockedCode) ? [state.blockedCode] : [];
             state.quote = data;
+            if (data.points && state.points > 0) state.points = data.points.used; // đã bị giảm theo số dư / số tiền còn phải trả
             state.codes = [...data.applied.map((voucher) => voucher.code), ...keepBlocked];
             state.status = "ready";
             state.stale = false;
@@ -108,13 +117,20 @@
         }
         renderAll();
         hooks.onChange?.();
+        notify();
     };
+
+    const notify = () => listeners.forEach((listener) => listener());
 
     const scheduleRefresh = () => {
         if (!enabled()) return;
+        // A quote already in flight was priced for the old cart / points: drop its answer instead of letting it overwrite
+        // what the customer has just changed (it would reset the points box to the old amount).
+        seq += 1;
         state.stale = true;
         renderBreakdown();
         hooks.onChange?.();
+        notify();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => refresh({ silent: true }), 150);
     };
@@ -123,6 +139,7 @@
     const addCode = (raw, fromList = false) => {
         const code = String(raw || "").trim().toUpperCase();
         if (!code) { state.typedError = "Nhập mã voucher trước khi áp dụng."; renderForm(); el("vc-input")?.focus(); return; }
+        if (!/^[A-Z0-9]{5}$/.test(code)) { state.typedError = "Mã voucher gồm đúng 5 chữ cái hoặc số."; renderForm(); el("vc-input")?.focus(); return; }
         if (state.codes.includes(code)) { state.typedError = `Mã “${code}” đã được áp dụng cho đơn này.`; renderForm(); el("vc-input")?.focus(); return; }
         state.typedError = "";
         // Mã chọn từ danh sách đã được máy chủ cho phép nên hiện ngay; mã gõ tay chỉ hiện sau khi báo giá chấp nhận.
@@ -176,7 +193,7 @@
         if (!el("vc-form")) {
             box.innerHTML = `<form class="vc-form" id="vc-form" novalidate>
                 <div class="vc-form__field"><label for="vc-input" class="sr-only">Nhập mã voucher</label>
-                <input id="vc-input" class="checkout-input vc-input" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="20" placeholder="Nhập mã voucher"></div>
+                <input id="vc-input" class="checkout-input vc-input" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="5" placeholder="Nhập mã gồm 5 ký tự"></div>
                 <button type="submit" class="btn btn--secondary vc-apply">Áp dụng</button>
             </form><div id="vc-error-slot"></div>`;
         }
@@ -230,27 +247,24 @@
             const bad = code === state.blockedCode;
             let amount = applied ? applied.amount : null;
             const cut = Boolean(applied) && cutCodes.has(code);
-            rows.push({ code, selected: true, locked: false, bad, amount, cut, description: applied?.description || meta?.description || "", endsAt: meta?.endsAt || "", reason: "" });
+            rows.push({ code, selected: true, locked: false, bad, amount, cut, description: applied?.description || meta?.description || "", reason: "" });
         }
         const listed = (quote?.listed || []).filter((voucher) => !state.codes.includes(voucher.code));
-        const pick = (voucher) => ({ code: voucher.code, selected: false, locked: !voucher.selectable, bad: false, amount: voucher.selectable ? voucher.estimatedDiscount : null, cut: false, description: voucher.description, endsAt: voucher.endsAt, reason: voucher.selectable ? "" : voucher.reason || "" });
+        const pick = (voucher) => ({ code: voucher.code, selected: false, locked: !voucher.selectable, bad: false, amount: voucher.selectable ? voucher.estimatedDiscount : null, cut: false, description: voucher.description, reason: voucher.selectable ? "" : voucher.reason || "" });
         listed.filter((voucher) => voucher.selectable).forEach((voucher) => rows.push(pick(voucher)));
         listed.filter((voucher) => !voucher.selectable).forEach((voucher) => rows.push(pick(voucher)));
         return rows;
     };
 
     const rowHtml = (row) => {
-        const left = row.endsAt ? daysLeft(row.endsAt) : null;
-        const soon = left !== null && left >= 0 && left <= 7 ? `<span class="vc-row__soon">Còn ${Math.max(1, left)} ngày</span>` : "";
         const note = (cls, iconName, text) => `<span class="vc-row__note ${cls}">${icon(iconName)}<span>${escapeHtml(text)}</span></span>`;
         const disabled = row.locked || state.stale || (!row.selected && state.codes.length >= MAX_VOUCHERS);
         const amountText = row.amount === null || row.amount === undefined ? "" : row.amount > 0 ? neg(row.amount) : "—";
         return `<label class="vc-row${row.selected ? " is-selected" : ""}${row.locked ? " is-locked" : ""}${row.bad ? " is-bad" : ""}">
             <input type="checkbox" class="vc-row__check" data-vc-code="${escapeHtml(row.code)}" aria-describedby="vc-d-${escapeHtml(row.code)}" ${row.selected ? "checked" : ""} ${disabled && !row.selected ? "disabled" : ""} ${state.stale && row.selected ? "disabled" : ""}>
             <span class="vc-row__body" id="vc-d-${escapeHtml(row.code)}">
-                <span class="vc-row__top"><span class="vc-row__code">${escapeHtml(row.code)}</span>${soon}</span>
+                <span class="vc-row__top"><span class="vc-row__code">${escapeHtml(row.code)}</span></span>
                 ${row.description ? `<span class="vc-row__desc" title="${escapeHtml(row.description)}">${escapeHtml(row.description)}</span>` : ""}
-                ${row.endsAt ? `<span class="vc-row__exp">Hết hạn ${fmtDate(row.endsAt)}</span>` : ""}
                 ${row.reason ? note("", "info", row.reason) : ""}
                 ${row.cut ? note("is-warn", "info", "Đã giảm bớt vì tổng giảm tối đa 1.000.000₫") : ""}
                 ${row.bad ? note("is-bad", "circle-alert", "Không còn dùng được") : ""}
@@ -305,6 +319,11 @@
     const renderGuest = () => {
         const box = el("voucher-block");
         if (!box) return;
+        if (isGuest()) {
+            // Khách vãng lai dùng được voucher; báo giá cần một email hợp lệ nên chờ khách nhập email.
+            box.innerHTML = `<div class="vc-head"><h2 class="vc-title">Voucher</h2></div><div class="vc-guest">${icon("ticket")}<div><p class="vc-guest__title">Nhập email để dùng voucher</p><p>Nhập email hợp lệ ở phần Thông tin giao hàng, danh sách voucher sẽ hiện ra ngay.</p></div></div>`;
+            return;
+        }
         box.innerHTML = `<div class="vc-head"><h2 class="vc-title">Voucher</h2></div><div class="vc-guest">${icon("ticket")}<div><p class="vc-guest__title">Đăng nhập để dùng voucher</p><p>Voucher áp dụng cho tài khoản khách hàng. Thông tin đơn hàng bạn đã nhập được giữ lại.</p><button type="button" class="btn btn--secondary" data-vc-login>Đăng nhập</button></div></div>`;
     };
 
@@ -333,7 +352,10 @@
         }
         const useLocal = !enabled() || state.status === "error" || (state.status === "ready" && !state.quote);
         const total = quote && !state.stale ? quote.totalPrice : (useLocal ? local.subtotal + local.shipping : null);
-        box.innerHTML = `${breakdownRow("Tạm tính", `<span id="summary-subtotal">${vnd(subtotal)}</span>`)}${breakdownRow("Phí vận chuyển", `<span id="summary-shipping">${vnd(shipping)}</span>`)}${vouchers}${breakdownRow("Tổng cộng", total === null ? '<span class="skeleton vc-sk vc-sk--total" id="summary-total" aria-busy="true"></span>' : `<span id="summary-total">${vnd(total)}</span>`, "vc-sum__total")}`;
+        const points = quote && !state.stale && quote.points && quote.points.used > 0
+            ? breakdownRow(`Điểm thưởng<span class="vc-sum__sub">${quote.points.used.toLocaleString("vi-VN")} điểm</span>`, `<span class="is-success">${neg(quote.points.discount)}</span>`)
+            : "";
+        box.innerHTML = `${breakdownRow("Tạm tính", `<span id="summary-subtotal">${vnd(subtotal)}</span>`)}${breakdownRow(`<span class="vc-sum__muted">${window.DigiVat.label}</span>`, `<span class="vc-sum__muted" id="summary-vat">${vnd(window.DigiVat.includedVat(subtotal))}</span>`)}${breakdownRow("Phí vận chuyển", `<span id="summary-shipping">${vnd(shipping)}</span>`)}${vouchers}${points}${breakdownRow("Tổng cộng", total === null ? '<span class="skeleton vc-sk vc-sk--total" id="summary-total" aria-busy="true"></span>' : `<span id="summary-total">${vnd(total)}</span>`, "vc-sum__total")}`;
     };
 
     const renderAll = () => {
@@ -349,14 +371,30 @@
     // Trạng thái cho nút thanh toán: `total` chỉ lấy từ máy chủ khi đã có báo giá mới nhất.
     const payState = () => {
         if (!enabled()) return { ready: true, total: null, reason: "" };
+        if (state.points > 0 && state.status === "error") return { ready: false, total: null, reason: "error" };
         if (state.blockedMessage && state.blockedCode) return { ready: false, total: null, reason: "blocked" };
         if (state.status === "loading" || state.stale) return { ready: false, total: null, reason: "loading" };
         if (state.status === "error") return state.codes.length ? { ready: false, total: null, reason: "error" } : { ready: true, total: null, reason: "" };
+        // Điểm bù hết tổng tiền thì MoMo/VNPay không tạo được giao dịch (số tiền tối thiểu 1₫): chỉ COD / chuyển khoản.
+        const online = ["MOMO", "VNPAY"].includes(hooks.getPaymentMethod?.());
+        if (online && state.quote && state.quote.totalPrice < 1) return { ready: false, total: null, reason: "zero-online" };
         return { ready: true, total: state.quote ? state.quote.totalPrice : null, reason: "" };
+    };
+
+    // Số điểm gửi kèm đơn: đúng số điểm báo giá mới nhất đã tính (không có thì không gửi, đơn như cũ).
+    const pointsToSend = () => (enabled() && !isGuest() && state.quote && state.quote.points ? state.quote.points.used : 0);
+    const setPoints = (value) => {
+        if (isGuest()) return; // điểm thuộc về tài khoản; khách vãng lai không dùng điểm
+        const next = Math.max(0, Math.trunc(Number(value) || 0));
+        if (next === state.points) return;
+        state.points = next;
+        scheduleRefresh();
     };
 
     // ---------- sự kiện ----------
     const bind = (root) => {
+        if (root.dataset.vcBound) return;
+        root.dataset.vcBound = "1";
         root.addEventListener("submit", (event) => {
             if (!event.target.matches("#vc-form")) return;
             event.preventDefault();
@@ -385,11 +423,25 @@
         root.addEventListener("toggle", (event) => { if (event.target.matches("[data-vc-more]")) state.expanded = event.target.open; }, true);
     };
 
+    let started = false;
     const mount = (options) => {
         hooks = options;
+        started = false;
         const block = el("voucher-block");
         if (!block) return;
         if (!enabled()) { renderGuest(); bind(block); renderBreakdown(); return; }
+        start(block);
+    };
+
+    // Khách vãng lai nhập email hợp lệ lần đầu: dựng khối voucher đầy đủ rồi báo giá.
+    const activate = () => {
+        const block = el("voucher-block");
+        if (!hooks || started || !block || !enabled()) return;
+        start(block);
+    };
+
+    const start = (block) => {
+        started = true;
         state.codes = readStored();
         block.innerHTML = blockHtml();
         bind(block);
@@ -401,20 +453,28 @@
         state.status = "loading";
         renderAll();
         refresh({ codes: quoteCodes(), silent: false }).then(async () => {
-            // Mã đã chọn từ phiên trước không nằm trong `listed` của báo giá đầu: lấy hạn dùng/trần giảm bằng một báo giá không mã.
+            // Mã đã chọn từ phiên trước không nằm trong `listed` của báo giá đầu: lấy trần giảm bằng một báo giá không mã.
             if (state.status !== "ready" || !state.codes.some((code) => !state.meta.has(code))) return;
             try {
                 const { data } = await requestQuote([]);
                 (data.listed || []).forEach((voucher) => state.meta.set(voucher.code, voucher));
                 renderAll();
-            } catch (_) { /* chỉ thiếu dòng hạn dùng */ }
+            } catch (_) { /* chỉ thiếu trần giảm */ }
         });
     };
 
     window.CheckoutVouchers = Object.freeze({
         mount,
+        activate,
         refresh: scheduleRefresh,
         getCodes: () => (enabled() ? [...state.codes] : []),
+        getPointsToSend: pointsToSend,
+        isEnabled: enabled,
+        isGuest,
+        getQuote: () => (enabled() && !state.stale ? state.quote : null),
+        isStale: () => state.stale || state.status === "loading",
+        setPoints,
+        subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
         payState,
         setBlocked,
         clearStored,

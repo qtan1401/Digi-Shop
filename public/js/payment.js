@@ -1,6 +1,6 @@
 // ===== PAYMENT.JS =====
-// Checkout view for cart and buy-now modes. Guest submits are auth-guarded;
-// authenticated checkout is the only path that can call the Order API.
+// Checkout view for cart and buy-now modes. A signed-in customer orders through /api/checkout; a guest (no session)
+// through /api/guest/checkout with a required email, and keeps the order's access token in this tab to follow the payment.
 
 const getUrlParam = (param) => new URLSearchParams(window.location.search).get(param);
 const formatPrice = (price) => Number(price || 0).toLocaleString("vi-VN") + "₫";
@@ -19,6 +19,8 @@ let activePaymentAttempt = null;
 let paymentPollTimer = null;
 let paymentCountdownTimer = null;
 let paymentRetryLoading = false;
+let guestAccessToken = null; // set only for a guest's order; sent as a header when polling or retrying its payment
+let guestEmailSeen = false;  // a valid email has been typed: the guest voucher block is unlocked and stays so
 
 const escapeHtml = (value) => String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -31,6 +33,11 @@ const unwrap = (value) => value && Object.prototype.hasOwnProperty.call(value, "
 const currentSession = () => CartService.getSession();
 const isAdminSession = () => currentSession().user?.role === "admin";
 const isUserSession = () => currentSession().user?.role === "user";
+const isGuestSession = () => !currentSession().authenticated;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isValidEmail = (value) => typeof value === "string" && value.trim().length <= 320 && EMAIL_PATTERN.test(value.trim());
+const guestEmail = () => document.getElementById("customer-email")?.value?.trim() || "";
+const guestHeaders = () => guestAccessToken ? { "X-Guest-Order-Token": guestAccessToken } : {};
 
 const authApi = async (path, options = {}) => {
     if (!window.DigiAuth?.api) throw new Error("Vui lòng đăng nhập để tiếp tục.");
@@ -64,7 +71,8 @@ const updatePayButton = () => {
             ? (pay.total !== null ? `Thanh toán ${formatPrice(pay.total)}` : "Xác nhận thanh toán")
             : pay.reason === "blocked" ? "Chưa thanh toán được"
                 : pay.reason === "error" ? "Thử lại voucher để thanh toán"
-                    : "Thanh toán";
+                    : pay.reason === "zero-online" ? "Chọn COD hoặc dùng ít điểm hơn"
+                        : "Thanh toán";
     }
     button.disabled = disabled;
     if (disabled) button.setAttribute("aria-disabled", "true"); else button.removeAttribute("aria-disabled");
@@ -123,6 +131,9 @@ const decreaseQty = () => {
 };
 const updateTotal = refreshSummary;
 
+// The order fields without the guest-only email, which the checkout body adds itself.
+const formFields = ({ email, ...fields }) => fields;
+
 const formValues = () => ({
     customerName: document.getElementById("customer-name")?.value?.trim() || "",
     customerPhone: document.getElementById("customer-phone")?.value?.trim() || "",
@@ -134,6 +145,7 @@ const formValues = () => ({
 const validateForm = () => {
     let valid = true;
     const rules = [
+        ["customer-email", "error-email", isValidEmail, "Email không hợp lệ (VD: ten@example.com)."],
         ["customer-name", "error-name", (value) => value.trim().length >= 2, "Họ và tên không được để trống (tối thiểu 2 ký tự)."],
         ["customer-phone", "error-phone", (value) => /^(0|\+84)[0-9]{8,10}$/.test(value.trim()), "Số điện thoại không hợp lệ (VD: 0912345678)."],
         ["customer-address", "error-address", (value) => value.trim().length >= 5, "Địa chỉ nhận hàng không được để trống (tối thiểu 5 ký tự)."]
@@ -155,7 +167,7 @@ const validateForm = () => {
 };
 
 const attachLiveValidation = () => {
-    ["customer-name", "customer-phone", "customer-address"].forEach((id) => {
+    ["customer-email", "customer-name", "customer-phone", "customer-address"].forEach((id) => {
         document.getElementById(id)?.addEventListener("input", () => {
             const error = document.getElementById("error-" + id.replace("customer-", ""));
             if (error) { error.textContent = ""; error.style.display = "none"; }
@@ -270,6 +282,15 @@ const retryCartMerge = async () => {
     }
 };
 
+// Mua không cần đăng nhập: email bắt buộc, kèm lời giải thích. Cùng một câu cho mọi email (không tiết lộ email đã có tài khoản hay chưa).
+const guestEmailHtml = () => `
+                <div class="checkout-input-group">
+                    <label for="customer-email">Email <span class="required-star">*</span></label>
+                    <input type="email" id="customer-email" class="checkout-input" autocomplete="email" inputmode="email" aria-describedby="guest-email-note error-email">
+                    <span class="checkout-field-error" id="error-email" role="alert" style="display:none;"></span>
+                    <p class="vc-limit" id="guest-email-note">Bạn không cần đăng nhập. Một tài khoản sẽ được tạo hoặc liên kết với email này để bạn xem lại đơn hàng sau; email xác nhận đơn hàng cũng được gửi tới đây.</p>
+                </div>`;
+
 const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
     checkoutBlocked = Boolean(blocked);
     const container = document.getElementById("payment-info");
@@ -282,6 +303,8 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
                 ${qtyControls}
                 ${qtyControls ? '<div class="checkout-divider"></div>' : ''}
                 <div class="checkout-section-title">Thông tin giao hàng</div>
+                ${isGuestSession() ? guestEmailHtml() : ""}
+                <div class="checkout-input-group saved-address" id="saved-address-picker" hidden></div>
                 <div class="checkout-grid-2">
                     <div class="checkout-input-group">
                         <label for="customer-name">Họ và tên người nhận <span class="required-star">*</span></label>
@@ -317,6 +340,8 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
                 <hr class="vc-rule">
                 <section id="voucher-block" class="vc-block" aria-label="Voucher"></section>
                 <hr class="vc-rule">
+                <section id="points-block" class="vc-block" aria-label="Điểm thưởng"></section>
+                <hr class="vc-rule">
                 <dl id="summary-breakdown" class="vc-sum" aria-live="polite"></dl>
                 <div id="checkout-error-alert" class="checkout-alert-error" role="alert" tabindex="-1" style="display:none;"></div>
                 <button class="btn btn--primary btn--checkout" id="btn-checkout" type="button" onclick="handleCheckout()" ${checkoutBlocked ? "disabled aria-disabled=\"true\"" : ""}>${checkoutBlocked ? "Xử lý sản phẩm trước khi thanh toán" : "Xác nhận thanh toán"}</button>
@@ -327,12 +352,80 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
     window.CheckoutVouchers?.mount({
         getItems: quoteItems,
         getLocalTotals: () => { const subtotal = computeSubtotal(); return { subtotal, shipping: computeShipping(subtotal) }; },
-        isEnabled: () => isUserSession() && !CartService.getMergeError(),
+        getPaymentMethod: () => document.getElementById("payment-method")?.value || "COD",
+        isEnabled: () => (isUserSession() && !CartService.getMergeError()) || (isGuestSession() && guestEmailSeen),
+        isGuest: isGuestSession,
+        getEmail: guestEmail,
         onChange: updatePayButton,
         goLogin: () => { if (saveCheckoutDraft()) window.location.assign("/auth.html?tab=login"); else showCheckoutError("Không thể lưu phiên checkout trong tab này. Hãy bật sessionStorage rồi thử lại."); }
     });
+    // Guest vouchers are quoted per email, so the voucher block waits for the first valid one.
+    document.getElementById("customer-email")?.addEventListener("change", () => {
+        if (guestEmailSeen || !isValidEmail(guestEmail())) return;
+        guestEmailSeen = true;
+        window.CheckoutVouchers?.activate?.();
+        updatePayButton();
+    });
+    window.CheckoutPoints?.mount();
+    document.getElementById("payment-method")?.addEventListener("change", updatePayButton);
     refreshSummary();
     applyDraftForm();
+    initSavedAddresses();
+};
+
+// Khách đã đăng nhập: điền sẵn từ địa chỉ mặc định và cho chọn địa chỉ đã lưu khác. Khách vãng lai hoặc
+// người chưa có địa chỉ vẫn dùng biểu mẫu nhập tay như cũ; dữ liệu gửi đi không đổi.
+const ADDRESS_FIELDS = { recipientName: "customer-name", phone: "customer-phone", addressLine: "customer-address" };
+const CUSTOM_ADDRESS = "__custom__";
+
+const fillAddressFields = (address) => {
+    Object.entries(ADDRESS_FIELDS).forEach(([key, id]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        input.value = address ? address[key] : "";
+        input.classList.remove("checkout-input--error");
+        const error = document.getElementById("error-" + id.replace("customer-", ""));
+        if (error) { error.textContent = ""; error.style.display = "none"; }
+    });
+};
+
+const initSavedAddresses = async () => {
+    const picker = document.getElementById("saved-address-picker");
+    if (!picker || !isUserSession()) return;
+    let addresses;
+    try {
+        addresses = unwrap(await authApi("/api/addresses"))?.addresses;
+    } catch (_) {
+        return; // Không tải được sổ địa chỉ: giữ nguyên biểu mẫu nhập tay.
+    }
+    if (!Array.isArray(addresses) || !addresses.length || !document.body.contains(picker)) return;
+
+    const typed = Object.values(ADDRESS_FIELDS).map((id) => document.getElementById(id)?.value?.trim() || "");
+    const hasTyped = typed.some(Boolean);
+    const matching = addresses.find((a) => a.recipientName === typed[0] && a.phone === typed[1] && a.addressLine === typed[2]);
+    const initial = hasTyped ? matching : addresses.find((a) => a.isDefault) || addresses[0];
+
+    picker.innerHTML = `
+        <label for="saved-address">Địa chỉ đã lưu</label>
+        <select id="saved-address" class="checkout-select">
+            ${addresses.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(`${[a.recipientName, a.phone, a.addressLine].filter(Boolean).join(" · ")}${a.isDefault ? " (Mặc định)" : ""}`)}</option>`).join("")}
+            <option value="${CUSTOM_ADDRESS}">Nhập địa chỉ khác</option>
+        </select>
+        <a class="saved-address__manage" href="/profile.html">Quản lý địa chỉ</a>`;
+    picker.hidden = false;
+    const select = document.getElementById("saved-address");
+    select.value = initial ? initial.id : CUSTOM_ADDRESS;
+    if (initial && !hasTyped) fillAddressFields(initial);
+
+    select.addEventListener("change", () => {
+        const chosen = addresses.find((a) => a.id === select.value);
+        fillAddressFields(chosen || null);
+        if (!chosen) document.getElementById("customer-name")?.focus();
+    });
+    // Sửa tay một ô nghĩa là đang dùng địa chỉ khác với bản đã lưu.
+    Object.values(ADDRESS_FIELDS).forEach((id) => {
+        document.getElementById(id)?.addEventListener("input", () => { select.value = CUSTOM_ADDRESS; });
+    });
 };
 
 const applyDraftForm = () => {
@@ -429,7 +522,7 @@ const renderPaymentAttempt = (attempt) => {
 const refreshPaymentAttempt = async () => {
     if (!activePaymentAttempt?.id) return;
     try {
-        const latest = unwrap(await authApi(`/api/payments/attempts/${encodeURIComponent(activePaymentAttempt.id)}`));
+        const latest = unwrap(await authApi(`/api/payments/attempts/${encodeURIComponent(activePaymentAttempt.id)}`, { headers: guestHeaders() }));
         if (!latest) return;
         const wasPending = activePaymentAttempt.status === "PENDING";
         const changed = latest.status !== activePaymentAttempt.status || latest.id !== activePaymentAttempt.id;
@@ -437,6 +530,10 @@ const refreshPaymentAttempt = async () => {
         if (changed) renderPaymentAttempt(latest);
         else updatePaymentCountdown();
         if (wasPending && latest.status !== "PENDING") stopPaymentTimers();
+        if (changed && latest.status === "SUCCEEDED") {
+            if (guestAccessToken) activePaymentOrder = { ...activePaymentOrder, paymentStatus: "PAID" }; // a guest cannot reload the order
+            else refreshEarnedPoints();
+        }
     } catch (_) {
         // Keep showing the current state; a later poll can recover transient network errors.
     }
@@ -450,7 +547,7 @@ const retryPaymentAttempt = async () => {
     try {
         const response = await authApi(`/api/payments/orders/${encodeURIComponent(activePaymentOrder.id)}/attempts`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...guestHeaders() },
             body: JSON.stringify({ provider })
         });
         renderPaymentAttempt(unwrap(response));
@@ -466,6 +563,38 @@ const retryPaymentAttempt = async () => {
         paymentRetryLoading = false;
     }
 };
+
+// Points the order earns: already credited, or still waiting for the payment (online) or the delivery (COD / bank transfer).
+const pointsEarnedHtml = (order) => {
+    if (guestAccessToken) return ""; // points belong to an account; the guest success screen does not show them
+    const earned = Number(order?.pointsEarned) || 0;
+    if (earned <= 0) return "";
+    const worth = formatPrice(earned * 1000);
+    if (order.pointsCredited) {
+        return `<span class="order-detail-label">Điểm thưởng nhận được</span><span class="order-detail-value">+${earned.toLocaleString("vi-VN")} điểm (${worth})</span>`;
+    }
+    if (order.orderStatus === "CANCELLED") return "";
+    // Online orders earn once paid; COD and bank transfer orders earn once delivered.
+    const online = ["MOMO", "VNPAY"].includes(order.paymentMethod);
+    if (online && order.paymentStatus === "PAID") return "";
+    const label = online ? "Điểm thưởng sau khi thanh toán" : "Điểm thưởng sau khi giao hàng";
+    return `<span class="order-detail-label">${label}</span><span class="order-detail-value">+${earned.toLocaleString("vi-VN")} điểm (${worth})</span>`;
+};
+
+// Online payment confirmed while the success screen is open: the order's points were credited, so show them as received.
+const refreshEarnedPoints = async () => {
+    if (!activePaymentOrder?.id) return;
+    try {
+        const order = unwrap(await authApi(`/api/orders/${encodeURIComponent(activePaymentOrder.id)}`, { headers: guestHeaders() }));
+        activePaymentOrder = { ...activePaymentOrder, ...order };
+        const row = document.getElementById("order-points-earned");
+        if (row) row.innerHTML = pointsEarnedHtml(activePaymentOrder);
+    } catch (_) { /* the row keeps its previous text */ }
+};
+
+// The same words for every email: nothing says whether the account is new or already existed.
+const guestAccountNoteHtml = (email) => `<p class="vc-limit" role="note">Đơn hàng được lưu vào tài khoản gắn với email ${escapeHtml(email)}${email ? "" : " của bạn"} và email xác nhận sẽ được gửi tới đó. Để xem lại đơn hàng, hãy <a href="/auth.html?tab=login">đăng nhập</a> bằng email này; nếu chưa có mật khẩu, dùng <a href="/recover.html">Quên mật khẩu</a> để nhận link đặt mật khẩu.</p>`;
+let guestOrderEmail = "";
 
 const renderOrderSuccess = (order) => {
     stopPaymentTimers();
@@ -487,12 +616,16 @@ const renderOrderSuccess = (order) => {
     const onlineUnpaid = ["MOMO", "VNPAY"].includes(order?.paymentMethod) && order?.paymentStatus !== "PAID";
     const successTitle = onlineUnpaid ? "Đơn hàng chờ thanh toán" : "Đặt hàng thành công!";
     const voucherRows = (Array.isArray(order?.vouchers) ? order.vouchers : []).map((voucher) => `<div class="order-detail-row"><span class="order-detail-label">Voucher <span class="font-mono">${escapeHtml(voucher.code)}</span></span><span class="order-detail-value">−${formatPrice(voucher.amount)}</span></div>`).join("");
+    const pointsUsedRow = Number(order?.pointsRedeemed) > 0
+        ? `<div class="order-detail-row"><span class="order-detail-label">Điểm đã dùng (${Number(order.pointsRedeemed).toLocaleString("vi-VN")} điểm)</span><span class="order-detail-value">−${formatPrice(order.pointsDiscount)}</span></div>`
+        : "";
     container.closest(".payment-container")?.classList.remove("payment-container--wide");
     container.innerHTML = `
         <div class="order-success-card" role="status" tabindex="-1">
             <div class="order-success-icon" aria-hidden="true">✓</div>
             <h2 class="order-success-title">${escapeHtml(successTitle)}</h2>
-            <p class="order-success-desc">${onlineUnpaid ? "Đơn hàng được ghi nhận và đang chờ cổng thanh toán xác nhận." : "Đơn hàng đã được ghi nhận cho tài khoản của bạn."}</p>
+            <p class="order-success-desc">${onlineUnpaid ? "Đơn hàng được ghi nhận và đang chờ cổng thanh toán xác nhận." : guestAccessToken ? "Đơn hàng đã được ghi nhận." : "Đơn hàng đã được ghi nhận cho tài khoản của bạn."}</p>
+            ${guestAccessToken ? guestAccountNoteHtml(guestOrderEmail) : ""}
             <div class="order-detail-box">
                 <div class="order-detail-row"><span class="order-detail-label">Mã đơn hàng</span><span class="order-detail-value font-mono"><strong>${escapeHtml(order?.id)}</strong></span></div>
                 <div class="order-detail-row"><span class="order-detail-label">Khách hàng</span><span class="order-detail-value">${escapeHtml(customer.name)}</span></div>
@@ -502,60 +635,68 @@ const renderOrderSuccess = (order) => {
                 ${customer.note ? `<div class="order-detail-row"><span class="order-detail-label">Ghi chú (Tùy chọn)</span><span class="order-detail-value">${escapeHtml(customer.note)}</span></div>` : ""}
                 ${itemsHtml}
                 <div class="order-detail-row"><span class="order-detail-label">Tạm tính</span><span class="order-detail-value">${formatPrice(order?.subtotal)}</span></div>
+                <div class="order-detail-row"><span class="order-detail-label">${DigiVat.label}</span><span class="order-detail-value">${formatPrice(DigiVat.includedVat(order?.subtotal))}</span></div>
                 <div class="order-detail-row"><span class="order-detail-label">Phí vận chuyển</span><span class="order-detail-value">${formatPrice(order?.shippingFee)}</span></div>
                 ${voucherRows}
+                ${pointsUsedRow}
                 <div class="order-detail-row"><span class="order-detail-label">Tổng thanh toán</span><span class="order-detail-value order-detail-value--highlight">${formatPrice(order?.totalPrice)}</span></div>
+                <div class="order-detail-row" id="order-points-earned" aria-live="polite">${pointsEarnedHtml(order)}</div>
             </div>
             ${order?.paymentAttempt ? '<section id="payment-attempt-panel" aria-label="Trạng thái thanh toán"></section>' : ""}
-            <div class="order-actions"><a href="/" class="btn btn--primary">Tiếp tục mua sắm</a><a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a></div>
+            <div class="order-actions"><a href="/" class="btn btn--primary">Tiếp tục mua sắm</a>${guestAccessToken ? '<a href="/auth.html?tab=login" class="btn btn--secondary">Đăng nhập xem đơn hàng</a>' : '<a href="/cart.html" class="btn btn--secondary">Xem giỏ hàng</a>'}</div>
         </div>`;
     if (order?.paymentAttempt) renderPaymentAttempt(order.paymentAttempt);
     container.querySelector("[tabindex]")?.focus();
-};
-
-const handleGuestSubmit = () => {
-    const draft = saveCheckoutDraft();
-    if (!draft) {
-        showCheckoutError("Không thể lưu phiên checkout trong tab này. Hãy bật sessionStorage rồi thử lại.");
-        return;
-    }
-    window.location.assign("/auth.html?tab=login");
 };
 
 const handleCheckout = async () => {
     if (checkoutLoading || !validateForm()) return;
     const session = currentSession();
     if (session.user?.role === "admin") return renderForbidden();
-    if (!session.authenticated) return handleGuestSubmit();
-    if (!isUserSession()) return showCheckoutError("Tài khoản hiện tại không thể thanh toán.");
+    const asGuest = !session.authenticated;
+    if (!asGuest && !isUserSession()) return showCheckoutError("Tài khoản hiện tại không thể thanh toán.");
     if (checkoutBlocked) return showCheckoutError("Hãy xử lý các sản phẩm không khả dụng trước khi thanh toán.");
     if (CartService.getMergeError()) return showCheckoutError("Giỏ hàng chưa hợp nhất ổn định. Hãy thử đăng nhập lại để retry cùng thao tác.");
 
     const button = document.getElementById("btn-checkout");
     checkoutLoading = true;
     if (button) { button.disabled = true; button.textContent = "Đang xử lý..."; }
-    const values = formValues();
+    const values = { ...formValues(), email: asGuest ? guestEmail() : "" };
     try {
         let response;
         const voucherCodes = window.CheckoutVouchers?.getCodes?.() || [];
+        // Only sent when points are actually used, so an order without points is the same request as before.
+        const pointsToUse = asGuest ? 0 : window.CheckoutVouchers?.getPointsToSend?.() || 0;
+        const pointsField = pointsToUse > 0 ? { pointsToUse } : {};
+        // A guest uses the /api/guest twins of the endpoints, with the email in the body; nothing else differs.
+        const base = asGuest ? "/api/guest/checkout" : "/api/checkout";
+        const emailField = asGuest ? { email: values.email } : {};
         if (Array.isArray(cartItems)) {
-            response = await authApi("/api/checkout/batch", {
+            response = await authApi(`${base}/batch`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     items: cartItems.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
-                    ...values,
-                    voucherCodes
+                    ...formFields(values),
+                    ...emailField,
+                    voucherCodes,
+                    ...pointsField
                 })
             });
         } else {
-            response = await authApi(`/api/checkout/${encodeURIComponent(currentVariant.id)}`, {
+            response = await authApi(`${base}/${encodeURIComponent(currentVariant.id)}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ quantity: currentQuantity, ...values, voucherCodes })
+                body: JSON.stringify({ quantity: currentQuantity, ...formFields(values), ...emailField, voucherCodes, ...pointsField })
             });
         }
         const data = unwrap(response) || {};
+        if (asGuest) {
+            guestAccessToken = data.guestAccessToken || null;
+            guestOrderEmail = values.email;
+            window.DigiCheckoutState?.saveGuestOrder?.(data, values.email);
+            delete data.guestAccessToken;
+        }
         if (Array.isArray(cartItems)) {
             // Order creation is committed before cart cleanup; never clear earlier.
             try { await CartService.clearCart(); } catch (_) { /* order is already committed */ }
@@ -566,7 +707,7 @@ const handleCheckout = async () => {
         renderOrderSuccess(data);
     } catch (error) {
         checkoutLoading = false;
-        if (error?.status === 401) {
+        if (error?.status === 401 && !asGuest) {
             saveCheckoutDraft();
             window.location.assign("/auth.html?tab=login");
             return;
@@ -579,7 +720,7 @@ const handleCheckout = async () => {
             return;
         }
         updatePayButton();
-        if (detail.code.startsWith("VOUCHER_")) window.CheckoutVouchers?.reload?.();
+        if (detail.code.startsWith("VOUCHER_") || detail.code.startsWith("POINTS_")) window.CheckoutVouchers?.reload?.();
         showCheckoutError(detail.message || error?.message || "Không thể hoàn tất thanh toán. Vui lòng thử lại.");
     }
 };
@@ -656,12 +797,33 @@ const loadFromCart = async () => {
     renderCheckoutForm(summaryHtml, "", unavailable, cartItems);
 };
 
+// Back from MoMo/VNPay without a session: the guest's order and token were kept in this tab by the checkout.
+// In another browser (e.g. the phone that scanned the QR) there is nothing to show, only where to look next.
+const loadGuestPaymentReturn = async (attemptId) => {
+    const container = document.getElementById("payment-info");
+    const stored = window.DigiCheckoutState?.readGuestOrder?.();
+    if (stored) {
+        try {
+            guestAccessToken = stored.token;
+            guestOrderEmail = stored.email || "";
+            const attempt = unwrap(await authApi(`/api/payments/attempts/${encodeURIComponent(attemptId)}`, { headers: guestHeaders() }));
+            const paid = attempt.status === "SUCCEEDED";
+            renderOrderSuccess({ ...stored.order, paymentStatus: paid ? "PAID" : stored.order.paymentStatus, paymentAttempt: attempt });
+            return;
+        } catch (_) {
+            guestAccessToken = null;
+        }
+    }
+    container.innerHTML = `<div class="error-message"><h2>Không mở được đơn hàng trên thiết bị này</h2><p>Đơn hàng của bạn vẫn được lưu. Nếu đã thanh toán, email xác nhận sẽ được gửi tới email bạn đã nhập. Để xem lại đơn hàng, hãy đăng nhập bằng email đó (nếu chưa có mật khẩu, dùng Quên mật khẩu).</p><div class="checkout-auth-forbidden__actions"><a href="/auth.html?tab=login" class="btn btn--primary">Đăng nhập</a><a href="/recover.html" class="btn btn--secondary">Quên mật khẩu</a></div></div>`;
+};
+
 const loadPaymentReturn = async (attemptId) => {
     const container = document.getElementById("payment-info");
     if (!/^[a-f\d]{32}$/i.test(attemptId)) {
         container.innerHTML = `<div class="error-message"><h2>Không tìm thấy giao dịch</h2><p>Liên kết thanh toán không hợp lệ.</p></div>`;
         return;
     }
+    if (isGuestSession()) return loadGuestPaymentReturn(attemptId);
     try {
         const attempt = unwrap(await authApi(`/api/payments/attempts/${encodeURIComponent(attemptId)}`));
         const order = unwrap(await authApi(`/api/orders/${encodeURIComponent(attempt.orderId)}`));

@@ -2,6 +2,7 @@
 // POST /api/vouchers/quote: price a cart with the typed/selected voucher codes. No reservation.
 
 const voucherService = require("../services/voucher.service");
+const guestAccount = require("../services/guest-account.service");
 
 const sendError = (res, error) => {
     const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
@@ -15,10 +16,9 @@ const sendError = (res, error) => {
     });
 };
 
-const quote = async (req, res) => {
+const respondWithQuote = async (res, input) => {
     try {
-        const { items, codes } = req.body || {};
-        const { quote: data, rejected } = await voucherService.quote({ items, codes });
+        const { quote: data, rejected } = await voucherService.quote(input);
         if (rejected.length > 0) {
             return res.status(422).json({
                 success: false,
@@ -36,4 +36,20 @@ const quote = async (req, res) => {
     }
 };
 
-module.exports = { quote };
+const quote = (req, res) => {
+    const { items, codes, pointsToUse } = req.body || {};
+    return respondWithQuote(res, { items, codes, pointsToUse, userId: req.user.id });
+};
+
+// Guest quote: no account, so no balance and no points. Same pricing path as the signed-in quote.
+const guestQuote = (req, res) => {
+    try {
+        guestAccount.parseGuestRequest(req.body || {});
+    } catch (error) {
+        return sendError(res, error);
+    }
+    const { items, codes } = req.body;
+    return respondWithQuote(res, { items, codes });
+};
+
+module.exports = { quote, guestQuote };

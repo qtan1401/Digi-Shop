@@ -5,6 +5,7 @@ const USER_SELECT = {
     id: true,
     email: true,
     username: true,
+    fullName: true,
     passwordHash: true,
     role: true,
     status: true,
@@ -12,7 +13,8 @@ const USER_SELECT = {
     failedPasswordAttempts: true,
     passwordLockedAt: true,
     forcePasswordChange: true,
-    authVersion: true
+    authVersion: true,
+    loyaltyPoints: true
 };
 
 const mapUser = (user) => user ? { ...user } : null;
@@ -44,6 +46,9 @@ const setUsernameIfUnset = async ({ userId, username }, client = getPrismaClient
     if (result.count !== 1) return null;
     return findUserById(userId, client);
 };
+
+const updateFullName = async ({ userId, fullName }, client = getPrismaClient()) =>
+    mapUser(await client.user.update({ where: { id: userId }, data: { fullName }, select: USER_SELECT }));
 
 const createUserWithGoogle = async ({ user, identity }, client = getPrismaClient()) => {
     return client.$transaction(async (tx) => {
@@ -147,8 +152,57 @@ const updatePasswordAndRevoke = async ({ userId, expectedAuthVersion, passwordHa
     });
 };
 
-const commitRecovery = async ({ userId, expectedAuthVersion, passwordHash }, client = getPrismaClient()) =>
-    updatePasswordAndRevoke({ userId, expectedAuthVersion, passwordHash, forcePasswordChange: true }, client);
+
+// A newer reset link replaces every earlier unused one, atomically with storing the new hash.
+const createPasswordResetToken = async ({ userId, tokenHash, expiresAt }, client = getPrismaClient()) =>
+    client.$transaction(async (tx) => {
+        await tx.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: new Date() } });
+        return tx.passwordResetToken.create({ data: { id: crypto.randomUUID(), userId, tokenHash, expiresAt } });
+    });
+
+/**
+ * Spends a reset token and sets the new password in one transaction. The claim (usedAt null, not expired, count 1) is
+ * the only gate, so of two concurrent uses exactly one wins. A passwordless account (guest or new registration) becomes
+ * ACTIVE: opening the link proves the mailbox. Returns { state: "RESET" | "INVALID" }.
+ */
+const resetPasswordWithToken = async ({ tokenHash, passwordHash, now }, client = getPrismaClient()) =>
+    client.$transaction(async (tx) => {
+        const claimed = await tx.passwordResetToken.updateMany({
+            where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+            data: { usedAt: now }
+        });
+        if (claimed.count !== 1) return { state: "INVALID" };
+        const token = await tx.passwordResetToken.findUnique({ where: { tokenHash } });
+        const user = token && await tx.user.findUnique({ where: { id: token.userId }, select: USER_SELECT });
+        if (!user || user.role !== "user") throw new ResetAbort();
+        const activate = user.status === "UNVERIFIED" && !user.passwordHash;
+        if (user.status !== "ACTIVE" && !activate) throw new ResetAbort();
+        const changed = await tx.user.updateMany({
+            where: { id: user.id, authVersion: user.authVersion },
+            data: {
+                passwordHash,
+                failedPasswordAttempts: 0,
+                passwordLockedAt: null,
+                forcePasswordChange: false,
+                authVersion: { increment: 1 },
+                ...(activate ? { status: "ACTIVE", emailVerifiedAt: now } : {})
+            }
+        });
+        if (changed.count !== 1) throw new ResetAbort();
+        await tx.refreshSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: now } });
+        await tx.passwordResetToken.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: now } });
+        return { state: "RESET" };
+    }).catch((error) => {
+        // Rolled back: the token is still unused, so a user who lost a race can simply try again.
+        if (error instanceof ResetAbort) return { state: "INVALID" };
+        throw error;
+    });
+
+class ResetAbort extends Error {}
+
+/** How many orders an account has; used only to tell a never-used guest account from one that already ordered. */
+const countOrdersByUser = async (userId, client = getPrismaClient()) =>
+    client.order.count({ where: { userId } });
 
 const createRefreshSession = async (data, client = getPrismaClient()) =>
     client.refreshSession.create({ data });
@@ -229,6 +283,7 @@ module.exports = {
     findUserByIdentifier,
     createUser,
     setUsernameIfUnset,
+    updateFullName,
     createUserWithGoogle,
     findOAuthIdentity,
     createOAuthIdentity,
@@ -239,7 +294,9 @@ module.exports = {
     incrementFailedPasswordAttempts,
     resetFailedPasswordAttempts,
     updatePasswordAndRevoke,
-    commitRecovery,
+    createPasswordResetToken,
+    resetPasswordWithToken,
+    countOrdersByUser,
     createRefreshSession,
     findRefreshSession,
     rotateRefreshSession,

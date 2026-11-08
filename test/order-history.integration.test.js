@@ -13,6 +13,7 @@ let orders;
 let orderItems;
 let orderVouchers;
 let paymentAttempts;
+let statusHistory;
 let reviews;
 let calls;
 
@@ -73,6 +74,13 @@ const fakePrisma = {
                 items,
                 vouchers: orderVouchers.filter((entry) => entry.orderId === order.id)
             };
+            if (include.statusHistory) {
+                assert.deepEqual(include.statusHistory.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
+                row.statusHistory = statusHistory
+                    .filter((entry) => entry.orderId === order.id)
+                    .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id)
+                    .map((entry) => ({ ...entry, createdAt: new Date(entry.createdAt) }));
+            }
             if (include.paymentAttempts) {
                 assert.equal(include.paymentAttempts.take, 1);
                 row.paymentAttempts = paymentAttempts
@@ -223,6 +231,7 @@ beforeEach(() => {
     orderItems = [];
     orderVouchers = [];
     paymentAttempts = [];
+    statusHistory = [];
     reviews = [];
     calls = [];
     clock = 1000;
@@ -465,4 +474,54 @@ test("cancelledAt is null until the order is cancelled", async () => {
     addOrder("A2", "alice", "CANCELLED", [[11, 1]], { cancelledAt: "2026-11-01T08:00:00.000Z" });
     assert.equal((await (await get("/api/orders/A1", ALICE)).json()).data.cancelledAt, null);
     assert.equal((await (await get("/api/orders/A2", ALICE)).json()).data.cancelledAt, "2026-11-01T08:00:00.000Z");
+});
+
+test("order detail lists every status the order entered with its timestamp, newest first, for the owner and admin only", async () => {
+    addOrder("A1", "alice", "SHIPPED");
+    statusHistory.push(
+        { id: 1, orderId: "A1", status: "PENDING", createdAt: "2026-11-01T08:00:00.000Z" },
+        { id: 3, orderId: "A1", status: "SHIPPED", createdAt: "2026-11-03T09:30:00.000Z" },
+        { id: 2, orderId: "A1", status: "PROCESSING", createdAt: "2026-11-02T10:15:00.000Z" }
+    );
+
+    const owner = (await (await get("/api/orders/A1", ALICE)).json()).data;
+    assert.deepEqual(owner.statusHistory, [
+        { status: "SHIPPED", at: "2026-11-03T09:30:00.000Z" },
+        { status: "PROCESSING", at: "2026-11-02T10:15:00.000Z" },
+        { status: "PENDING", at: "2026-11-01T08:00:00.000Z" }
+    ]);
+    assert.deepEqual((await (await get("/api/orders/A1", ADMIN)).json()).data.statusHistory, owner.statusHistory);
+
+    const stranger = await get("/api/orders/A1", BOB);
+    assert.equal(stranger.status, 404);
+    assert.equal((await stranger.json()).data, undefined);
+});
+
+test("history entries recorded in the same instant keep a stable newest-id-first order", async () => {
+    addOrder("A1", "alice", "PROCESSING");
+    const at = "2026-11-01T08:00:00.000Z";
+    statusHistory.push(
+        { id: 1, orderId: "A1", status: "PENDING", createdAt: at },
+        { id: 2, orderId: "A1", status: "PROCESSING", createdAt: at }
+    );
+    const history = (await (await get("/api/orders/A1", ALICE)).json()).data.statusHistory;
+    assert.deepEqual(history.map((entry) => entry.status), ["PROCESSING", "PENDING"]);
+});
+
+test("an order with no stored history still shows a timeline: placed as PENDING, then its current status", async () => {
+    const placed = Date.parse("2026-10-01T08:00:00.000Z") / 1000; // the fake derives updatedAt from createdAt
+    addOrder("L1", "alice", "SHIPPED", [[11, 1]], { createdAt: placed });
+    addOrder("L2", "alice", "CANCELLED", [[11, 1]], { createdAt: placed, cancelledAt: "2026-10-02T12:00:00.000Z" });
+    addOrder("L3", "alice", "PENDING", [[11, 1]], { createdAt: placed });
+
+    const history = async (id) => (await (await get(`/api/orders/${id}`, ALICE)).json()).data.statusHistory;
+    assert.deepEqual(await history("L1"), [
+        { status: "SHIPPED", at: "2026-10-01T08:00:00.000Z" },
+        { status: "PENDING", at: "2026-10-01T08:00:00.000Z" }
+    ]);
+    assert.deepEqual(await history("L2"), [
+        { status: "CANCELLED", at: "2026-10-02T12:00:00.000Z" },
+        { status: "PENDING", at: "2026-10-01T08:00:00.000Z" }
+    ]);
+    assert.deepEqual(await history("L3"), [{ status: "PENDING", at: "2026-10-01T08:00:00.000Z" }]);
 });

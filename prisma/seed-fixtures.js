@@ -7,6 +7,9 @@
  * decides whether a record is already present, so re-running it later inserts nothing new.
  */
 
+const { NO_EXPIRY_DATE } = require("../src/services/voucher-calculator");
+const { earnedPoints } = require("../src/services/loyalty-calculator");
+
 const SHIPPING_FEE = 100000;
 const VOUCHER_MAX_DISCOUNT = 500000;
 const ORDER_MAX_DISCOUNT = 1000000;
@@ -36,6 +39,14 @@ const CUSTOMERS = [
     ["Phan Tuấn Kiệt", "kiet.phan@seed.local", "tuankiet_pn", "0912345612", "14 Quang Trung, Vinh, Nghệ An"]
 ];
 
+// A second saved address for a few customers, so the address book and the checkout selector have more than one entry.
+// Keyed by customer position; the customer's own contact details (CUSTOMERS) are their default address.
+const EXTRA_ADDRESSES = new Map([
+    [0, ["Trần Thị Mai", "0987654301", "27 Kim Mã, Ba Đình, Hà Nội"]],
+    [1, ["Nguyễn Văn Long", "0987654302", "310 Nguyễn Văn Linh, Quận 7, TP. Hồ Chí Minh"]],
+    [4, ["Phạm Thu Hà", "0987654305", "15 Nguyễn Văn Cừ, Ninh Kiều, Cần Thơ"]]
+]);
+
 const CUSTOMER_NOTES = [
     "Giao giờ hành chính giúp mình.",
     "Gọi trước khi giao 15 phút.",
@@ -44,28 +55,29 @@ const CUSTOMER_NOTES = [
     "Đóng gói kỹ giúp mình, cảm ơn shop."
 ];
 
+// Codes are 5 letters/digits, usage limit is at most 10, and nothing expires (course spec).
 const VOUCHER_DEFINITIONS = [
-    { code: "WELCOME10", description: "Giảm 10%, tối đa 200.000₫", type: "PERCENT", percent: 10, maxDiscount: 200000, from: -120, to: 60, quantity: 500, enabled: true, listed: true },
-    { code: "SALE5", description: "Giảm 5%, tối đa 500.000₫", type: "PERCENT", percent: 5, maxDiscount: 500000, from: -120, to: 90, quantity: 300, enabled: true, listed: true },
-    { code: "FREESHIP", description: "Miễn phí vận chuyển cho mọi đơn hàng", type: "FREE_SHIPPING", percent: null, maxDiscount: null, from: -120, to: 45, quantity: 1000, enabled: true, listed: true },
-    { code: "SAPHETHAN", description: "Giảm 15%, tối đa 300.000₫ — sắp hết hạn", type: "PERCENT", percent: 15, maxDiscount: 300000, from: -30, to: 2, quantity: 100, enabled: true, listed: true },
-    { code: "HETHAN20", description: "Giảm 20%, tối đa 400.000₫ — đã hết hạn", type: "PERCENT", percent: 20, maxDiscount: 400000, from: -120, to: -5, quantity: 100, enabled: true, listed: true },
-    { code: "TAMDUNG", description: "Giảm 8%, tối đa 150.000₫ — tạm ngưng", type: "PERCENT", percent: 8, maxDiscount: 150000, from: -60, to: 30, quantity: 100, enabled: false, listed: true },
-    { code: "HETLUOT", description: "Giảm 12%, tối đa 250.000₫ — đã hết lượt", type: "PERCENT", percent: 12, maxDiscount: 250000, from: -120, to: 30, quantity: 3, enabled: true, listed: true },
-    { code: "VIPRIENG", description: "Giảm 25%, tối đa 500.000₫ — mã riêng cho khách VIP", type: "PERCENT", percent: 25, maxDiscount: 500000, from: -120, to: 180, quantity: 20, enabled: true, listed: false }
+    { code: "NEW10", description: "Giảm 10%, tối đa 200.000₫", type: "PERCENT", percent: 10, maxDiscount: 200000, from: -120, quantity: 10, enabled: true, listed: true },
+    { code: "SALE5", description: "Giảm 5%, tối đa 500.000₫", type: "PERCENT", percent: 5, maxDiscount: 500000, from: -120, quantity: 10, enabled: true, listed: true },
+    { code: "FSHIP", description: "Miễn phí vận chuyển cho mọi đơn hàng", type: "FREE_SHIPPING", percent: null, maxDiscount: null, from: -120, quantity: 10, enabled: true, listed: true },
+    { code: "OFF15", description: "Giảm 15%, tối đa 300.000₫", type: "PERCENT", percent: 15, maxDiscount: 300000, from: -30, quantity: 10, enabled: true, listed: true },
+    { code: "OFF20", description: "Giảm 20%, tối đa 400.000₫", type: "PERCENT", percent: 20, maxDiscount: 400000, from: -120, quantity: 10, enabled: true, listed: true },
+    { code: "PAUSE", description: "Giảm 8%, tối đa 150.000₫ — tạm ngưng", type: "PERCENT", percent: 8, maxDiscount: 150000, from: -60, quantity: 10, enabled: false, listed: true },
+    { code: "FULL3", description: "Giảm 12%, tối đa 250.000₫ — đã hết lượt", type: "PERCENT", percent: 12, maxDiscount: 250000, from: -120, quantity: 3, enabled: true, listed: true },
+    { code: "VIP25", description: "Giảm 25%, tối đa 500.000₫ — mã riêng cho khách VIP", type: "PERCENT", percent: 25, maxDiscount: 500000, from: -120, quantity: 10, enabled: true, listed: false }
 ];
 
 // Voucher use by position among delivered orders (oldest first).
 const DELIVERED_VOUCHER_PLAN = new Map([
-    [3, ["WELCOME10"]],
-    [8, ["WELCOME10", "FREESHIP"]],
-    [12, ["HETHAN20"]],
-    [17, ["HETLUOT"]],
-    [21, ["VIPRIENG", "WELCOME10", "FREESHIP"]],
-    [25, ["HETLUOT"]],
+    [3, ["NEW10"]],
+    [8, ["NEW10", "FSHIP"]],
+    [12, ["OFF20"]],
+    [17, ["FULL3"]],
+    [21, ["VIP25", "NEW10", "FSHIP"]],
+    [25, ["FULL3"]],
     [29, ["SALE5"]],
-    [33, ["HETLUOT"]],
-    [36, ["SAPHETHAN"]]
+    [33, ["FULL3"]],
+    [36, ["OFF15"]]
 ]);
 
 // Recent orders (last 48 hours): status mix, with at least one stale unpaid COD and one stale paid MOMO/VNPAY PENDING order.
@@ -239,16 +251,27 @@ function calculateSeedDiscounts(subtotal, shippingFee, vouchers) {
 const money = (value) => `${value}.00`;
 const iso = (milliseconds) => new Date(milliseconds).toISOString();
 
+const userIdFor = (index) => `5eed0000-0000-4000-8000-0000000000${String(index + 1).padStart(2, "0")}`;
+const addressIdFor = (index, position) => `5eed0000-0000-4000-9000-${String(index + 1).padStart(6, "0")}${String(position).padStart(6, "0")}`;
+
 function buildUsers(now) {
-    return CUSTOMERS.map(([, email, username], index) => {
+    return CUSTOMERS.map(([name, email, username, phone, address], index) => {
         const createdAt = now - 100 * DAY - index * 3 * HOUR;
+        const extra = EXTRA_ADDRESSES.get(index);
         return {
-            id: `5eed0000-0000-4000-8000-0000000000${String(index + 1).padStart(2, "0")}`,
+            id: userIdFor(index),
             email,
             username,
+            fullName: name,
             role: "user",
             status: "ACTIVE",
             emailVerifiedAt: iso(createdAt + 5 * 60 * 1000),
+            // Balance = points of the orders credited so far; set by creditLoyalty once the orders exist.
+            loyaltyPoints: 0,
+            addresses: [
+                { id: addressIdFor(index, 1), recipientName: name, phone, addressLine: address, isDefault: true, createdAt: iso(createdAt + 10 * 60 * 1000) },
+                ...(extra ? [{ id: addressIdFor(index, 2), recipientName: extra[0], phone: extra[1], addressLine: extra[2], isDefault: false, createdAt: iso(createdAt + 20 * 60 * 1000) }] : [])
+            ],
             createdAt: iso(createdAt),
             updatedAt: iso(createdAt + 5 * 60 * 1000)
         };
@@ -263,7 +286,7 @@ function buildVouchers(now) {
         percent: definition.percent,
         maxDiscount: definition.maxDiscount === null ? null : money(definition.maxDiscount),
         startsAt: iso(now + definition.from * DAY),
-        endsAt: iso(now + definition.to * DAY),
+        endsAt: NO_EXPIRY_DATE.toISOString(),
         quantity: definition.quantity,
         redeemedCount: 0,
         isEnabled: definition.enabled,
@@ -314,6 +337,38 @@ function orderIdFor(index, random) {
     return `ORD-${stamp}-${suffix}`;
 }
 
+/**
+ * Loyalty rule (GLOSSARY "Points earned"): a cash-on-delivery or bank-transfer order credits its points on delivery, an
+ * online (MoMo/VNPay) order when its payment succeeded; a cancelled order credits nothing. Seeded online orders marked
+ * PAID succeeded, and every DELIVERED seed order is PAID.
+ */
+const isPointsCredited = (spec) => {
+    if (spec.orderStatus === "CANCELLED" || spec.paymentStatus !== "PAID") return false;
+    return spec.orderStatus === "DELIVERED" || spec.method === "MOMO" || spec.method === "VNPAY";
+};
+
+/** The statuses an order went through, oldest first, ending on its current status at `updatedAt`. */
+function buildStatusHistory(spec, updatedAt) {
+    const placed = spec.createdAt;
+    const history = [{ status: "PENDING", at: iso(placed) }];
+    if (spec.orderStatus === "PENDING") return history;
+    if (spec.orderStatus === "DELIVERED") {
+        history.push({ status: "PROCESSING", at: iso(placed + 2 * HOUR) }, { status: "SHIPPED", at: iso(placed + DAY) });
+    } else if (spec.orderStatus === "SHIPPED") {
+        history.push({ status: "PROCESSING", at: iso(placed + 10 * 60 * 1000) });
+    }
+    history.push({ status: spec.orderStatus, at: iso(updatedAt) });
+    return history;
+}
+
+function creditLoyalty(users, orders) {
+    const balances = new Map(users.map((user) => [user.id, 0]));
+    for (const order of orders) {
+        if (order.pointsCreditedAt !== null) balances.set(order.userId, balances.get(order.userId) + order.pointsEarned);
+    }
+    for (const user of users) user.loyaltyPoints = balances.get(user.id);
+}
+
 function buildOrders(products, users, vouchers, now, random) {
     const voucherByCode = new Map(vouchers.map((voucher) => [voucher.code, voucher]));
     const delivered = buildOrderSkeletons(products, random);
@@ -359,15 +414,20 @@ function buildOrders(products, users, vouchers, now, random) {
         const cancelled = spec.orderStatus === "CANCELLED";
         const updatedAt = delivered
             ? spec.createdAt + 2 * DAY + random.int(24) * HOUR
-            : Math.min(now, spec.createdAt + (spec.paymentStatus === "PAID" || cancelled ? 30 * 60 * 1000 : 0));
+            : Math.min(now, spec.createdAt + (spec.paymentStatus === "PAID" || cancelled || spec.orderStatus !== "PENDING" ? 30 * 60 * 1000 : 0));
         const note = random.next() < 0.25 ? random.pick(CUSTOMER_NOTES) : null;
+        const total = subtotal + SHIPPING_FEE - discount;
+        const credited = isPointsCredited(spec);
         return {
             id: orderIdFor(index, random),
             userId: users[spec.customerIndex].id,
             subtotal: money(subtotal),
             shippingFee: money(SHIPPING_FEE),
             discount: money(discount),
-            totalPrice: money(subtotal + SHIPPING_FEE - discount),
+            totalPrice: money(total),
+            pointsEarned: earnedPoints(total),
+            pointsCreditedAt: credited ? iso(updatedAt) : null,
+            statusHistory: buildStatusHistory(spec, updatedAt),
             customer: { name: customer[0], phone: customer[3], address: customer[4], note },
             paymentMethod: PAYMENT[spec.method],
             orderStatus: spec.orderStatus,
@@ -458,6 +518,7 @@ function buildSeedFixtures(products, now = new Date()) {
     const vouchers = buildVouchers(reference);
     const orders = buildOrders(products, users, vouchers, reference, random).sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
     applyRedeemedCounts(vouchers, orders);
+    creditLoyalty(users, orders);
     const reviews = buildReviews(products, orders, reference, random);
     return { users, vouchers, orders, reviews };
 }

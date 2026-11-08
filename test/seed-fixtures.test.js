@@ -4,7 +4,7 @@ const seedData = require("../prisma/seed-data");
 const { COMMENT_POOL_SIZE, buildSeedFixtures } = require("../prisma/seed-fixtures");
 const { normalizeSeedData, SeedDataError } = require("../scripts/db/normalize-seed");
 const {
-    classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary, resolveSeedOrderItems
+    backfillSeedExtras, classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary, resolveSeedOrderItems
 } = require("../prisma/seed");
 
 const { products, users, vouchers, orders, reviews } = seedData.commerce;
@@ -20,7 +20,7 @@ test("seed fixtures are deterministic for a given reference time and only timest
     const first = buildSeedFixtures(products, reference);
     assert.deepEqual(buildSeedFixtures(products, reference), first);
     const later = buildSeedFixtures(products, new Date(reference.getTime() + 30 * DAY));
-    const stable = (fixtures) => JSON.stringify(fixtures, (key, value) => (/At$/.test(key) ? undefined : value));
+    const stable = (fixtures) => JSON.stringify(fixtures, (key, value) => (/(At|^at)$/.test(key) ? undefined : value));
     assert.equal(stable(later), stable(first));
     assert.notDeepEqual(later.orders.map((order) => order.createdAt), first.orders.map((order) => order.createdAt));
 });
@@ -82,6 +82,9 @@ test("vouchers cover every state and each redeemed_count equals its unreleased o
         assert.equal(voucher.redeemedCount, used.length, voucher.code);
         assert.ok(voucher.redeemedCount <= voucher.quantity);
         assert.ok(voucher.description.length <= 200);
+        assert.match(voucher.code, /^[A-Z0-9]{5}$/, "codes are 5 alphanumeric characters");
+        assert.ok(voucher.quantity >= 1 && voucher.quantity <= 10, `${voucher.code} usage limit is at most 10`);
+        assert.equal(new Date(voucher.endsAt).getUTCFullYear(), 9999, `${voucher.code} never expires`);
         if (voucher.type === "PERCENT") {
             assert.ok(voucher.percent >= 1 && voucher.percent <= 100);
             assert.ok(vnd(voucher.maxDiscount) >= 1000 && vnd(voucher.maxDiscount) <= 500000);
@@ -94,13 +97,11 @@ test("vouchers cover every state and each redeemed_count equals its unreleased o
     assert.ok(vouchers.some((voucher) => active(voucher) && voucher.type === "PERCENT" && voucher.percent === 10 && vnd(voucher.maxDiscount) === 200000 && voucher.isListed));
     assert.ok(vouchers.some((voucher) => active(voucher) && voucher.type === "PERCENT" && voucher.percent === 5 && vnd(voucher.maxDiscount) === 500000));
     assert.ok(vouchers.some((voucher) => active(voucher) && voucher.type === "FREE_SHIPPING" && voucher.isListed));
-    assert.ok(vouchers.some((voucher) => active(voucher) && Date.parse(voucher.endsAt) - now < 2.5 * DAY));
-    assert.ok(vouchers.some((voucher) => Date.parse(voucher.endsAt) < now));
     assert.ok(vouchers.some((voucher) => !voucher.isEnabled));
     assert.ok(vouchers.some((voucher) => voucher.redeemedCount === voucher.quantity && voucher.quantity > 0));
-    assert.equal(byCode.get("VIPRIENG").isListed, false);
-    assert.ok(active(byCode.get("VIPRIENG")));
-    assert.match(byCode.get("WELCOME10").description, /Giảm 10%, tối đa 200\.000₫/);
+    assert.equal(byCode.get("VIP25").isListed, false);
+    assert.ok(active(byCode.get("VIP25")));
+    assert.match(byCode.get("NEW10").description, /Giảm 10%, tối đa 200\.000₫/);
 });
 
 test("order voucher discounts follow the redemption rules and sum to the order discount", () => {
@@ -273,4 +274,116 @@ test("seed classification reports unchanged rows on re-run and conflicts instead
         `user:${normalized.users[0].id}:username`,
         `voucher:${normalized.vouchers[0].code}:percent`
     ].sort());
+});
+
+// ── Full names, address books, loyalty points and status history ────────────
+
+test("every demo customer has a full name and an address book with exactly one default (the checkout pre-fill)", () => {
+    for (const user of users) {
+        assert.ok(user.fullName && user.fullName.length >= 2, user.username);
+        assert.ok(user.addresses.length >= 1 && user.addresses.length <= 10);
+        assert.equal(user.addresses.filter((address) => address.isDefault).length, 1);
+        for (const address of user.addresses) assert.match(address.phone, /^(0|\+84)[0-9]{8,10}$/);
+    }
+    assert.ok(users.some((user) => user.addresses.length > 1), "at least one customer shows several saved addresses");
+    const ids = users.flatMap((user) => user.addresses.map((address) => address.id));
+    assert.equal(new Set(ids).size, ids.length);
+    assert.ok(ids.every((id) => id.length === 36));
+});
+
+test("loyalty points: each order stores floor(10% of its total / 1000) and each balance is the sum of the credited orders", () => {
+    const worked = (total) => Math.floor(total / 10 / 1000); // 1,000,000 VND -> 100 points
+    const balances = new Map(users.map((user) => [user.id, 0]));
+    for (const order of orders) {
+        assert.equal(order.pointsEarned, worked(vnd(order.totalPrice)), order.id);
+        const online = ["MOMO", "VNPAY"].includes(order.paymentMethod);
+        const shouldCredit = order.orderStatus !== "CANCELLED" && order.paymentStatus === "PAID" && (order.orderStatus === "DELIVERED" || online);
+        assert.equal(order.pointsCreditedAt !== null, shouldCredit, `${order.id} ${order.orderStatus} ${order.paymentMethod}`);
+        if (shouldCredit) balances.set(order.userId, balances.get(order.userId) + order.pointsEarned);
+    }
+    for (const user of users) assert.equal(user.loyaltyPoints, balances.get(user.id), user.username);
+    assert.ok(users.every((user) => user.loyaltyPoints > 0), "every demo customer has points to spend");
+    assert.ok(orders.some((order) => order.pointsEarned > 0 && order.pointsCreditedAt === null), "some demo orders still wait to credit their points");
+});
+
+test("every demo order has a status history that starts PENDING, ends on its status and never goes back in time", () => {
+    for (const order of orders) {
+        const history = order.statusHistory;
+        assert.equal(history[0].status, "PENDING", order.id);
+        assert.equal(history[history.length - 1].status, order.orderStatus, order.id);
+        assert.equal(history[0].at, order.createdAt);
+        for (let index = 1; index < history.length; index += 1) {
+            assert.ok(Date.parse(history[index].at) >= Date.parse(history[index - 1].at), `${order.id} step ${index}`);
+        }
+        assert.ok(Date.parse(history[history.length - 1].at) <= Date.now() + 1000);
+    }
+    const delivered = orders.find((order) => order.orderStatus === "DELIVERED");
+    assert.deepEqual(delivered.statusHistory.map((entry) => entry.status), ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED"]);
+    assert.deepEqual(orders.find((order) => order.orderStatus === "CANCELLED").statusHistory.map((entry) => entry.status), ["PENDING", "CANCELLED"]);
+});
+
+test("normalization rejects a balance that does not match the credited orders and a history that ends elsewhere", () => {
+    const broken = (mutate) => {
+        const copy = structuredClone(seedData.commerce);
+        mutate(copy);
+        return () => normalizeSeedData(copy);
+    };
+    assert.throws(broken((data) => { data.users[0].loyaltyPoints += 1; }), /loyaltyPoints must equal/);
+    assert.throws(broken((data) => { data.orders[0].statusHistory.pop(); }), /end with the order status/);
+    assert.throws(broken((data) => { data.orders[0].pointsEarned += 1; }), /pointsEarned must be/);
+    assert.throws(broken((data) => { data.users[0].addresses.forEach((address) => { address.isDefault = false; }); }), /exactly one default/);
+});
+
+// A transaction double that answers the backfill's lookups and records every write.
+const backfillDouble = ({ addressCount = 0, historyCount = 0, pointsRows = 1 } = {}) => {
+    const writes = [];
+    return {
+        writes,
+        request() {
+            const values = {};
+            return {
+                input(name, _type, value) { values[name] = value; },
+                async query(text) {
+                    const statement = text.replace(/\s+/g, " ").trim();
+                    if (/FROM \[dbo\]\.\[user_addresses\]/.test(statement)) return { recordset: [{ count: addressCount }] };
+                    if (/FROM \[dbo\]\.\[order_status_history\]/.test(statement)) return { recordset: [{ count: historyCount }] };
+                    const rowsAffected = [/^UPDATE \[dbo\]\.\[orders\]/.test(statement) ? pointsRows : 1];
+                    writes.push({ statement, values });
+                    return { recordset: [], rowsAffected };
+                }
+            };
+        }
+    };
+};
+const tableOf = (write) => write.statement.match(/\[dbo\]\.\[(\w+)\]/)[1];
+
+test("backfill fills a previously seeded database: names, address book, history and the points of credited orders", async () => {
+    const user = users[0];
+    const credited = orders.find((order) => order.userId === user.id && order.pointsCreditedAt !== null);
+    const double = backfillDouble();
+    await backfillSeedExtras(double, [user], [credited]);
+
+    const inserted = (table) => double.writes.filter((write) => tableOf(write) === table && /^INSERT/.test(write.statement));
+    assert.equal(inserted("user_addresses").length, user.addresses.length);
+    assert.equal(inserted("order_status_history").length, credited.statusHistory.length);
+    const balance = double.writes.find((write) => /SET \[loyalty_points\] = \[loyalty_points\] \+ @pointsEarned/.test(write.statement));
+    assert.equal(balance.values.pointsEarned, credited.pointsEarned);
+    assert.equal(balance.values.userId, user.id);
+});
+
+test("backfill is idempotent: a populated database gets no inserts and no second credit", async () => {
+    const user = users[0];
+    const credited = orders.find((order) => order.userId === user.id && order.pointsCreditedAt !== null);
+    const double = backfillDouble({ addressCount: 2, historyCount: 4, pointsRows: 0 });
+    await backfillSeedExtras(double, [user], [credited]);
+    assert.equal(double.writes.some((write) => /^INSERT/.test(write.statement)), false);
+    assert.equal(double.writes.some((write) => /loyalty_points/.test(write.statement)), false, "points already recorded: the balance is not touched again");
+});
+
+test("backfill records the points of an order that is not credited yet without touching the balance", async () => {
+    const waiting = orders.find((order) => order.pointsCreditedAt === null && order.pointsEarned > 0);
+    const double = backfillDouble({ historyCount: 1 });
+    await backfillSeedExtras(double, [], [waiting]);
+    assert.ok(double.writes.some((write) => /^UPDATE \[dbo\]\.\[orders\]/.test(write.statement) && write.values.pointsCreditedAt === null));
+    assert.equal(double.writes.some((write) => /loyalty_points/.test(write.statement)), false);
 });

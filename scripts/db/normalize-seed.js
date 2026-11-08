@@ -357,6 +357,55 @@ function normalizeVoucherType(value, identity, changes) {
     return type;
 }
 
+const SEED_PHONE = /^(0|\+84)[0-9]{8,10}$/;
+
+/** Saved delivery addresses of a seeded customer: at most 10, exactly one default when there are any. */
+function normalizeAddresses(addresses, identity, changes) {
+    if (addresses === undefined) return [];
+    if (!Array.isArray(addresses) || addresses.length > 10) {
+        throw new SeedDataError(identity, "addresses must be an array of at most ten entries");
+    }
+    const normalized = addresses.map((address, index) => {
+        const addressIdentity = `${identity}/address:${index}`;
+        if (!address || typeof address !== "object" || Array.isArray(address)) {
+            throw new SeedDataError(addressIdentity, "address must be an object");
+        }
+        const phone = requiredText(address.phone, "phone", addressIdentity, changes, 20);
+        if (!SEED_PHONE.test(phone)) throw new SeedDataError(addressIdentity, "phone is not a valid Vietnamese phone number");
+        if (typeof address.isDefault !== "boolean") throw new SeedDataError(addressIdentity, "isDefault must be a boolean");
+        return {
+            id: requiredText(address.id, "id", addressIdentity, changes, 36),
+            recipientName: requiredText(address.recipientName, "recipientName", addressIdentity, changes, 200),
+            phone,
+            addressLine: requiredText(address.addressLine, "addressLine", addressIdentity, changes, 500),
+            isDefault: address.isDefault,
+            createdAt: normalizeDate(address.createdAt, "createdAt", addressIdentity, changes)
+        };
+    });
+    if (normalized.length > 0 && normalized.filter((address) => address.isDefault).length !== 1) {
+        throw new SeedDataError(identity, "a customer with saved addresses must have exactly one default address");
+    }
+    return normalized;
+}
+
+function normalizeStatusHistory(history, order, identity, changes) {
+    if (history === undefined) {
+        // Without an explicit timeline: placed as PENDING, then the current status at the last update.
+        return order.orderStatus === "PENDING"
+            ? [{ status: "PENDING", at: order.createdAt }]
+            : [{ status: "PENDING", at: order.createdAt }, { status: order.orderStatus, at: order.updatedAt }];
+    }
+    if (!Array.isArray(history) || history.length === 0) throw new SeedDataError(identity, "statusHistory must be a non-empty array");
+    return history.map((entry, index) => {
+        const entryIdentity = `${identity}/history:${index}`;
+        if (!entry || typeof entry !== "object") throw new SeedDataError(entryIdentity, "history entry must be an object");
+        return {
+            status: normalizeCode(entry.status, "status", entryIdentity, changes, 32),
+            at: normalizeDate(entry.at, "at", entryIdentity, changes)
+        };
+    });
+}
+
 function normalizeUser(record, index, changes) {
     const identity = requireRecord("user", record, index);
     const user = {
@@ -367,7 +416,12 @@ function normalizeUser(record, index, changes) {
         status: requiredText(record.status, "status", identity, changes, 20),
         emailVerifiedAt: normalizeDate(record.emailVerifiedAt, "emailVerifiedAt", identity, changes),
         createdAt: normalizeDate(record.createdAt, "createdAt", identity, changes),
-        updatedAt: normalizeDate(record.updatedAt, "updatedAt", identity, changes)
+        updatedAt: normalizeDate(record.updatedAt, "updatedAt", identity, changes),
+        fullName: optionalText(record.fullName, "fullName", identity, changes, 200),
+        loyaltyPoints: record.loyaltyPoints === undefined
+            ? 0
+            : normalizeInteger(record.loyaltyPoints, "loyaltyPoints", identity, changes, { minimum: 0, maximum: 2147483647 }),
+        addresses: normalizeAddresses(record.addresses, identity, changes)
     };
     if (user.role !== "user") throw new SeedDataError(identity, "seeded customers must have role user");
     if (user.status !== "ACTIVE") throw new SeedDataError(identity, "seeded customers must be ACTIVE");
@@ -453,6 +507,10 @@ function normalizeOrder(record, index, changes) {
         paymentStatus: normalizeCode(record.paymentStatus, "paymentStatus", identity, changes, 32),
         createdAt: normalizeDate(record.createdAt, "createdAt", identity, changes),
         updatedAt: normalizeDate(record.updatedAt, "updatedAt", identity, changes),
+        pointsEarned: record.pointsEarned === undefined
+            ? 0
+            : normalizeInteger(record.pointsEarned, "pointsEarned", identity, changes, { minimum: 0, maximum: 2147483647 }),
+        pointsCreditedAt: normalizeDate(record.pointsCreditedAt, "pointsCreditedAt", identity, changes, true),
         items: record.items.map((item, itemIndex) => {
             const itemIdentity = `${identity}/item:${itemIndex}`;
             const unitPrice = normalizeMoney(item.unitPrice, "unitPrice", itemIdentity, changes, { positive: true });
@@ -465,6 +523,7 @@ function normalizeOrder(record, index, changes) {
         }),
         vouchers: (record.vouchers === undefined ? [] : normalizeOrderVouchers(record.vouchers, identity, changes))
     };
+    order.statusHistory = normalizeStatusHistory(record.statusHistory, order, identity, changes);
     const itemSubtotal = order.items.reduce((sum, item) => sum + decimalToCents(item.lineTotal, "lineTotal", identity), 0n);
     const expectedTotal = decimalToCents(order.subtotal, "subtotal", identity) + decimalToCents(order.shippingFee, "shippingFee", identity) - decimalToCents(order.discount, "discount", identity);
     if (itemSubtotal !== decimalToCents(order.subtotal, "subtotal", identity)) throw new SeedDataError(identity, "subtotal must equal the sum of item line totals");
@@ -546,6 +605,33 @@ function assertCustomerData({ products, users, vouchers, orders, reviews }, vari
             for (const item of order.items) {
                 deliveredProducts.add(`${variantsBySku.get(item.variantSku.normalize("NFKC").toLowerCase())}|${order.userId}`);
             }
+        }
+    }
+    // Loyalty and timeline invariants: a balance is exactly the points its credited orders earned, and every order's
+    // history starts as PENDING, never goes back in time, and ends on the order's current status.
+    const credited = new Map(users.map((user) => [user.id, 0]));
+    for (const order of orders) {
+        const identity = `order:${order.id}`;
+        const total = Number(order.totalPrice);
+        if (order.pointsEarned !== 0 && order.pointsEarned !== Math.floor((total * 10) / 100000)) {
+            throw new SeedDataError(identity, "pointsEarned must be floor(10% of totalPrice / 1000)");
+        }
+        if (order.pointsCreditedAt !== null) {
+            if (order.userId === null) throw new SeedDataError(identity, "an order without a customer cannot have credited points");
+            credited.set(order.userId, credited.get(order.userId) + order.pointsEarned);
+        }
+        const history = order.statusHistory;
+        if (history[0].status !== "PENDING") throw new SeedDataError(identity, "statusHistory must start with PENDING");
+        if (history[history.length - 1].status !== order.orderStatus) throw new SeedDataError(identity, "statusHistory must end with the order status");
+        for (let position = 1; position < history.length; position += 1) {
+            if (Date.parse(history[position].at) < Date.parse(history[position - 1].at)) {
+                throw new SeedDataError(identity, "statusHistory must not go back in time");
+            }
+        }
+    }
+    for (const user of users) {
+        if (user.loyaltyPoints !== credited.get(user.id)) {
+            throw new SeedDataError(`user:${user.id}`, "loyaltyPoints must equal the points of the customer's credited orders");
         }
     }
     for (const voucher of vouchers) {

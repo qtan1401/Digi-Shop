@@ -14,13 +14,34 @@ process.env.VNPAY_HASH_SECRET = "vnpay-test-secret";
 process.env.VNPAY_PAY_URL = "https://pay.vnpay.vn/vpcpay.html";
 process.env.VNPAY_IPN_URL = "https://payments.example.test/api/payments/vnpay/ipn";
 
+// Order confirmation emails go through the real mailer; only the SMTP transport underneath nodemailer is faked.
+process.env.SMTP_HOST = "smtp.example.test";
+process.env.SMTP_PORT = "587";
+process.env.SMTP_SECURE = "false";
+process.env.SMTP_USER = "mailer";
+process.env.SMTP_PASSWORD = "mailer-password";
+process.env.MAIL_FROM = "Digi-Shop <shop@example.test>";
+const nodemailer = require("nodemailer");
+let sentMail;
+let smtpDown;
+nodemailer.createTransport = () => ({
+    sendMail: async (message) => {
+        if (smtpDown) throw new Error("SMTP connection refused");
+        sentMail.push(message);
+    }
+});
+
+const { userPointsMethods, lockUserRows } = require("../test-support/loyalty-fake");
+
 let state;
 let transactionTail = Promise.resolve();
 
 const clone = (value) => value === undefined ? undefined : structuredClone(value);
 const matches = (row, where = {}) => Object.entries(where).every(([key, expected]) => {
     const actual = row[key];
+    if (expected === null) return actual === null || actual === undefined;
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
+        if (Object.hasOwn(expected, "not") && (expected.not === null ? actual == null : actual === expected.not)) return false;
         if (Object.hasOwn(expected, "lte") && new Date(actual) > new Date(expected.lte)) return false;
         if (Object.hasOwn(expected, "gt") && new Date(actual) <= new Date(expected.gt)) return false;
         return true;
@@ -33,6 +54,13 @@ const withRelations = (row, args, current) => {
     const result = clone(row);
     if (args?.include?.items) {
         result.items = current.orderItems.filter((item) => item.orderId === row.id).map(clone);
+    }
+    if (args?.include?.statusHistory) {
+        assert.deepEqual(args.include.statusHistory.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
+        result.statusHistory = current.orderStatusHistory
+            .filter((entry) => entry.orderId === row.id)
+            .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id)
+            .map(clone);
     }
     if (args?.include?.order && row.orderId) {
         const order = current.orders.get(row.orderId);
@@ -60,14 +88,20 @@ const makeClient = () => {
                     isActive: variant.isActive
                 }] : [];
             }
+            if (query.includes("[dbo].[users]")) return lockUserRows(state, key);
             return state.orders.has(key) ? [{ id: key }] : [];
         },
         user: {
-            findUnique: async ({ where }) => clone(state.users.get(where.id) || null)
+            findUnique: async ({ where }) => clone(state.users.get(where.id) || null),
+            ...userPointsMethods(() => state)
         },
         order: {
             create: async ({ data }) => {
-                const { items: nestedItems, ...fields } = clone(data);
+                const { items: nestedItems, statusHistory: nestedHistory, ...fields } = clone(data);
+                assert.deepEqual(Object.keys(nestedHistory), ["create"]);
+                for (const entry of nestedHistory.create) {
+                    state.orderStatusHistory.push({ id: state.orderStatusHistory.length + 1, orderId: data.id, createdAt: new Date(), ...entry });
+                }
                 const createdItems = nestedItems.create.map((item, index) => ({
                     id: index + 1,
                     orderId: data.id,
@@ -84,6 +118,14 @@ const makeClient = () => {
                 if (!row || !matches(row, where)) return { count: 0 };
                 Object.assign(row, clone(data));
                 return { count: 1 };
+            }
+        },
+        orderStatusHistory: {
+            create: async ({ data }) => {
+                assert.deepEqual(Object.keys(data).sort(), ["orderId", "status"]);
+                assert.ok(state.orders.has(data.orderId), "history row needs an existing order");
+                state.orderStatusHistory.push({ id: state.orderStatusHistory.length + 1, createdAt: new Date(), ...clone(data) });
+                return clone(state.orderStatusHistory.at(-1));
             }
         },
         orderItem: {
@@ -230,8 +272,9 @@ const makeState = ({ attemptId = "a".repeat(32), expiresAt = new Date(Date.now()
             optionValues: []
         }]]),
         paymentAttempts: new Map([[attempt.id, attempt]]),
+        orderStatusHistory: [{ id: 1, orderId: order.id, status: "PENDING", createdAt }],
         users: new Map([
-            ["user-test-01", { id: "user-test-01", status: "ACTIVE", role: "user", authVersion: 1, forcePasswordChange: false }],
+            ["user-test-01", { id: "user-test-01", email: "buyer@example.test", status: "ACTIVE", role: "user", authVersion: 1, forcePasswordChange: false }],
             ["admin-test-01", { id: "admin-test-01", status: "ACTIVE", role: "admin", authVersion: 1, forcePasswordChange: false }]
         ])
     };
@@ -309,6 +352,8 @@ after(async () => {
 beforeEach(() => {
     state = makeState();
     transactionTail = Promise.resolve();
+    sentMail = [];
+    smtpDown = false;
 });
 
 test("MoMo retry API creates a unique QR attempt, confirms only a signed callback, and remains idempotent", async () => {
@@ -780,4 +825,234 @@ test("MoMo rejects the screenshot-sized order before HTTP and the same order ret
     } finally {
         global.fetch = originalFetch;
     }
+});
+
+// ===== Order status history =====
+
+const postCheckout = (paymentMethod, extra = {}) => fetch(`${baseUrl}/api/checkout/1`, {
+    method: "POST",
+    headers: { ...headersFor("user-test-01", "user", true), "Content-Type": "application/json" },
+    body: JSON.stringify({
+        quantity: 1,
+        customerName: "Test Buyer",
+        customerPhone: "0901234567",
+        customerAddress: "123 Test Street",
+        paymentMethod,
+        ...extra
+    })
+});
+
+const patchStatus = (orderId, status) => fetch(`${baseUrl}/api/orders/${orderId}/status`, {
+    method: "PATCH",
+    headers: { ...headersFor("admin-test-01", "admin", true), "Content-Type": "application/json" },
+    body: JSON.stringify({ status })
+});
+
+const historyOf = async (orderId, id = "user-test-01", role = "user") => {
+    const response = await fetch(`${baseUrl}/api/orders/${orderId}`, { headers: headersFor(id, role) });
+    assert.equal(response.status, 200);
+    return (await response.json()).data.statusHistory;
+};
+
+test("a new order starts its history with PENDING, and each real status change appends a row", async () => {
+    state = makeState({ stock: 5 });
+    const order = (await (await postCheckout("COD")).json()).data;
+    assert.deepEqual((await historyOf(order.id)).map((entry) => entry.status), ["PENDING"]);
+
+    assert.equal((await patchStatus(order.id, "PROCESSING")).status, 200);
+    assert.equal((await patchStatus(order.id, "SHIPPED")).status, 200);
+    const history = await historyOf(order.id);
+    assert.deepEqual(history.map((entry) => entry.status), ["SHIPPED", "PROCESSING", "PENDING"]);
+    for (const entry of history) assert.ok(!Number.isNaN(Date.parse(entry.at)));
+    // The administrator reads the same detail endpoint and sees the same timeline.
+    assert.deepEqual(await historyOf(order.id, "admin-test-01", "admin"), history);
+});
+
+test("a status change to the current status does not append a history row", async () => {
+    state = makeState({ stock: 5 });
+    const order = (await (await postCheckout("COD")).json()).data;
+    assert.equal((await patchStatus(order.id, "PROCESSING")).status, 200);
+    assert.equal((await patchStatus(order.id, "PROCESSING")).status, 200);
+    assert.deepEqual((await historyOf(order.id)).map((entry) => entry.status), ["PROCESSING", "PENDING"]);
+});
+
+test("a rejected transition and a payment-status change leave the history untouched", async () => {
+    state = makeState({ stock: 5 });
+    const order = (await (await postCheckout("COD")).json()).data;
+    assert.equal((await patchStatus(order.id, "DELIVERED")).status, 400);
+    const paymentStatus = await fetch(`${baseUrl}/api/orders/${order.id}/payment-status`, {
+        method: "PATCH",
+        headers: { ...headersFor("admin-test-01", "admin", true), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "PAID" })
+    });
+    assert.equal(paymentStatus.status, 200);
+    assert.deepEqual((await historyOf(order.id)).map((entry) => entry.status), ["PENDING"]);
+});
+
+test("cancelling an order appends CANCELLED once, even when cancelled again", async () => {
+    state = makeState({ stock: 5 });
+    const order = (await (await postCheckout("COD")).json()).data;
+    assert.equal((await patchStatus(order.id, "CANCELLED")).status, 200);
+    assert.equal((await patchStatus(order.id, "CANCELLED")).status, 200);
+    assert.deepEqual((await historyOf(order.id)).map((entry) => entry.status), ["CANCELLED", "PENDING"]);
+});
+
+// ===== Order confirmation email =====
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+const momoCallback = (attemptId, resultCode = 0) => {
+    const callback = {
+        amount: 100_000,
+        partnerCode: process.env.MOMO_PARTNER_CODE,
+        orderId: attemptId,
+        requestId: attemptId,
+        extraData: "",
+        message: resultCode === 0 ? "Successful." : "Failed.",
+        orderInfo: "Payment attempt",
+        orderType: "momo_wallet",
+        payType: "qr",
+        responseTime: Date.now(),
+        resultCode,
+        transId: 987654321
+    };
+    callback.signature = signMomo(callback);
+    return fetch(`${baseUrl}/api/payments/momo/callback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(callback)
+    });
+};
+
+const livePendingAttempt = () => {
+    const attempt = state.paymentAttempts.get("a".repeat(32));
+    attempt.expiresAt = new Date(Date.now() + 60_000);
+    return attempt.id;
+};
+
+test("a COD order sends one confirmation to the account email with the order details", async () => {
+    state = makeState({ stock: 5 });
+    state.productVariants.get(1).price = 20_000_000;
+    const response = await postCheckout("COD", { customerName: "Tèo <b>&</b>", note: "x" });
+    assert.equal(response.status, 201);
+    const order = (await response.json()).data;
+    await settle();
+
+    assert.equal(sentMail.length, 1);
+    const [mail] = sentMail;
+    assert.equal(mail.to, "buyer@example.test");
+    assert.equal(mail.from, "Digi-Shop <shop@example.test>");
+    assert.ok(mail.subject.includes(order.id));
+    for (const needle of [order.id, "Test item", "20.000.000đ", "123 Test Street", "Thanh toán khi nhận hàng (COD)"]) {
+        assert.ok(mail.text.includes(needle), `text lacks ${needle}`);
+        assert.ok(mail.html.includes(needle), `html lacks ${needle}`);
+    }
+    assert.match(mail.text, /Tạm tính: 20\.000\.000đ/);
+    assert.match(mail.text, /Giảm giá: 0đ/);
+    // Prices include 10% VAT: 20.000.000 * 10 / 110, rounded. The 20.100.000đ total earns 2.010 points.
+    assert.match(mail.text, /Đã bao gồm VAT 10%: 1\.818\.182đ/);
+    assert.ok(mail.html.includes("Đã bao gồm VAT 10%"));
+    assert.match(mail.text, /sẽ nhận được 2\.010 điểm thưởng.*sau khi đơn hàng được giao thành công/);
+    assert.doesNotMatch(mail.text, /Điểm đã dùng/);
+    assert.match(mail.text, new RegExp(`Tổng cộng: ${order.totalPrice.toLocaleString("en-US").replace(/,/g, "\\.")}đ`));
+    // User-supplied values are escaped in the HTML.
+    assert.ok(mail.html.includes("Tèo &lt;b&gt;&amp;&lt;/b&gt;"));
+    assert.ok(!mail.html.includes("<b>&</b>"));
+});
+
+test("a MoMo order is confirmed once when payment succeeds, and repeated callbacks send nothing more", async () => {
+    const attemptId = livePendingAttempt();
+    assert.equal((await momoCallback(attemptId)).status, 204);
+    await settle();
+    assert.equal(sentMail.length, 1);
+    assert.equal(sentMail[0].to, "buyer@example.test");
+    assert.ok(sentMail[0].text.includes("ORD-TEST-01"));
+
+    assert.equal((await momoCallback(attemptId)).status, 204);
+    assert.equal((await momoCallback(attemptId)).status, 204);
+    await settle();
+    assert.equal(sentMail.length, 1);
+});
+
+test("a VNPay order is confirmed once on a signed success and not again on the repeated IPN", async () => {
+    const attemptId = livePendingAttempt();
+    state.paymentAttempts.get(attemptId).provider = "VNPAY";
+    const fields = vnpayFields(attemptId);
+    fields.vnp_SecureHash = signVnPay(fields);
+    for (let call = 0; call < 2; call += 1) {
+        assert.equal((await (await fetch(`${baseUrl}/api/payments/vnpay/ipn?${new URLSearchParams(fields)}`)).json()).RspCode, "00");
+    }
+    await settle();
+    assert.equal(sentMail.length, 1);
+});
+
+test("no confirmation is sent while a MoMo or VNPay order is awaiting payment, after a failed payment, or on a late success", async () => {
+    state = makeState({ stock: 5 });
+    const created = await postCheckout("VNPAY");
+    assert.equal(created.status, 201);
+    await settle();
+    assert.equal(sentMail.length, 0);
+
+    // A provider failure.
+    const failedAttempt = livePendingAttempt();
+    assert.equal((await momoCallback(failedAttempt, 1006)).status, 204);
+    // A success that arrives after the attempt expired (LATE_SUCCESS).
+    state.paymentAttempts.set("b".repeat(32), {
+        ...state.paymentAttempts.get(failedAttempt), id: "b".repeat(32), status: "PENDING", expiresAt: new Date(Date.now() - 1000), completedAt: null
+    });
+    assert.equal((await momoCallback("b".repeat(32))).status, 204);
+    assert.equal(state.paymentAttempts.get("b".repeat(32)).status, "LATE_SUCCESS");
+    await settle();
+    assert.equal(sentMail.length, 0);
+});
+
+test("an SMTP failure is logged and never fails the checkout or the payment callback", async () => {
+    smtpDown = true;
+    const originalError = console.error;
+    const logged = [];
+    console.error = (...args) => logged.push(args.join(" "));
+    try {
+        state = makeState({ stock: 5 });
+        const cod = await postCheckout("COD");
+        assert.equal(cod.status, 201);
+        assert.equal((await cod.json()).success, true);
+
+        const attemptId = livePendingAttempt();
+        assert.equal((await momoCallback(attemptId)).status, 204);
+        assert.equal(state.orders.get("ORD-TEST-01").paymentStatus, "PAID");
+        await settle();
+    } finally {
+        console.error = originalError;
+    }
+    assert.equal(sentMail.length, 0);
+    assert.equal(logged.filter((line) => line.includes("confirmation email")).length, 2);
+});
+
+test("an order whose account has no email address is skipped without error", async () => {
+    delete state.users.get("user-test-01").email;
+    const attemptId = livePendingAttempt();
+    assert.equal((await momoCallback(attemptId)).status, 204);
+    await settle();
+    assert.equal(sentMail.length, 0);
+});
+
+test("the confirmation shows points used and their value when the order redeemed points", () => {
+    const { renderOrderConfirmation } = require("../src/auth/mailer");
+    const { text, html } = renderOrderConfirmation({
+        id: "ORD-P", createdAt: new Date().toISOString(), customer: {}, items: [],
+        subtotal: 1_100_000, shippingFee: 100_000, discount: 0, pointsRedeemed: 100, pointsDiscount: 100_000, pointsEarned: 110, totalPrice: 1_100_000
+    });
+    assert.match(text, /Đã bao gồm VAT 10%: 100\.000đ/);
+    assert.match(text, /Điểm đã dùng \(100 điểm\): -100\.000đ/);
+    assert.match(text, /sẽ nhận được 110 điểm thưởng.*110\.000đ.*sau khi đơn hàng được giao thành công/);
+    assert.doesNotMatch(text, /dùng được ngay/);
+    assert.ok(html.includes("Điểm đã dùng (100 điểm)"));
+});
+
+test("the confirmation words the points by when they are added: after payment online, already added once credited", () => {
+    const { renderOrderConfirmation } = require("../src/auth/mailer");
+    const base = { id: "ORD-W", createdAt: new Date().toISOString(), customer: {}, items: [], subtotal: 100_000, shippingFee: 0, discount: 0, pointsEarned: 10, totalPrice: 100_000 };
+    assert.match(renderOrderConfirmation({ ...base, paymentMethod: "MOMO" }).text, /sẽ nhận được 10 điểm thưởng.*sau khi thanh toán thành công/);
+    assert.match(renderOrderConfirmation({ ...base, paymentMethod: "BANKING" }).text, /sau khi đơn hàng được giao thành công/);
+    assert.match(renderOrderConfirmation({ ...base, paymentMethod: "COD", pointsCredited: true }).text, /đã được cộng vào tài khoản/);
 });

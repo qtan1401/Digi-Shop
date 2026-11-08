@@ -89,19 +89,14 @@
                             <span class="auth-field__error" id="register-email-error" data-field-error="email" aria-live="polite"></span>
                         </div>
                         <div class="auth-field">
-                            <label for="register-username">Username</label>
-                            <input id="register-username" name="username" type="text" autocomplete="username" minlength="3" maxlength="30" required aria-describedby="register-username-error">
-                            <span class="auth-field__error" id="register-username-error" data-field-error="username" aria-live="polite"></span>
+                            <label for="register-fullname">Họ và tên</label>
+                            <input id="register-fullname" name="fullName" type="text" autocomplete="name" minlength="2" maxlength="200" required aria-describedby="register-fullname-error">
+                            <span class="auth-field__error" id="register-fullname-error" data-field-error="fullName" aria-live="polite"></span>
                         </div>
                         <div class="auth-field">
-                            <label for="register-password">Mật khẩu</label>
-                            <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="6" required aria-describedby="register-password-error">
-                            <span class="auth-field__error" id="register-password-error" data-field-error="password" aria-live="polite"></span>
-                        </div>
-                        <div class="auth-field">
-                            <label for="register-confirm-password">Nhập lại mật khẩu</label>
-                            <input id="register-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="6" required aria-describedby="confirm-password-error">
-                            <span class="auth-field__error" id="confirm-password-error" data-field-error="confirmPassword" aria-live="polite"></span>
+                            <label for="register-address">Địa chỉ giao hàng</label>
+                            <input id="register-address" name="address" type="text" autocomplete="street-address" minlength="5" maxlength="500" required aria-describedby="register-address-error">
+                            <span class="auth-field__error" id="register-address-error" data-field-error="address" aria-live="polite"></span>
                         </div>
                         <button class="auth-submit" type="submit">Tạo tài khoản</button>
                     </form>
@@ -109,7 +104,7 @@
                         <div class="auth-divider"><span>hoặc</span></div>
                         <div data-google-button aria-label="Đăng ký bằng Google"></div>
                     </div>
-                    <p class="auth-footer">Sau khi đăng ký, hãy xác minh email trước khi đăng nhập.</p>
+                    <p class="auth-footer">Sau khi đăng ký, chúng tôi gửi link đặt mật khẩu tới email của bạn.</p>
                 </section>
             </section>
         </div>
