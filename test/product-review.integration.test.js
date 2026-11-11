@@ -210,7 +210,7 @@ beforeEach(() => {
         { id: "admin-1", email: "ad@x.test", username: "root", role: "admin", status: "ACTIVE", authVersion: 1, forcePasswordChange: false }
     ];
     products = [
-        { id: 1, name: "Phone One", isDeleted: false },
+        { id: 1, name: "Mouse One", isDeleted: false },
         { id: 2, name: "Laptop Two", isDeleted: false },
         { id: 3, name: "Gone", isDeleted: true }
     ];
@@ -488,7 +488,7 @@ test("administrators hide and unhide reviews with an audit entry; customers cann
 });
 
 test("admin review list filters by product, visibility and text", async () => {
-    seedReview(1, "alice", { rating: 5, comment: "Great phone" });
+    seedReview(1, "alice", { rating: 5, comment: "Great mouse" });
     seedReview(1, "bob", { rating: 1, isHidden: true, comment: "Broken" });
     seedReview(2, "alice", { rating: 3 });
 

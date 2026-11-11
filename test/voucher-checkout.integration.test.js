@@ -285,7 +285,7 @@ const makeState = () => {
         orderStatusHistory: [],
         auditLogs: [],
         paymentAttempts: new Map(),
-        products: new Map([[1, { id: 1, brand: "x", deviceType: "phone", name: "Phone", slug: "phone", image: "/i.png", description: "d", isDeleted: false }]]),
+        products: new Map([[1, { id: 1, brand: "x", deviceType: "mouse", name: "Mouse", slug: "mouse", image: "/i.png", description: "d", isDeleted: false }]]),
         productVariants: new Map([
             [1, { id: 1, productId: 1, sku: "P-1", price: 200_000, stock: 10, isActive: true }],
             [2, { id: 2, productId: 1, sku: "P-2", price: 1_000, stock: 10, isActive: true }]

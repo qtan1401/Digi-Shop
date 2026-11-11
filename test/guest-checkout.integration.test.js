@@ -393,7 +393,7 @@ const makeState = () => ({
     verificationTokens: [],
     resetTokens: [],
     oauthIdentities: [],
-    products: new Map([[1, { id: 1, brand: "x", deviceType: "phone", name: "Phone", slug: "phone", image: "/i.png", description: "d", isDeleted: false }]]),
+    products: new Map([[1, { id: 1, brand: "x", deviceType: "mouse", name: "Mouse", slug: "mouse", image: "/i.png", description: "d", isDeleted: false }]]),
     productVariants: new Map([[1, { id: 1, productId: 1, sku: "P-1", price: 200_000, stock: 10, isActive: true }]]),
     users: new Map([
         ["user-1", { id: "user-1", email: "khach@example.test", status: "ACTIVE", role: "user", authVersion: 1, forcePasswordChange: false, passwordHash: "x", fullName: "Khach Cu", loyaltyPoints: 7 }],
