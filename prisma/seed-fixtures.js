@@ -94,42 +94,34 @@ const RECENT_ORDERS = [
 
 // Per-product rating patterns by product id; `null` = no reviews, "COMMENT_ONLY" = text reviews without stars.
 const REVIEW_PROFILES = {
-    101: [5, 5, 4, 5, 5, 5, 4, 5],
-    102: [4, 3, 4, 3, 5, 4, 3, 4],
-    103: [5, 5, 5, 4, 5, 5, 5, 4],
-    104: [4, 5, 4, 4, 5, 3, 4, 5],
-    105: null,
-    201: [4, 5, 4, 5, 4, 4, 5, 3],
-    202: [5, 5, 4, 5, 5, 5, 5, 4],
-    203: [4, 3, 4, 4, 3, 4, 5, 3],
-    204: "COMMENT_ONLY",
-    205: [4, 4, 5, 3, 4, 5, 4, 4],
     301: [5, 5, 5, 4, 5, 5, 4, 5],
     302: [4, 1, 5, 2, 4, 3, 4, 5],
     303: [3, 4, 4, 3, 4, 3, 5, 4],
     304: [4, 5, 4, 4, 5, 4, 3, 5],
-    305: [3, 4, 3, 2, 4, 3, 4, 3]
+    305: [3, 4, 3, 2, 4, 3, 4, 3],
+    401: [5, 5, 4, 5, 5, 5, 4, 5],
+    402: [4, 3, 4, 3, 5, 4, 3, 4],
+    403: [5, 5, 5, 4, 5, 5, 5, 4],
+    404: [4, 5, 4, 4, 5, 3, 4, 5],
+    405: "COMMENT_ONLY",
+    406: [4, 5, 4, 5, 4, 4, 5, 3],
+    501: [5, 5, 4, 5, 5, 5, 5, 4],
+    502: [4, 3, 4, 4, 3, 4, 5, 3],
+    503: [4, 4, 5, 3, 4, 5, 4, 4],
+    504: null,
+    601: [5, 5, 4, 5, 5, 5, 4, 5],
+    602: [4, 5, 4, 4, 5, 3, 4, 5],
+    603: [4, 5, 4, 5, 4, 4, 5, 3],
+    701: [4, 4, 5, 3, 4, 5, 4, 4],
+    702: [5, 5, 4, 5, 5, 5, 5, 4],
+    703: [4, 3, 4, 3, 5, 4, 3, 4],
+    704: [5, 5, 5, 4, 5, 5, 5, 4],
+    801: [5, 5, 4, 5, 5, 5, 4, 5],
+    802: [4, 5, 4, 4, 5, 3, 4, 5]
 };
 
 const COMMENTS = {
     positive: {
-        phone: [
-            "Pin dùng thoải mái cả ngày, sạc nhanh, mình rất hài lòng.",
-            "Camera chụp ảnh rất nét, nhất là ban đêm, chụp xong gần như không cần chỉnh.",
-            "Màn hình sáng đẹp, màu sắc chuẩn, xem video rất đã mắt.",
-            "Hiệu năng mượt, chơi game nặng không giật lag, máy cũng không nóng.",
-            "Thiết kế sang, cầm vừa tay, hoàn thiện rất chắc chắn.",
-            "Quay video ổn định, chống rung tốt, đi du lịch dùng rất tiện.",
-            "Dùng được một thời gian rồi, máy vẫn nhanh và mượt như ngày đầu."
-        ],
-        tablet: [
-            "Màn hình lớn, hiển thị đẹp, xem phim và vẽ đều tuyệt vời.",
-            "Pin trâu, mình dùng học online cả ngày vẫn còn dư.",
-            "Cầm bút vẽ rất mượt, không có độ trễ, phù hợp ghi chú và thiết kế.",
-            "Loa nghe to và rõ, xem phim giải trí rất đã.",
-            "Máy mỏng nhẹ, mang đi làm đi học đều tiện, hiệu năng dư dùng.",
-            "Hiệu năng mạnh, mở nhiều ứng dụng cùng lúc vẫn mượt."
-        ],
         laptop: [
             "Hiệu năng mạnh, làm việc đồ họa và code đều mượt, quạt chạy êm.",
             "Pin dùng được cả ngày làm việc văn phòng, rất đáng tiền.",
@@ -139,6 +131,49 @@ const COMMENTS = {
             "Tản nhiệt tốt, chơi game vài tiếng máy vẫn mát và ổn định.",
             "Khởi động nhanh, mở ứng dụng nặng gần như tức thì."
         ],
+        keyboard: [
+            "Gõ rất êm và sướng tay, âm thanh trầm đầm, dùng cả ngày không mỏi.",
+            "Kết nối ổn định, chuyển giữa máy tính và laptop chỉ một phím bấm.",
+            "Hoàn thiện chắc chắn, keycap dày, đèn nền đẹp và không bị chói.",
+            "Pin trâu, dùng cả tuần mới phải sạc, rất tiện khi làm việc.",
+            "Layout gọn nên bàn làm việc rộng hơn hẳn, vẫn đủ phím mũi tên.",
+            "Thay switch dễ dàng, mình tự đổi theo ý thích rất vui.",
+            "Phím bấm đều, không bị kẹt hay ngã phím sau nhiều tuần dùng."
+        ],
+        mouse: [
+            "Cầm vừa tay, di chuột chính xác, dùng cả ngày không bị mỏi cổ tay.",
+            "Cảm biến nhạy, trượt mượt trên mọi bề mặt, chơi game rất đã.",
+            "Pin dùng được rất lâu, sạc nhanh, kết nối không dây không bị trễ.",
+            "Phím bấm chắc tay, nhẹ và êm, làm việc văn phòng rất thích.",
+            "Thiết kế đẹp, nhẹ, chơi game bắn súng aim chuẩn hơn hẳn chuột cũ.",
+            "Bánh xe cuộn mượt, tùy chỉnh phím qua phần mềm rất tiện lợi.",
+            "Ghép nối nhanh với nhiều máy, chuyển đổi gần như tức thì."
+        ],
+        headphone: [
+            "Âm thanh rõ ràng, chi tiết, nghe nhạc và chơi game đều rất đã tai.",
+            "Đeo thoải mái hàng giờ liền, đệm tai mềm và không bị nóng tai.",
+            "Micro thu giọng rõ, bạn bè nghe rất sạch khi chơi game và họp online.",
+            "Pin dùng được rất lâu, kết nối không dây ổn định không bị rớt.",
+            "Chống ồn tốt, đi làm hay ở quán cà phê đều tập trung được.",
+            "Thiết kế sang, chất liệu chắc chắn, hoàn thiện rất tốt.",
+            "Định vị âm thanh chính xác, nghe rõ bước chân trong game bắn súng."
+        ],
+        monitor: [
+            "Màn hình đẹp, màu sắc tươi và chuẩn, chơi game và xem phim đều đã mắt.",
+            "Tần số quét cao nên chuyển động rất mượt, chơi game bắn súng không bị xé hình.",
+            "Viền mỏng, chân đế chỉnh được nhiều hướng, đặt lên bàn rất gọn.",
+            "Độ phân giải QHD nét hơn Full HD rõ rệt, làm việc nhiều cửa sổ rất tiện.",
+            "Màu sắc chuẩn, làm việc chỉnh ảnh không cần hiệu chỉnh thêm nhiều.",
+            "Một dây USB-C vừa xuất hình vừa sạc laptop, bàn làm việc gọn hẳn."
+        ],
+        storage: [
+            "Tốc độ sao chép rất nhanh, chép cả thư mục phim 4K chỉ trong vài chục giây.",
+            "Nhỏ gọn, chắc chắn, bỏ túi mang đi lại không lo va đập.",
+            "Chạy ổn định, nhiệt độ thấp, tải game và mở project nặng rất nhanh.",
+            "Cắm vào là nhận ngay trên cả laptop lẫn điện thoại, không cần cài đặt gì.",
+            "Dung lượng rộng rãi, giá hợp lý so với tốc độ nhận được.",
+            "Lắp vào máy là cảm nhận ngay thời gian khởi động giảm hẳn."
+        ],
         general: [
             "Giao hàng nhanh, đóng gói cẩn thận, hộp còn nguyên seal.",
             "Giá tốt hơn nhiều nơi khác, nhân viên tư vấn nhiệt tình.",
@@ -147,46 +182,72 @@ const COMMENTS = {
             "Sản phẩm đúng như mô tả, dùng rất ưng, sẽ ủng hộ shop tiếp.",
             "Bảo hành rõ ràng, shop hỗ trợ nhanh khi mình cần hỏi.",
             "Mua với giá hợp lý, chất lượng vượt mong đợi.",
-            "Giao hàng trong ngày, kiểm tra máy kỹ trước khi nhận, rất yên tâm."
+            "Giao hàng trong ngày, kiểm tra hàng kỹ trước khi nhận, rất yên tâm."
         ]
     },
     neutral: {
-        phone: [
-            "Máy dùng ổn, nhưng pin chỉ đủ một ngày dùng nhiều, hơi tiếc.",
-            "Camera tốt trong điều kiện đủ sáng, ban đêm vẫn còn nhiễu nhẹ.",
-            "Hiệu năng ổn, tuy nhiên máy hơi nóng khi chơi game lâu."
-        ],
-        tablet: [
-            "Màn hình đẹp nhưng pin xuống hơi nhanh khi xem video độ sáng cao.",
-            "Máy dùng tạm ổn, giá hơi cao so với cấu hình.",
-            "Hiệu năng đủ dùng học tập, nhưng chơi game nặng sẽ hơi chậm."
-        ],
         laptop: [
             "Hiệu năng ổn, nhưng quạt hơi ồn khi chạy tác vụ nặng.",
             "Màn hình tạm được, pin dùng khoảng nửa ngày văn phòng.",
             "Máy chạy tốt, nhưng thân máy hơi nóng khi sạc và làm việc lâu."
         ],
+        keyboard: [
+            "Gõ ổn, nhưng âm thanh hơi vọng và cần chỉnh lại một chút mới ưng.",
+            "Bàn phím tốt, tuy nhiên đèn nền ở một vài phím hơi lệch sáng.",
+            "Pin dùng được vài ngày, mong thời lượng pin dài hơn khi bật đèn."
+        ],
+        mouse: [
+            "Chuột dùng ổn, nhưng hơi nhỏ so với bàn tay mình, cầm lâu hơi mỏi.",
+            "Cảm biến tốt, tuy nhiên phần mềm tùy chỉnh hơi nặng và khó làm quen.",
+            "Phím bấm ổn, giá hơi cao so với các chuột cùng phân khúc."
+        ],
+        headphone: [
+            "Âm thanh tốt nhưng đeo lâu hơn hai tiếng thì hơi nóng tai.",
+            "Micro thu ổn trong phòng yên tĩnh, nơi ồn thì còn lẫn tiếng nền.",
+            "Pin dùng được, nhưng kết nối thỉnh thoảng bị ngắt nhẹ khi đi xa máy."
+        ],
+        monitor: [
+            "Màn hình đẹp nhưng loa trong chỉ ở mức tạm, nên mua thêm loa ngoài.",
+            "Màu sắc tốt, tuy nhiên độ sáng hơi thấp khi đặt gần cửa sổ.",
+            "Dùng ổn, giá hơi cao so với cấu hình nhưng chất lượng chấp nhận được."
+        ],
+        storage: [
+            "Tốc độ tốt, nhưng khi chép tệp lớn liên tục thì tốc độ có giảm xuống.",
+            "Ổ chạy ổn, nhưng nhiệt độ hơi nóng khi chép dữ liệu nhiều.",
+            "Giá hơi cao so với dung lượng, nhưng đổi lại độ bền và tốc độ tốt."
+        ],
         general: [
             "Sản phẩm tốt, nhưng giao hàng chậm hơn dự kiến một ngày.",
-            "Đóng gói ổn, hộp hơi móp góc nhưng máy không sao.",
+            "Đóng gói ổn, hộp hơi móp góc nhưng sản phẩm không sao.",
             "Giá chấp nhận được, mong shop có thêm nhiều ưu đãi hơn.",
             "Dùng ổn so với tầm giá, chưa có điểm nào quá nổi bật."
         ]
     },
     negative: {
-        phone: [
-            "Pin tụt khá nhanh sau vài tuần dùng, mình hơi thất vọng.",
-            "Camera chụp trong nhà thiếu sáng bị nhòe, không như quảng cáo.",
-            "Máy hay nóng khi dùng mạng lâu, mong hãng cải thiện."
-        ],
-        tablet: [
-            "Màn hình bị hở sáng nhẹ ở góc, mình đã liên hệ shop để kiểm tra.",
-            "Pin xuống nhanh hơn mình nghĩ, dùng chưa tới nửa ngày."
-        ],
         laptop: [
             "Quạt ồn và máy nóng khi dùng lâu, hiệu năng không như kỳ vọng.",
             "Pin không được lâu, chỉ khoảng 3 tiếng dùng thực tế.",
-            "Bàn lề hơi lỏng sau một thời gian, mong shop hỗ trợ bảo hành."
+            "Bản lề hơi lỏng sau một thời gian, mong shop hỗ trợ bảo hành."
+        ],
+        keyboard: [
+            "Dùng vài tuần thì một phím bị double-click, mong hãng cải thiện chất lượng.",
+            "Kết nối Bluetooth hay bị rớt, phải ghép nối lại nhiều lần."
+        ],
+        mouse: [
+            "Con lăn bị kêu lọc cọc sau một thời gian ngắn dùng, hơi thất vọng.",
+            "Pin tụt nhanh hơn quảng cáo, mình phải sạc gần như mỗi ngày."
+        ],
+        headphone: [
+            "Đệm tai bị xẹp sau vài tuần, đeo lâu bị đau tai.",
+            "Micro thu nhỏ và hay bị rè, không như mong đợi ở tầm giá này."
+        ],
+        monitor: [
+            "Màn hình bị hở sáng nhẹ ở góc, mình đã liên hệ shop để kiểm tra.",
+            "Có vài điểm sáng nhỏ trên màn hình khi nhận hàng, hơi tiếc."
+        ],
+        storage: [
+            "Ổ nóng nhanh khi chép dữ liệu lớn và tốc độ tụt rõ rệt sau đó.",
+            "Không nhận ở một số cổng USB, phải đổi cáp mới chạy được."
         ],
         general: [
             "Giao hàng chậm hơn hẹn tận 3 ngày, đóng gói sơ sài.",
@@ -301,9 +362,10 @@ function buildOrderSkeletons(products, random) {
     const byCustomer = CUSTOMERS.map(() => []);
     // Every product gets four distinct buyers.
     products.forEach((_, productIndex) => {
-        for (let offset = 0; offset < 4; offset += 1) byCustomer[(3 * productIndex + offset) % CUSTOMERS.length].push(productIndex);
+        for (let offset = 0; offset < 4; offset += 1) byCustomer[(4 * productIndex + offset) % CUSTOMERS.length].push(productIndex);
     });
-    const chunkSizes = [3, 2, 3, 2, 3, 1];
+    // Each customer ends up with eight products (24 products x 4 buyers / 12 customers): three orders of 3 + 3 + 2 in any rotation.
+    const chunkSizes = [3, 3, 2];
     byCustomer.forEach((productIndexes, customerIndex) => {
         const shuffled = random.shuffle(productIndexes);
         let cursor = 0;
@@ -497,7 +559,7 @@ function buildReviews(products, orders, now, random) {
             const earliest = Date.parse(order.updatedAt) + HOUR;
             const createdAt = Math.floor(Math.min(now - HOUR, earliest + random.next() * 8 * DAY));
             let isHidden = false;
-            if (!hiddenAssigned && product.id === 102 && rating !== null && comment !== null) {
+            if (!hiddenAssigned && product.id === 402 && rating !== null && comment !== null) {
                 isHidden = true;
                 hiddenAssigned = true;
             }
