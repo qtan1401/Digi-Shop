@@ -187,15 +187,17 @@ const accessToken = jwt.sign(
 );
 const adminCookie = `__Host-access_token=${accessToken}; __Host-csrf_token=image-upload-csrf`;
 const productFields = {
-    name: "iPhone 17",
-    brand: "Apple",
-    deviceType: "phone",
-    description: "A new phone",
+    name: "Logitech MX Master 3S",
+    brand: "Logitech",
+    deviceType: "mouse",
+    description: "A new mouse",
     options: "[]",
     variants: JSON.stringify([{ sku: "IP17-256", price: 999, stock: 7, optionValues: {} }])
 };
 const createPng = (pixel) => PNG.sync.write({ width: 1, height: 1, data: Buffer.from(pixel) });
 const png = createPng([255, 0, 0, 255]);
+// Lossy WebP bytes, generated per run so no binary fixture has to live in the repository.
+const createWebp = () => sharp({ create: { width: 64, height: 64, channels: 3, background: "#ff0000" } }).webp().toBuffer();
 const crc32 = (buffer) => {
     let crc = 0xffffffff;
     for (const byte of buffer) {
@@ -212,7 +214,7 @@ const createAncillaryChunk = (type, data) => {
     chunk.writeUInt32BE(crc32(chunk.subarray(4, chunk.length - 4)), chunk.length - 4);
     return chunk;
 };
-const upload = async ({ fields = productFields, file = png, filename = "phone.png", type = "image/png", headers = {} } = {}) => {
+const upload = async ({ fields = productFields, file = png, filename = "product.png", type = "image/png", headers = {} } = {}) => {
     const form = new FormData();
     for (const [key, value] of Object.entries(fields)) form.append(key, value);
     if (file !== null) form.append("image", new Blob([file], { type }), filename);
@@ -252,7 +254,7 @@ beforeEach(async () => {
 });
 
 test("administrator can upload one PNG and retrieve it at the persisted public image path", async () => {
-    const response = await upload({ filename: "iphone-duo.PNG" });
+    const response = await upload({ filename: "mouse-photo.PNG" });
     assert.equal(response.status, 201);
     const result = await response.json();
     assert.match(result.data.image, /^\/uploads\/products\/[a-f0-9-]+\.png$/);
@@ -264,8 +266,8 @@ test("administrator can upload one PNG and retrieve it at the persisted public i
 });
 
 test("administrator can upload a WebP image mislabeled with a PNG filename", async () => {
-    const webp = await fs.readFile(path.join(__dirname, "..", "iphone_duo.png"));
-    const response = await upload({ file: webp, filename: "iphone_duo.png", type: "image/png" });
+    const webp = await createWebp();
+    const response = await upload({ file: webp, filename: "mouse_photo.png", type: "image/png" });
     assert.equal(response.status, 201);
     const result = await response.json();
     assert.match(result.data.image, /^\/uploads\/products\/[a-f0-9-]+\.webp$/);
@@ -277,7 +279,7 @@ test("administrator can upload a WebP image mislabeled with a PNG filename", asy
 });
 
 test("malformed WebP is rejected before product or file storage", async () => {
-    const webp = await fs.readFile(path.join(__dirname, "..", "iphone_duo.png"));
+    const webp = await createWebp();
     const response = await upload({
         file: webp.subarray(0, 20),
         filename: "truncated.webp",
@@ -371,10 +373,10 @@ test("PNG declaring more pixels than the decoded budget gets a resolution error"
 
 test("unsupported formats, malformed images, and oversized files return image field errors without storing bytes", async () => {
     const invalidUploads = [
-        { file: Buffer.from("GIF89a"), filename: "phone.gif", type: "image/gif" },
-        { file: png, filename: "phone.png", type: "image/jpeg" },
-        { file: png, filename: "phone.jpg", type: "image/png" },
-        { file: Buffer.from("not a PNG"), filename: "phone.png", type: "image/png" },
+        { file: Buffer.from("GIF89a"), filename: "product.gif", type: "image/gif" },
+        { file: png, filename: "product.png", type: "image/jpeg" },
+        { file: png, filename: "product.jpg", type: "image/png" },
+        { file: Buffer.from("not a PNG"), filename: "product.png", type: "image/png" },
         { file: Buffer.alloc(5 * 1024 * 1024 + 1, 1), filename: "large.png", type: "image/png" }
     ];
     for (const invalid of invalidUploads) {
@@ -403,7 +405,7 @@ test("editing without a replacement retains the image and a replacement changes 
         headers: { Cookie: adminCookie, Origin: process.env.APP_ORIGIN, "X-CSRF-Token": "image-upload-csrf", "Content-Type": "application/json" },
         body: JSON.stringify({
             ...productFields,
-            name: "Updated phone",
+            name: "Updated mouse",
             variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
         })
     });
@@ -414,7 +416,7 @@ test("editing without a replacement retains the image and a replacement changes 
     const form = new FormData();
     for (const [key, value] of Object.entries({
         ...productFields,
-        name: "Replaced phone",
+        name: "Replaced mouse",
         variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
     })) form.append(key, value);
     form.append("image", new Blob([replacement], { type: "image/png" }), "replacement.png");

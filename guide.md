@@ -196,7 +196,7 @@ module.exports = app;
 ```javascript
 // src/models/product.model.js
 const products = [
-    { id: 1, name: "iPhone 16", slug: "iphone-16", price: 34990000, ... },
+    { id: 1, name: "Logitech MX Master 3S", slug: "logitech-mx-master-3s", price: 2390000, ... },
     { id: 2, name: "Samsung S25", slug: "samsung-s25", price: 33990000, ... },
 ];
 module.exports = products;
@@ -296,11 +296,11 @@ router.delete("/:id", handler);     // DELETE /api/products/123
 router.get("/info/:slug", productController.getProductInfo);
 ```
 
-Khi client gọi: `GET /api/products/info/iphone-16-pro-max`
+Khi client gọi: `GET /api/products/info/logitech-mx-master-3s`
 
 ```javascript
 // Trong controller, lấy parameter:
-const slug = req.params.slug;   // "iphone-16-pro-max"
+const slug = req.params.slug;   // "logitech-mx-master-3s"
 ```
 
 **`:slug` là Route Parameter** — giá trị động trong URL. Express tự động parse và đưa vào `req.params`.
@@ -310,13 +310,13 @@ const slug = req.params.slug;   // "iphone-16-pro-max"
 Ngoài Route Params, còn có **Query String** — truyền dữ liệu qua URL sau dấu `?`:
 
 ```
-URL: /product_info.html?slug=iphone-16-pro-max&color=blue
+URL: /product_info.html?slug=logitech-mx-master-3s&color=graphite
 ```
 
 ```javascript
 // Trong JavaScript (frontend):
 const urlParams = new URLSearchParams(window.location.search);
-const slug = urlParams.get("slug");    // "iphone-16-pro-max"
+const slug = urlParams.get("slug");    // "logitech-mx-master-3s"
 const color = urlParams.get("color");  // "blue"
 ```
 
@@ -324,7 +324,7 @@ const color = urlParams.get("color");  // "blue"
 
 | | Route Params | Query String |
 |---|---|---|
-| **Cú pháp URL** | `/products/info/iphone` | `/products?slug=iphone` |
+| **Cú pháp URL** | `/products/info/logitech-mx-master-3s` | `/products?slug=logitech-mx-master-3s` |
 | **Cách lấy** | `req.params.slug` | `req.query.slug` |
 | **Dùng khi** | Xác định TÀI NGUYÊN | Lọc, tìm kiếm, phân trang |
 | **Bắt buộc?** | Có (phần của URL) | Không (optional) |
@@ -343,31 +343,31 @@ Express tự động serve file từ thư mục `public/`:
 
 ## 6. Flow Dữ Liệu Từ Request → Response
 
-### Ví dụ: User click "View" trên card iPhone
+### Ví dụ: User click "View" trên card Logitech MX Master 3S
 
 ```
 1. [Frontend] User click nút View
-   → Browser chuyển đến: /product_info.html?slug=iphone-16-pro-max
+   → Browser chuyển đến: /product_info.html?slug=logitech-mx-master-3s
 
 2. [Frontend] product_info.js chạy:
-   → Lấy slug từ URL: "iphone-16-pro-max"
-   → Gọi fetch("/api/products/info/iphone-16-pro-max")
+   → Lấy slug từ URL: "logitech-mx-master-3s"
+   → Gọi fetch("/api/products/info/logitech-mx-master-3s")
 
 3. [Routes] Express match route:
    → GET /api/products/info/:slug
    → Gọi productController.getProductInfo
 
 4. [Controller] getProductInfo(req, res):
-   → req.params.slug = "iphone-16-pro-max"
-   → Gọi productService.getProductBySlug("iphone-16-pro-max")
+   → req.params.slug = "logitech-mx-master-3s"
+   → Gọi productService.getProductBySlug("logitech-mx-master-3s")
 
-5. [Service] getProductBySlug("iphone-16-pro-max"):
-   → Gọi productRepository.getProductBySlug("iphone-16-pro-max")
+5. [Service] getProductBySlug("logitech-mx-master-3s"):
+   → Gọi productRepository.getProductBySlug("logitech-mx-master-3s")
    → Kiểm tra: tìm thấy? → return product
 
-6. [Repository] getProductBySlug("iphone-16-pro-max"):
-   → products.find(p => p.slug === "iphone-16-pro-max")
-   → Return object iPhone 16
+6. [Repository] getProductBySlug("logitech-mx-master-3s"):
+   → products.find(p => p.slug === "logitech-mx-master-3s")
+   → Return object Logitech MX Master 3S
 
 7. [Ngược lại] Repository → Service → Controller
    → Controller gọi: res.json({ success: true, data: product })
@@ -399,8 +399,8 @@ node server.js
 
 ```
 GET http://localhost:3000/api/products
-GET http://localhost:3000/api/products/info/iphone-16-pro-max
-GET http://localhost:3000/api/products/info/samsung-galaxy-s25-ultra
+GET http://localhost:3000/api/products/info/logitech-mx-master-3s
+GET http://localhost:3000/api/products/info/samsung-odyssey-g5-g55c
 GET http://localhost:3000/api/products/info/macbook-pro-m4
 ```
 
