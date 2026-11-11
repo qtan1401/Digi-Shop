@@ -12,38 +12,98 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character
     "'": "&#39;"
 })[character]);
 
-const createDescriptionRows = (description) => {
-    const text = String(description ?? "").trim();
-    if (!text) return "";
+// Mô tả sản phẩm là văn bản thuần: vài dòng giới thiệu, một dòng trống, dòng "Thông số kỹ thuật",
+// rồi các dòng "Nhãn: Giá trị". Dòng không có dấu ":" là tiêu đề nhóm thông số.
+const SPECIFICATION_MARKER = "thông số kỹ thuật";
+const LEADING_BULLET = /^(?:[•·▪●*]\s*|[-–—]\s+)/u;
 
-    const entries = text
-        .split(/(?:\s*•\s*|\r?\n)+/u)
-        .flatMap((entry) => {
-            const section = entry.match(/([.!?])\s+((?:\p{Lu}\p{Ll}+\s+){1,5}\p{Lu}\p{Ll}+)$/u);
-            return section && entry.includes(":")
-                ? [entry.slice(0, section.index).trim() + section[1], section[2]]
-                : [entry];
-        })
-        .map((entry) => entry.trim())
-        .filter(Boolean);
+const parseProductDescription = (description) => {
+    const lines = String(description ?? "")
+        .replace(/\r\n?/g, "\n")
+        .split("\n")
+        .map((line) => line.replace(LEADING_BULLET, "").trim());
+    const markerIndex = lines.findIndex((line) =>
+        line.normalize("NFC").replace(/\s*:$/, "").trim().toLowerCase() === SPECIFICATION_MARKER
+    );
+    const descriptionLines = markerIndex === -1 ? lines : lines.slice(0, markerIndex);
+    const specificationLines = markerIndex === -1 ? [] : lines.slice(markerIndex + 1);
 
-    if (!entries.some((entry) => entry.includes(":"))) {
-        return `<tr><th scope="row">Mô tả</th><td>${escapeHtml(text)}</td></tr>`;
-    }
-
-    return entries.map((entry, index) => {
-        const separator = entry.indexOf(":");
-        if (separator > 0) {
-            const label = entry.slice(0, separator).trim();
-            const value = entry.slice(separator + 1).trim();
-            return `<tr><th scope="row">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`;
+    const groups = [];
+    let current = null;
+    specificationLines.filter(Boolean).forEach((line) => {
+        const separator = line.indexOf(":");
+        const label = separator === -1 ? "" : line.slice(0, separator).trim();
+        const value = separator === -1 ? "" : line.slice(separator + 1).trim();
+        if (label && value) {
+            if (!current) {
+                current = { title: "", rows: [] };
+                groups.push(current);
+            }
+            current.rows.push({ label, value });
+            return;
         }
+        // Dòng không có dấu ":" (hoặc "Nhãn:" để trống) mở một nhóm mới.
+        const title = (separator === -1 ? line : label).trim();
+        if (!title) return;
+        current = { title, rows: [] };
+        groups.push(current);
+    });
 
-        const hasFieldsAfter = entries.slice(index + 1).some((nextEntry) => nextEntry.includes(":"));
-        return hasFieldsAfter
-            ? `<tr class="product-info__specification-section"><th colspan="2">${escapeHtml(entry)}</th></tr>`
-            : `<tr><th scope="row">Mô tả</th><td>${escapeHtml(entry)}</td></tr>`;
-    }).join("");
+    return {
+        paragraphs: descriptionLines.filter(Boolean),
+        groups: groups.filter((group) => group.rows.length > 0)
+    };
+};
+
+const createElement = (tag, className, text) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+};
+
+const createDescriptionSection = (paragraphs) => {
+    if (!paragraphs.length) return null;
+    const section = createElement("section", "product-info__section product-info__description");
+    const title = createElement("h2", "product-info__section-title", "Mô tả sản phẩm");
+    title.id = "product-info-description-title";
+    section.setAttribute("aria-labelledby", title.id);
+    section.append(title);
+    paragraphs.forEach((paragraph) => section.append(createElement("p", "product-info__description-text", paragraph)));
+    return section;
+};
+
+const createSpecificationSection = (groups) => {
+    if (!groups.length) return null;
+    const section = createElement("section", "product-info__section product-info__specifications");
+    const title = createElement("h2", "product-info__section-title", "Thông số kỹ thuật");
+    title.id = "product-info-specifications-title";
+    section.setAttribute("aria-labelledby", title.id);
+
+    const table = createElement("table", "product-info__specifications-table");
+    groups.forEach((group) => {
+        const body = createElement("tbody");
+        if (group.title) {
+            const heading = createElement("th", "", group.title);
+            heading.colSpan = 2;
+            heading.scope = "rowgroup";
+            const headingRow = createElement("tr", "product-info__spec-group");
+            headingRow.append(heading);
+            body.append(headingRow);
+        }
+        group.rows.forEach((row, index) => {
+            const label = createElement("th", "", row.label);
+            label.scope = "row";
+            const tableRow = createElement("tr", index % 2 ? "product-info__spec-row--alt" : "");
+            tableRow.append(label, createElement("td", "", row.value));
+            body.append(tableRow);
+        });
+        table.append(body);
+    });
+    const wrapper = createElement("div", "product-info__specifications-table-wrapper");
+    wrapper.append(table);
+    section.append(title, wrapper);
+    return section;
 };
 
 const createStockInfo = (stock) => {
@@ -83,7 +143,39 @@ const loadProductInfo = async () => {
         let selectedVariant = variants.find((variant) => variant.stock > 0) || variants[0] || null;
         const authState = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false }));
         const canPurchase = authState.user?.role !== "admin";
-        const descriptionRows = createDescriptionRows(product.description);
+        const { paragraphs, groups } = parseProductDescription(product.description);
+        const variantImage = (variant) => variant?.image || product.image || "";
+        const galleryImages = [];
+        variants.forEach((variant) => {
+            const url = variantImage(variant);
+            if (!url) return;
+            const entry = galleryImages.find((item) => item.url === url);
+            if (entry) entry.variants.push(variant);
+            else galleryImages.push({ url, variants: [variant] });
+        });
+        // Tuỳ chọn nào làm đổi ảnh (màu sắc, tản nhiệt…) thì mới đưa vào alt và nhãn ảnh nhỏ.
+        const imageOptionNames = (product.options || []).map((option) => option.name).filter((name) => {
+            const imagesByValue = new Map();
+            variants.forEach((variant) => {
+                const value = variant.optionValues?.[name];
+                if (value === undefined) return;
+                if (!imagesByValue.has(value)) imagesByValue.set(value, new Set());
+                imagesByValue.get(value).add(variantImage(variant));
+            });
+            return new Set(Array.from(imagesByValue.values(), (images) => Array.from(images).sort().join("|"))).size > 1;
+        });
+        const describeImage = (variantList) => imageOptionNames
+            .map((name) => Array.from(new Set(variantList.map((variant) => variant.optionValues?.[name]).filter(Boolean))).join(" / "))
+            .filter(Boolean)
+            .join(" · ");
+        const galleryThumbs = galleryImages.length >= 2
+            ? `<div class="product-info__thumbs" role="group" aria-label="Ảnh theo phiên bản">${galleryImages.map((item, index) => {
+                const label = describeImage(item.variants);
+                return `<button type="button" class="product-info__thumb" data-gallery-index="${index}" aria-pressed="false" aria-label="${escapeHtml(label ? `Xem ảnh ${label}` : `Xem ảnh ${index + 1}`)}" title="${escapeHtml(label)}">
+                    <img src="${escapeHtml(item.url)}" alt="" width="64" height="64" loading="lazy" decoding="async">
+                </button>`;
+            }).join("")}</div>`
+            : "";
         const normalizeOptionName = (name) => String(name ?? "").trim().toLowerCase();
         const optionControls = (product.options || []).map((option) => {
             const isColor = normalizeOptionName(option.name) === "màu sắc";
@@ -109,7 +201,12 @@ const loadProductInfo = async () => {
         container.innerHTML = `
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="product-info__card">
-                <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" class="product-info__image" id="product-info-image">
+                <div class="product-info__gallery">
+                    <div class="product-info__media" id="product-info-media">
+                        <img src="${escapeHtml(variantImage(selectedVariant))}" alt="${escapeHtml(product.name)}" class="product-info__image" id="product-info-image" loading="eager" fetchpriority="high" decoding="async">
+                    </div>
+                    ${galleryThumbs}
+                </div>
                 <div class="product-info__content">
                     <h1 class="product-info__name">${escapeHtml(product.name)}</h1>
                     <a href="#danh-gia" class="product-info__rating" id="product-rating-link" ${Number(product.ratingCount) > 0 ? "" : "hidden"}>${Number(product.ratingCount) > 0 ? `${CatalogRenderer.renderStars(product.ratingAverage)}<span>${CatalogRenderer.formatRating(product.ratingAverage)} · ${Number(product.ratingCount).toLocaleString("vi-VN")} đánh giá</span>` : ""}</a>
@@ -127,24 +224,61 @@ const loadProductInfo = async () => {
                         }
                     </div>
                 </div>
-            </div>
-            ${descriptionRows ? `
-                <section class="product-info__specifications" aria-labelledby="product-info-specifications-title">
-                    <h2 class="product-info__specifications-title" id="product-info-specifications-title">Thông số kỹ thuật</h2>
-                    <div class="product-info__specifications-table-wrapper">
-                        <table class="product-info__specifications-table">
-                            <tbody>${descriptionRows}</tbody>
-                        </table>
-                    </div>
-                </section>
-            ` : ""}`;
+            </div>`;
+        [createDescriptionSection(paragraphs), createSpecificationSection(groups)]
+            .filter(Boolean)
+            .forEach((section) => container.append(section));
         try { ProductReviews.mount({ container, product }); } catch (error) { console.error("Không dựng được khối đánh giá", error); }
 
+        const media = container.querySelector("#product-info-media");
+        const mainImage = container.querySelector("#product-info-image");
+        const thumbButtons = Array.from(container.querySelectorAll(".product-info__thumb"));
+        const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        let imageToken = 0;
+        let lastChoice = null;
+
+        // Ảnh chính luôn theo phiên bản đang chọn (hoặc ảnh sản phẩm); đổi ảnh bằng hiệu ứng mờ dần.
+        const syncGallery = () => {
+            const shown = selectedVariant
+                || (lastChoice && variants.find((variant) => variant.optionValues?.[lastChoice.name] === lastChoice.value))
+                || null;
+            const url = variantImage(shown);
+            const detail = describeImage(shown ? [shown] : []);
+            mainImage.alt = detail ? `${product.name} – ${detail}` : product.name;
+            media.classList.toggle("is-empty", !url);
+            if (url && mainImage.getAttribute("src") !== url) {
+                const token = ++imageToken;
+                const preload = new Image();
+                preload.src = url;
+                media.classList.add("is-changing");
+                const settled = Promise.all([
+                    preload.decode ? preload.decode().catch(() => {}) : Promise.resolve(),
+                    new Promise((resolve) => setTimeout(resolve, prefersReducedMotion.matches ? 0 : 140))
+                ]);
+                settled.then(() => {
+                    if (token !== imageToken) return;
+                    mainImage.src = url;
+                    media.classList.remove("is-changing");
+                });
+            }
+            thumbButtons.forEach((button) => {
+                const active = galleryImages[Number(button.dataset.galleryIndex)].url === url;
+                button.setAttribute("aria-pressed", String(active));
+                if (active) {
+                    const strip = button.parentElement;
+                    const offset = button.offsetLeft - (strip.clientWidth - button.offsetWidth) / 2;
+                    strip.scrollTo({ left: Math.max(0, offset), behavior: prefersReducedMotion.matches ? "auto" : "smooth" });
+                }
+            });
+        };
+
+        const readSelectedOptions = () => Object.fromEntries(
+            Array.from(container.querySelectorAll('[data-option-name][aria-pressed="true"]'))
+                .map((button) => [button.dataset.optionName, button.dataset.optionValue])
+        );
+
         const updateSelectedVariant = () => {
-            const selectedOptions = Object.fromEntries(
-                Array.from(container.querySelectorAll('[data-option-name][aria-pressed="true"]'))
-                    .map((button) => [button.dataset.optionName, button.dataset.optionValue])
-            );
+            const selectedOptions = readSelectedOptions();
             const matches = variants.filter((variant) =>
                 Object.entries(selectedOptions).every(([name, value]) => variant.optionValues?.[name] === value)
             );
@@ -166,26 +300,35 @@ const loadProductInfo = async () => {
                 buyNow.classList.toggle("is-disabled", !available);
             }
             if (addToCart) addToCart.disabled = !available;
+            syncGallery();
         };
 
-        container.querySelectorAll("[data-option-name]").forEach((button) =>
+        thumbButtons.forEach((thumb) => thumb.addEventListener("click", () => {
+            const group = galleryImages[Number(thumb.dataset.galleryIndex)].variants;
+            const current = readSelectedOptions();
+            const score = (variant) => Object.entries(current).filter(([name, value]) => variant.optionValues?.[name] === value).length;
+            const target = group.reduce((best, variant) => {
+                const diff = score(variant) - score(best);
+                return diff > 0 || (diff === 0 && variant.stock > 0 && best.stock <= 0) ? variant : best;
+            });
+            lastChoice = null;
+            container.querySelectorAll(".product-info__option [data-option-name]").forEach((button) => {
+                const value = target.optionValues?.[button.dataset.optionName];
+                if (value !== undefined) button.setAttribute("aria-pressed", String(button.dataset.optionValue === value));
+            });
+            updateSelectedVariant();
+        }));
+
+        container.querySelectorAll(".product-info__option [data-option-name]").forEach((button) =>
             button.addEventListener("click", () => {
                 const optionName = button.dataset.optionName;
                 const optionValue = button.dataset.optionValue;
-                container.querySelectorAll("[data-option-name]").forEach((sibling) => {
+                container.querySelectorAll(".product-info__option [data-option-name]").forEach((sibling) => {
                     if (sibling.dataset.optionName === optionName) {
                         sibling.setAttribute("aria-pressed", String(sibling === button));
                     }
                 });
-                if (normalizeOptionName(optionName) === "màu sắc") {
-                    const colorVariant = variants.find((variant) =>
-                        variant.optionValues?.[optionName] === optionValue && variant.image
-                    );
-                    if (colorVariant?.image) {
-                        const image = container.querySelector("#product-info-image");
-                        if (image) image.src = colorVariant.image;
-                    }
-                }
+                lastChoice = { name: optionName, value: optionValue };
                 updateSelectedVariant();
             })
         );
