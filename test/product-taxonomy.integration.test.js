@@ -757,7 +757,7 @@ test("legacy category APIs are no longer mounted", async () => {
     assert.equal(publicResponse.status, 404);
     const adminResponse = await fetch(`${baseUrl}/api/admin/categories`, {
         method: "POST", headers: adminHeaders,
-        body: JSON.stringify({ name: "Phones" })
+        body: JSON.stringify({ name: "Accessories" })
     });
     assert.equal(adminResponse.status, 404);
 });

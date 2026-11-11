@@ -196,7 +196,7 @@ const products = [
             "Bảo mật: Touch ID (dùng với Mac chip Apple silicon)",
             "Kết nối: Bluetooth, cáp USB-C đi kèm",
             "Pin: Sạc lại qua cổng USB-C",
-            "Tương thích: Mac, iPad, iPhone qua Bluetooth"
+            "Tương thích: Mac và các thiết bị Apple khác qua Bluetooth"
         ],
         primary: { name: COLOR, values: [
             { value: "Phím trắng", code: "TRG", hex: "#F2F2F4", file: "401-trang.png" },
@@ -208,7 +208,7 @@ const products = [
         intro: [
             "Aula F75 là bàn phím cơ không dây layout 75% gọn gàng, thiết kế gasket cho cảm giác gõ êm và có độ nảy nhẹ.",
             "Núm xoay chỉnh âm lượng tiện lợi và hàng phím chức năng đầy đủ trong thân máy nhỏ gọn.",
-            "Ba chế độ kết nối gồm cáp USB-C, Bluetooth và 2,4GHz, chuyển đổi nhanh giữa máy tính, laptop và máy tính bảng.",
+            "Ba chế độ kết nối gồm cáp USB-C, Bluetooth và 2,4GHz, chuyển đổi nhanh giữa nhiều máy tính và laptop.",
             "Công tắc có thể thay nóng (hot-swap) để người dùng tự đổi switch theo sở thích mà không cần hàn.",
             "Đèn nền RGB nhiều hiệu ứng và nhiều phối màu keycap để chọn theo phong cách bàn làm việc của bạn."
         ],
@@ -429,7 +429,7 @@ const products = [
             "Chống ồn chủ động ANC loại bỏ tiếng ồn xung quanh, chế độ Xuyên âm giúp nghe môi trường khi cần.",
             "Chip H2 xử lý âm thanh tính toán, hỗ trợ Âm thanh thích ứng và Âm thanh không gian với theo dõi chuyển động đầu.",
             "Khung thép không gỉ, đệm tai bằng bọt nhớ và dây đeo lưới thoáng giúp đeo thoải mái trong thời gian dài.",
-            "Pin dùng đến khoảng 20 giờ, sạc qua cổng USB-C và ghép nối nhanh với iPhone, iPad, Mac."
+            "Pin dùng đến khoảng 20 giờ, sạc qua cổng USB-C và ghép nối nhanh với Mac cùng các thiết bị Apple khác."
         ],
         specs: [
             "Kiểu tai nghe: Chụp tai không dây (over-ear)",
