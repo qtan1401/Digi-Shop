@@ -228,7 +228,8 @@
                     </div>
                     <div class="field field--wide" data-field="description">
                         <label for="product-description">Mô tả <span>*</span></label>
-                        <textarea id="product-description" name="description" rows="4" required maxlength="2000"></textarea>
+                        <textarea id="product-description" name="description" rows="8" required maxlength="4000" aria-describedby="product-description-hint"></textarea>
+                        <small class="field-hint" id="product-description-hint">Mỗi dòng là một đoạn mô tả. Để hiện bảng thông số, thêm dòng "Thông số kỹ thuật" rồi các dòng "Nhãn: Giá trị" (dòng không có dấu hai chấm là tên nhóm).</small>
                         <small class="field-error" data-error-for="description"></small>
                     </div>
                 </div>

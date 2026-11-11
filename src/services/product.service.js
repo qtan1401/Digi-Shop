@@ -386,6 +386,9 @@ const restoreProduct = async (id) => {
     if (product.isDeleted !== true) {
         throw createDomainError("Sản phẩm hiện không ở trạng thái đã xóa.");
     }
+    if (!isAllowed(product.deviceType, DEVICE_TYPES)) {
+        throw createDomainError("Loại thiết bị của sản phẩm này không còn được bán nên không thể khôi phục.", [], 409);
+    }
     return await productRepository.restoreProduct(id);
 };
 
