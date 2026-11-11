@@ -6,7 +6,7 @@
     "use strict";
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
     const formatPrice = (value) => Number(value || 0).toLocaleString("vi-VN") + "₫";
-    const deviceTypeLabels = { phone: "Điện thoại", tablet: "Máy tính bảng", laptop: "Laptop" };
+    const deviceTypeLabels = (typeof module === "object" && module.exports ? require("./catalog-taxonomy.js") : window.CatalogTaxonomy).DEVICE_TYPE_LABELS;
     const icon = (name, cls = "") => `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
     // 7,99 – 9,99 tr (dưới 1 triệu thì ghi đủ bằng ₫)
     const millions = (value) => (Number(value) / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 2 });

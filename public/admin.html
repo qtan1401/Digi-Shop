@@ -187,8 +187,9 @@
                             <small class="field-error" data-error-for="colorImages"></small>
                         </div>
                         <div class="storage-builder">
-                            <label>Dung lượng / Cấu hình <span class="field-hint-inline">(tuỳ chọn)</span></label>
-                            <p class="field-hint">Chọn nhanh hoặc nhập giá trị tuỳ chỉnh (vd: 16GB/512GB cho laptop).</p>
+                            <label for="option-name-input">Dung lượng / Cấu hình <span class="field-hint-inline">(tuỳ chọn)</span></label>
+                            <p class="field-hint">Đặt tên nhóm (vd: Bộ nhớ, Switch, Kích thước), rồi chọn nhanh hoặc nhập giá trị tuỳ chỉnh (vd: 16GB/512GB cho laptop).</p>
+                            <input id="option-name-input" type="text" maxlength="100" value="Bộ nhớ" autocomplete="off" aria-label="Tên nhóm cấu hình">
                             <div id="storage-presets" class="storage-presets"></div>
                             <div class="storage-custom">
                                 <input id="storage-custom-input" type="text" maxlength="60" placeholder="Giá trị tuỳ chỉnh…" autocomplete="off">
@@ -202,9 +203,6 @@
                         <label for="product-brand">Thương hiệu <span>*</span></label>
                         <select id="product-brand" name="brand" required>
                             <option value="">Chọn thương hiệu</option>
-                            <option value="Apple">Apple</option>
-                            <option value="Samsung">Samsung</option>
-                            <option value="MSI">MSI</option>
                         </select>
                         <small class="field-error" data-error-for="brand"></small>
                     </div>
@@ -212,9 +210,6 @@
                         <label for="product-device-type">Loại thiết bị <span>*</span></label>
                         <select id="product-device-type" name="deviceType" required>
                             <option value="">Chọn loại thiết bị</option>
-                            <option value="phone">phone</option>
-                            <option value="tablet">tablet</option>
-                            <option value="laptop">laptop</option>
                         </select>
                         <small class="field-error" data-error-for="deviceType"></small>
                     </div>
@@ -260,6 +255,7 @@
 
     <div id="toast-container" class="admin-toasts" role="status" aria-live="polite" aria-atomic="true"></div>
     <script src="/js/auth.js"></script>
+    <script src="/js/catalog-taxonomy.js"></script>
     <script src="/js/admin.js"></script>
     <script src="/js/admin-kit.js"></script>
     <script src="/js/admin-orders.js"></script>

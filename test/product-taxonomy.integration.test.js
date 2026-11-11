@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { BRANDS, DEVICE_TYPES } = require("../public/js/catalog-taxonomy");
 const jwt = require("jsonwebtoken");
 const PNG = require("pngjs").PNG;
 const { after, before, beforeEach, test } = require("node:test");
@@ -96,8 +97,8 @@ const fakePrisma = {
         let rows = products.filter((product) => !product.isDeleted).sort((a, b) => a.id - b.id);
         const sql = query.sql || "";
         const values = query.values || [];
-        const category = values.find((value) => ["phone", "tablet", "laptop"].includes(value));
-        const brand = values.find((value) => ["Apple", "Samsung", "MSI"].includes(value));
+        const category = values.find((value) => DEVICE_TYPES.includes(value));
+        const brand = values.find((value) => BRANDS.includes(value));
         if (sql.includes("p.device_type IN") && category) rows = rows.filter((product) => product.deviceType === category);
         if (sql.includes("p.brand IN") && brand) rows = rows.filter((product) => product.brand === brand);
         if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
@@ -284,14 +285,14 @@ const accessToken = jwt.sign(
     { subject: "catalog-admin", expiresIn: "10m" }
 );
 const productInput = (overrides = {}) => ({
-    name: "iPhone 17",
-    brand: "Apple",
-    deviceType: "phone",
-    sku: "IP17-256",
+    name: "Logitech MX Master 3S",
+    brand: "Logitech",
+    deviceType: "mouse",
+    sku: "MXM3S-GR",
     price: 999,
     stock: 7,
-    image: "https://catalog.example.test/iphone.png",
-    description: "A new phone",
+    image: "https://catalog.example.test/mouse.png",
+    description: "A new mouse",
     ...overrides
 });
 
@@ -324,10 +325,10 @@ const createProduct = (input) => {
 const createProductWithVariants = ({ metadata = {}, options, variants, colorImages = {} }) => {
     const body = new FormData();
     const fields = {
-        name: "Samsung Galaxy S",
-        brand: "Samsung",
-        deviceType: "phone",
-        description: "Galaxy with selectable configurations",
+        name: "Logitech MX Keys S",
+        brand: "Logitech",
+        deviceType: "keyboard",
+        description: "Keyboard with selectable configurations",
         ...metadata
     };
     for (const [field, value] of Object.entries(fields)) body.append(field, String(value));
@@ -499,15 +500,15 @@ test("admin creates supported taxonomy and public listing returns both fields", 
     const created = await createProduct(productInput());
     assert.equal(created.status, 201);
     const createdPayload = await created.json();
-    assert.equal(createdPayload.data.brand, "Apple");
-    assert.equal(createdPayload.data.deviceType, "phone");
+    assert.equal(createdPayload.data.brand, "Logitech");
+    assert.equal(createdPayload.data.deviceType, "mouse");
 
     const response = await fetch(`${baseUrl}/api/products`);
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.deepEqual(
         { brand: payload.data[0].brand, deviceType: payload.data[0].deviceType },
-        { brand: "Apple", deviceType: "phone" }
+        { brand: "Logitech", deviceType: "mouse" }
     );
     assert.deepEqual(payload.meta, { page: 1, pageSize: 12, total: 1, totalPages: 1, catalogTotal: 1 });
 });
@@ -523,15 +524,15 @@ test("public catalog validates pagination and returns stable empty-page metadata
 });
 
 test("public catalog applies page size and clamps a non-empty out-of-range page", async () => {
-    await createProduct(productInput({ name: "iPhone Alpha", sku: "IP-ALPHA" }));
-    await createProduct(productInput({ name: "iPhone Beta", sku: "IP-BETA" }));
-    await createProduct(productInput({ name: "Tablet Gamma", sku: "TAB-GAMMA", brand: "Samsung", deviceType: "tablet" }));
-    const response = await fetch(`${baseUrl}/api/products?page=99&pageSize=1&category=phone&tag=Apple&sort=name&order=asc`);
+    await createProduct(productInput({ name: "Mouse Alpha", sku: "MOUSE-ALPHA" }));
+    await createProduct(productInput({ name: "Mouse Beta", sku: "MOUSE-BETA" }));
+    await createProduct(productInput({ name: "Monitor Gamma", sku: "MON-GAMMA", brand: "Samsung", deviceType: "monitor" }));
+    const response = await fetch(`${baseUrl}/api/products?page=99&pageSize=1&category=mouse&tag=Logitech&sort=name&order=asc`);
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.deepEqual(payload.meta, { page: 2, pageSize: 1, total: 2, totalPages: 2, catalogTotal: 3 });
     assert.equal(payload.data.length, 1);
-    assert.equal(payload.data[0].name, "iPhone Beta");
+    assert.equal(payload.data[0].name, "Mouse Beta");
 
     const invalidFilter = await fetch(`${baseUrl}/api/products?category=watch`);
     assert.equal(invalidFilter.status, 400);
@@ -577,42 +578,42 @@ test("audit panel requests and returns only the first eight logs", async () => {
 test("category and brand pages render server-side with canonical pagination and sitemap entries", async () => {
     for (let index = 1; index <= 13; index++) {
         const response = await createProduct(productInput({
-            name: `Phone ${String(index).padStart(2, "0")}`,
-            sku: `PHONE-${index}`
+            name: `Mouse ${String(index).padStart(2, "0")}`,
+            sku: `MOUSE-${index}`
         }));
         assert.equal(response.status, 201);
     }
 
-    const categoryPageOne = await fetch(`${baseUrl}/danh-muc/phone`);
+    const categoryPageOne = await fetch(`${baseUrl}/danh-muc/mouse`);
     assert.equal(categoryPageOne.status, 200);
     const categoryHtml = await categoryPageOne.text();
     assert.equal((categoryHtml.match(/<title>/g) || []).length, 1);
-    assert.match(categoryHtml, /<title>Điện thoại — Sản phẩm công nghệ \| NodeShop<\/title>/);
-    assert.match(categoryHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
+    assert.match(categoryHtml, /<title>Chuột — Sản phẩm công nghệ \| NodeShop<\/title>/);
+    assert.match(categoryHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/mouse"/);
     assert.match(categoryHtml, /name="robots" content="index,follow"/);
     assert.match(categoryHtml, /aria-current="page">1<\/span>/);
-    assert.match(categoryHtml, /href="\/danh-muc\/phone\?page=2"/);
+    assert.match(categoryHtml, /href="\/danh-muc\/mouse\?page=2"/);
     assert.equal((categoryHtml.match(/class="product-card"/g) || []).length, 12);
 
-    const categoryPageTwo = await fetch(`${baseUrl}/danh-muc/phone?page=2`);
+    const categoryPageTwo = await fetch(`${baseUrl}/danh-muc/mouse?page=2`);
     assert.equal(categoryPageTwo.status, 200);
     const pageTwoHtml = await categoryPageTwo.text();
-    assert.match(pageTwoHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone\?page=2"/);
-    assert.match(pageTwoHtml, /rel="prev" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
-    assert.match(pageTwoHtml, /Phone 13/);
+    assert.match(pageTwoHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/mouse\?page=2"/);
+    assert.match(pageTwoHtml, /rel="prev" href="https:\/\/catalog\.example\.test\/danh-muc\/mouse"/);
+    assert.match(pageTwoHtml, /Mouse 13/);
     assert.match(pageTwoHtml, /aria-current="page">2<\/span>/);
 
-    const filtered = await fetch(`${baseUrl}/danh-muc/phone?tag=Apple&sort=name&order=asc`);
+    const filtered = await fetch(`${baseUrl}/danh-muc/mouse?tag=Logitech&sort=name&order=asc`);
     const filteredHtml = await filtered.text();
     assert.match(filteredHtml, /name="robots" content="noindex,follow"/);
-    assert.match(filteredHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/phone"/);
-    assert.match(filteredHtml, /href="\/danh-muc\/phone\?sort=name&amp;order=asc&amp;tag=Apple&amp;page=2"/);
+    assert.match(filteredHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/mouse"/);
+    assert.match(filteredHtml, /href="\/danh-muc\/mouse\?sort=name&amp;order=asc&amp;tag=Logitech&amp;page=2"/);
 
-    const brandPage = await fetch(`${baseUrl}/the/apple?page=2`);
+    const brandPage = await fetch(`${baseUrl}/the/logitech?page=2`);
     assert.equal(brandPage.status, 200);
-    assert.match(await brandPage.text(), /rel="canonical" href="https:\/\/catalog\.example\.test\/the\/apple\?page=2"/);
+    assert.match(await brandPage.text(), /rel="canonical" href="https:\/\/catalog\.example\.test\/the\/logitech\?page=2"/);
 
-    const emptyPage = await fetch(`${baseUrl}/danh-muc/tablet`);
+    const emptyPage = await fetch(`${baseUrl}/danh-muc/monitor`);
     const emptyHtml = await emptyPage.text();
     assert.equal(emptyPage.status, 200);
     assert.match(emptyHtml, /aria-current="page">1<\/span>/);
@@ -623,9 +624,26 @@ test("category and brand pages render server-side with canonical pagination and 
     const sitemap = await fetch(`${baseUrl}/sitemap.xml`);
     const sitemapXml = await sitemap.text();
     assert.equal(sitemap.status, 200);
-    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/danh-muc\/phone\?page=2/);
-    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/the\/apple\?page=2/);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/danh-muc\/mouse\?page=2/);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/the\/logitech\?page=2/);
     assert.equal((sitemapXml.match(/product_info\.html\?id=/g) || []).length, 13);
+});
+
+test("every supported device type and brand has a server-rendered page and anything else is not found", async () => {
+    const labels = { laptop: "Laptop", keyboard: "Bàn phím", mouse: "Chuột", headphone: "Tai nghe", monitor: "Màn hình", storage: "Ổ cứng SSD" };
+    for (const [slug, label] of Object.entries(labels)) {
+        const response = await fetch(`${baseUrl}/danh-muc/${slug}`);
+        assert.equal(response.status, 200, slug);
+        assert.match(await response.text(), new RegExp(`<h1>${label}</h1>`), slug);
+    }
+    for (const brand of ["Apple", "Samsung", "MSI", "Aula", "Logitech", "Razer", "Keychron", "Asus"]) {
+        const response = await fetch(`${baseUrl}/the/${brand.toLowerCase()}`);
+        assert.equal(response.status, 200, brand);
+        assert.match(await response.text(), new RegExp(`<h1>${brand}</h1>`), brand);
+    }
+    for (const path of ["/danh-muc/phone", "/danh-muc/tablet", "/the/google"]) {
+        assert.equal((await fetch(`${baseUrl}${path}`)).status, 404, path);
+    }
 });
 
 
@@ -649,13 +667,13 @@ test("public product detail API returns the product identified by its numeric ID
         },
         {
             id: 1,
-            slug: "iphone-17",
-            name: "iPhone 17",
-            brand: "Apple",
-            deviceType: "phone",
+            slug: "logitech-mx-master-3s",
+            name: "Logitech MX Master 3S",
+            brand: "Logitech",
+            deviceType: "mouse",
             price: 999,
             stock: 7,
-            description: "A new phone"
+            description: "A new mouse"
         }
     );
     assert.match(payload.data.image, /^\/uploads\/products\/[a-f0-9-]+\.png$/);
@@ -664,7 +682,7 @@ test("public product detail API returns the product identified by its numeric ID
 test("product create reports missing and unsupported taxonomy with field errors", async () => {
     for (const [input, field] of [
         [productInput({ brand: "Google" }), "brand"],
-        [productInput({ deviceType: "watch" }), "deviceType"],
+        [productInput({ deviceType: "phone" }), "deviceType"],
         [productInput({ brand: undefined }), "brand"],
         [productInput({ deviceType: undefined }), "deviceType"]
     ]) {
@@ -678,7 +696,7 @@ test("product create reports missing and unsupported taxonomy with field errors"
     const seededProduct = (await seeded.json()).data;
     for (const [changes, field] of [
         [{ brand: "Google" }, "brand"],
-        [{ deviceType: "watch" }, "deviceType"],
+        [{ deviceType: "tablet" }, "deviceType"],
         [{ brand: null }, "brand"],
         [{ deviceType: null }, "deviceType"]
     ]) {
@@ -705,19 +723,25 @@ test("product update accepts a different supported brand and device type", async
     assert.equal(payload.data.deviceType, "laptop");
 });
 
-test("the remaining supported Samsung and tablet values persist through HTTP", async () => {
-    const response = await createProduct(productInput({
-        name: "Samsung Galaxy Tab",
-        brand: "Samsung",
-        deviceType: "tablet",
-        sku: "SG-TAB-1"
-    }));
-    assert.equal(response.status, 201);
-    const payload = await response.json();
-    assert.deepEqual(
-        { brand: payload.data.brand, deviceType: payload.data.deviceType },
-        { brand: "Samsung", deviceType: "tablet" }
-    );
+test("every supported brand and device type persists through HTTP", async () => {
+    let sequence = 0;
+    for (const brand of BRANDS) {
+        for (const deviceType of DEVICE_TYPES) {
+            sequence += 1;
+            const response = await createProduct(productInput({ name: `${brand} ${deviceType}`, brand, deviceType, sku: `ANY-${sequence}` }));
+            assert.equal(response.status, 201, `${brand}/${deviceType}`);
+            const payload = await response.json();
+            assert.deepEqual({ brand: payload.data.brand, deviceType: payload.data.deviceType }, { brand, deviceType });
+        }
+    }
+});
+
+test("unsupported taxonomy errors name the current supported values", async () => {
+    const response = await createProduct(productInput({ brand: "Google", deviceType: "phone" }));
+    assert.equal(response.status, 400);
+    const { errors } = await response.json();
+    assert.equal(errors.find((error) => error.field === "brand").message, "Thương hiệu phải là Apple, Samsung, MSI, Aula, Logitech, Razer, Keychron hoặc Asus");
+    assert.equal(errors.find((error) => error.field === "deviceType").message, "Loại thiết bị phải là laptop, keyboard, mouse, headphone, monitor hoặc storage");
 });
 
 test("legacy category APIs are no longer mounted", async () => {

@@ -4,8 +4,8 @@ const productService = require("../services/product.service");
 const { readAuthConfig } = require("../auth/config");
 const renderer = require("../../public/js/catalog-renderer.js");
 
-const categories = { phone: "Điện thoại", tablet: "Máy tính bảng", laptop: "Laptop" };
-const tags = { apple: "Apple", samsung: "Samsung", msi: "MSI" };
+const { DEVICE_TYPE_LABELS: categories, BRANDS, brandSlug } = require("../../public/js/catalog-taxonomy");
+const tags = Object.fromEntries(BRANDS.map((brand) => [brandSlug(brand), brand]));
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const jsonForHtml = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 const origin = () => readAuthConfig().appOrigins[0];
@@ -13,7 +13,7 @@ const basePath = path.join(__dirname, "../../public/index.html");
 const queryValues = (value) => value === undefined ? [] : Array.isArray(value) ? value : [value];
 const buildPage = async (req, res, facetType, slug) => {
     const values = facetType === "category" ? categories : tags;
-    const label = values[slug];
+    const label = Object.hasOwn(values, slug) ? values[slug] : undefined;
     if (!label) return res.status(404).send("Not found");
 
     const route = facetType === "category" ? `/danh-muc/${slug}` : `/the/${slug}`;

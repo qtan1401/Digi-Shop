@@ -1,3 +1,5 @@
+const { BRANDS, DEVICE_TYPES } = require("../../public/js/catalog-taxonomy");
+
 class SeedDataError extends Error {
     constructor(identity, message) {
         super(`Invalid seed record ${identity}: ${message}`);
@@ -31,7 +33,7 @@ function recordChange(changes, identity, field, before, after) {
     changes.push({ identity, field, before, after });
 }
 
-function requiredText(value, field, identity, changes, maxLength, transform = (text) => text) {
+function requiredText(value, field, identity, changes, maxLength, transform = (text) => text, allowLineBreaks = false) {
     if (typeof value !== "string") {
         throw new SeedDataError(identity, `${field} must be a string`);
     }
@@ -40,7 +42,7 @@ function requiredText(value, field, identity, changes, maxLength, transform = (t
     if (!normalized) {
         throw new SeedDataError(identity, `${field} must not be empty`);
     }
-    if (/\p{Cc}/u.test(normalized)) {
+    if ((allowLineBreaks ? /(?![\n\t])\p{Cc}/u : /\p{Cc}/u).test(normalized)) {
         throw new SeedDataError(identity, `${field} must not contain control characters`);
     }
     if (normalized.length > maxLength) {
@@ -243,8 +245,8 @@ function normalizeProduct(record, index, changes) {
     }
     const brand = requiredText(record.brand, "brand", identity, changes, 16);
     const deviceType = requiredText(record.deviceType, "deviceType", identity, changes, 16);
-    if (!["Apple", "Samsung", "MSI"].includes(brand)) throw new SeedDataError(identity, "brand must be Apple, Samsung, or MSI");
-    if (!["phone", "tablet", "laptop"].includes(deviceType)) throw new SeedDataError(identity, "deviceType must be phone, tablet, or laptop");
+    if (!BRANDS.includes(brand)) throw new SeedDataError(identity, `brand must be one of ${BRANDS.join(", ")}`);
+    if (!DEVICE_TYPES.includes(deviceType)) throw new SeedDataError(identity, `deviceType must be one of ${DEVICE_TYPES.join(", ")}`);
     if (!Array.isArray(record.options) || !Array.isArray(record.variants) || record.variants.length === 0) {
         throw new SeedDataError(identity, "options and non-empty variants arrays are required");
     }
@@ -310,7 +312,7 @@ function normalizeProduct(record, index, changes) {
         name: requiredText(record.name, "name", identity, changes, 200),
         slug: normalizeSlug(record.slug, "slug", identity, changes, 240),
         image: requiredText(record.image, "image", identity, changes, 500),
-        description: requiredText(record.description, "description", identity, changes, 2147483647),
+        description: requiredText(record.description, "description", identity, changes, 2147483647, (text) => text.replace(/\r\n?/g, "\n"), true),
         options,
         variants,
         isDeleted,
