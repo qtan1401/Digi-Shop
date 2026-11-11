@@ -22,6 +22,10 @@
     const productRegion = $("#product-table-region");
     const productSummary = $("#table-summary");
     const PAGE_SIZE = 10;
+    const { BRANDS, DEVICE_TYPE_LABELS } = window.CatalogTaxonomy;
+    const fillSelect = (select, entries) => entries.forEach(([value, label]) => select.append(new Option(label, value)));
+    fillSelect($("#product-brand"), BRANDS.map((brand) => [brand, brand]));
+    fillSelect($("#product-device-type"), Object.entries(DEVICE_TYPE_LABELS));
 
     const escapeHtml = (value) => String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -74,6 +78,10 @@
         .replace(/[^A-Z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "");
 
+    // Tuỳ chọn thứ hai (dung lượng, switch, kích thước...): tên do admin đặt, mặc định "Bộ nhớ".
+    const DEFAULT_OPTION_NAME = "Bộ nhớ";
+    const configOptionName = () => $("#option-name-input").value.trim() || DEFAULT_OPTION_NAME;
+
     const buildSuggestedSku = (optionValues = {}) => {
         const base = slugifyForSku($("#product-name").value) || "SKU";
         const parts = [base];
@@ -82,7 +90,7 @@
             const letters = removeDiacritics(colorValue).toUpperCase().replace(/[^A-Z]/g, "");
             parts.push(letters.slice(0, 3) || "MAU");
         }
-        const storageValue = optionValues["Bộ nhớ"];
+        const storageValue = optionValues[configOptionName()];
         if (storageValue) {
             parts.push(slugifyForSku(storageValue) || "PB");
         }
@@ -189,7 +197,7 @@
             return `<tr class="${deleted ? "is-deleted" : ""}">
                 <td><div class="product-cell"><img src="${escapeHtml(product.image || "")}" alt="" loading="lazy" onerror="this.classList.add('is-broken')"><div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.description || "")}</small></div></div></td>
                 <td><span class="variant-count">${escapeHtml(product.variantCount || 0)} phiên bản</span></td>
-                <td class="brand-cell"><span>${escapeHtml(product.brand)}</span><small>${escapeHtml(product.deviceType)}</small></td>
+                <td class="brand-cell"><span>${escapeHtml(product.brand)}</span><small>${escapeHtml(DEVICE_TYPE_LABELS[product.deviceType] || product.deviceType)}</small></td>
                 <td class="price-cell">${Number(product.price) === Number(product.priceMax) ? formatPrice(product.price) : `${formatPrice(product.price)} – ${formatPrice(product.priceMax)}`}</td>
                 <td>${stockCell(product.stock)}</td>
                 ${state.status === "deleted" ? `<td class="date-cell">${formatDate(product.deletedAt)}</td>` : ""}
@@ -366,7 +374,7 @@
         const options = [];
         const colorNames = readColorRows().map((c) => c.name).filter(Boolean);
         if (colorNames.length) options.push({ name: "Màu sắc", values: colorNames });
-        if (state.storages.length) options.push({ name: "Bộ nhớ", values: state.storages.slice() });
+        if (state.storages.length) options.push({ name: configOptionName(), values: state.storages.slice() });
         return options;
     };
 
@@ -570,7 +578,7 @@
         });
         const options = [];
         if (activeColors.length) options.push({ name: "Màu sắc", values: activeColors.map((c) => ({ value: c.name, colorHex: c.hex })) });
-        if (state.storages.length) options.push({ name: "Bộ nhớ", values: state.storages.map((value) => ({ value })) });
+        if (state.storages.length) options.push({ name: configOptionName(), values: state.storages.map((value) => ({ value })) });
         const fields = {
             name: $("#product-name").value.trim(),
             brand: $("#product-brand").value,
@@ -648,6 +656,7 @@
             (colorOption?.values || []).forEach((value) => {
                 addColorRow({ name: value.value, hex: value.colorHex || "#1C1C1E", existingImage: colorImageByValue[value.value] || "" });
             });
+            $("#option-name-input").value = storageOption?.name || DEFAULT_OPTION_NAME;
             state.storages = (storageOption?.values || []).map((value) => value.value);
             renderStorageBuilder();
             state.variantSource = product.variants || [];
@@ -843,6 +852,7 @@
     });
     $("#product-form").addEventListener("change", (event) => {
         if (event.target.matches("[data-color-file]")) handleColorFileChange(event.target);
+        if (event.target.id === "option-name-input") refreshVariantGrid();
     });
     $("#storage-custom-input").addEventListener("keydown", (event) => {
         if (event.key === "Enter") { event.preventDefault(); addCustomStorage(); }

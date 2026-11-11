@@ -2,8 +2,7 @@
 // Product cards link to detail; customers must select a purchasable variant there.
 const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", categories: new Set(), tags: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
 const normalizeCatalogText = (value) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("vi-VN").replace(/đ/g, "d");
-const categoryValues = ["phone", "tablet", "laptop"];
-const tagValues = ["Apple", "Samsung", "MSI"];
+const { DEVICE_TYPES: categoryValues, BRANDS: tagValues, brandFromSlug } = window.CatalogTaxonomy;
 // Chip khoảng giá: [nhãn, minPrice, maxPrice]
 const priceRanges = [["Mọi mức giá", "", ""], ["Dưới 10 triệu", "", "10000000"], ["10–20 triệu", "10000000", "20000000"], ["20–30 triệu", "20000000", "30000000"], ["Trên 30 triệu", "30000000", ""]];
 const getPriceFilterError = () => {
@@ -59,11 +58,11 @@ const updateSortButtons = () => {
     if (label) label.textContent = catalogState.sortBy === "default" ? "Mặc định" : sortLabel(catalogState.sortBy, catalogState.sortDirection === "desc");
 };
 const parseLocationState = () => {
-    const url = new URL(window.location.href), categoryPath = url.pathname.match(/^\/danh-muc\/(phone|tablet|laptop)\/?$/i), tagPath = url.pathname.match(/^\/the\/(apple|samsung|msi)\/?$/i);
+    const url = new URL(window.location.href), categoryPath = url.pathname.match(/^\/danh-muc\/([a-z]+)\/?$/i), tagPath = url.pathname.match(/^\/the\/([a-z]+)\/?$/i);
     catalogState.categories = new Set(url.searchParams.getAll("category").filter((value) => categoryValues.includes(value)));
     catalogState.tags = new Set(url.searchParams.getAll("tag").filter((value) => tagValues.includes(value)));
-    if (categoryPath) catalogState.categories.add(categoryPath[1].toLowerCase());
-    if (tagPath) catalogState.tags.add(tagValues.find((tag) => tag.toLowerCase() === tagPath[1].toLowerCase()));
+    if (categoryPath && categoryValues.includes(categoryPath[1].toLowerCase())) catalogState.categories.add(categoryPath[1].toLowerCase());
+    if (tagPath && brandFromSlug(tagPath[1])) catalogState.tags.add(brandFromSlug(tagPath[1]));
     catalogState.page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
     catalogState.search = url.searchParams.get("q") || "";
     catalogState.minPrice = url.searchParams.get("minPrice") || ""; catalogState.maxPrice = url.searchParams.get("maxPrice") || "";

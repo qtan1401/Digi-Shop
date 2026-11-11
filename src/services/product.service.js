@@ -6,8 +6,8 @@ const reviewService = require("./review.service");
 
 const REQUIRED_FIELDS = ["name", "brand", "deviceType", "image", "description"];
 const EDITABLE_FIELDS = ["name", "brand", "deviceType", "image", "description"];
-const BRANDS = ["Apple", "Samsung", "MSI"];
-const DEVICE_TYPES = ["phone", "tablet", "laptop"];
+const { BRANDS, DEVICE_TYPES } = require("../../public/js/catalog-taxonomy");
+const joinChoices = (choices) => `${choices.slice(0, -1).join(", ")} hoặc ${choices.at(-1)}`;
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
 
 const createDomainError = (message, errors = [], statusCode = 400) => {
@@ -144,10 +144,10 @@ const validateProduct = (input) => {
     }
 
     if (!isAllowed(data.brand, BRANDS)) {
-        errors.push({ field: "brand", message: "Thương hiệu phải là Apple, Samsung hoặc MSI" });
+        errors.push({ field: "brand", message: `Thương hiệu phải là ${joinChoices(BRANDS)}` });
     }
     if (!isAllowed(data.deviceType, DEVICE_TYPES)) {
-        errors.push({ field: "deviceType", message: "Loại thiết bị phải là phone, tablet hoặc laptop" });
+        errors.push({ field: "deviceType", message: `Loại thiết bị phải là ${joinChoices(DEVICE_TYPES)}` });
     }
 
     if (typeof data.image !== "string" || isBlank(data.image)) {

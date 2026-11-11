@@ -448,12 +448,12 @@ a.pg__item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px
 .field--wide { grid-column: 1 / -1; }
 .field label, .color-builder > label, .storage-builder > label { color: var(--text-primary); font: 500 14px/20px var(--font-body); }
 .field label > span:first-of-type { color: var(--error-text); }
-.field input, .field select, .field textarea, .storage-custom input {
+.field input, .field select, .field textarea, .storage-custom input, #option-name-input {
     width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 12px; outline: 0;
     background: var(--bg-surface); color: var(--text-primary); font: 400 14px/20px var(--font-body); transition: border-color .15s, box-shadow .15s;
 }
 .field textarea { resize: vertical; line-height: 1.45; }
-.field input:focus, .field select:focus, .field textarea:focus, .storage-custom input:focus, .search-field input:focus,
+.field input:focus, .field select:focus, .field textarea:focus, .storage-custom input:focus, #option-name-input:focus, .search-field input:focus,
 .variant-editor__row input:focus, .color-row__field input:focus, .select-btn:focus-visible, .select-btn[aria-expanded="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
 .field input:disabled { background: var(--neutral-bg); color: var(--text-secondary); cursor: not-allowed; }
 .field.has-error input, .field.has-error select, .field.has-error textarea, .field.has-error .select-btn, .input-error { border-color: var(--error-text) !important; }
