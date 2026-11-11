@@ -744,6 +744,14 @@ test("unsupported taxonomy errors name the current supported values", async () =
     assert.equal(errors.find((error) => error.field === "deviceType").message, "Loại thiết bị phải là laptop, keyboard, mouse, headphone, monitor hoặc storage");
 });
 
+test("a deleted product of a retired device type cannot be restored", async () => {
+    const { id } = (await (await createProduct(productInput())).json()).data;
+    Object.assign(products.find((row) => row.id === id), { deviceType: "phone", isDeleted: true });
+    const response = await fetch(`${baseUrl}/api/admin/products/${id}/restore`, { method: "POST", headers: adminHeaders });
+    assert.equal(response.status, 409);
+    assert.equal(products.find((row) => row.id === id).isDeleted, true);
+});
+
 test("legacy category APIs are no longer mounted", async () => {
     const publicResponse = await fetch(`${baseUrl}/api/categories`);
     assert.equal(publicResponse.status, 404);
