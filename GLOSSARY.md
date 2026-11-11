@@ -25,8 +25,11 @@ A unique stock-keeping code identifying one Product variant.
 The maker's customer-facing identity associated with a Product.
 
 **Device type**:
-The broad class used to organize a Product in the catalog: phone, tablet, or laptop.
+The broad class used to organize a Product in the catalog: laptop, keyboard, mouse, headphone, monitor, or storage (SSD).
 _Avoid_: Category
+
+**Specification sheet**:
+The `Thông số kỹ thuật` block at the end of a Product description: one `Label: Value` line per specification, where a line without a colon names a group. The product page renders it as a table and the rest of the description as prose; a description without the block shows no table.
 
 **Product catalog**:
 The set of Products currently offered for browsing and purchase.
