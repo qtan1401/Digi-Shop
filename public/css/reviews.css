@@ -1,0 +1,23 @@
+/* Bình luận khách và cập nhật trực tiếp (Guest comment, realtime). Bổ sung cho khối .reviews trong styles.css. */
+
+.reviews__head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 16px; }
+.reviews__head .reviews__title { margin-bottom: 0; }
+
+/* Trạng thái kết nối: chấm xanh khi có websocket, chấm xám khi chỉ làm mới 30 giây một lần */
+.reviews__live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.reviews__live[hidden] { display: none; }
+.reviews__live::before { content: ""; width: 8px; height: 8px; border-radius: 9999px; background: var(--text-muted); }
+.reviews__live[data-state="live"]::before { background: var(--success); }
+
+/* Nhãn "Khách" cạnh tên người bình luận không đăng nhập */
+.review__guest { padding: 2px 8px; border-radius: 9999px; background: var(--neutral-bg); border: 1px solid var(--border-strong); font-size: 12px; font-weight: 500; line-height: 16px; color: var(--neutral); }
+
+/* Bình luận vừa đến qua websocket: nền nhạt tắt dần */
+@keyframes review-arrive { from { background: var(--accent-light); } to { background: transparent; } }
+.review--new { animation: review-arrive 3s ease-out; }
+@media (prefers-reduced-motion: reduce) { .review--new { animation: none; background: var(--accent-light); } }
+
+/* Hộp thoại bình luận khách */
+.rv-form__note { display: flex; gap: 8px; padding: 12px; border-radius: var(--radius-md); background: var(--neutral-bg); font-size: 14px; line-height: 20px; color: var(--neutral); }
+.rv-form__note .icon { flex-shrink: 0; width: 16px; height: 16px; margin-top: 2px; }
+.reviews__cta-actions { display: flex; flex-wrap: wrap; gap: 8px; }

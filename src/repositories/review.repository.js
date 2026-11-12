@@ -41,11 +41,11 @@ const hasDeliveredOrderForProduct = async (userId, productId) => {
     return Boolean(row);
 };
 
-const findOwnReview = async (productId, userId) => mapOwnReview(
-    await getPrismaClient().productReview.findUnique({
-        where: { productId_userId: { productId, userId } }
-    })
-);
+// One review per signed-in user per Product is a filtered unique index (user_id IS NOT NULL), which Prisma
+// cannot model as a compound unique, so the own review is looked up with findFirst.
+const findOwnRow = (productId, userId) => getPrismaClient().productReview.findFirst({ where: { productId, userId } });
+
+const findOwnReview = async (productId, userId) => mapOwnReview(await findOwnRow(productId, userId));
 
 /** Returns the created review, or null when the user already has one for the Product. */
 const createReview = async (productId, userId, { rating, comment }) => {
@@ -60,11 +60,29 @@ const createReview = async (productId, userId, { rating, comment }) => {
     }
 };
 
+/** Returns the created Guest comment (no Rating, no user) in its public shape. */
+const createGuestComment = async (productId, { guestName, comment }) => {
+    const row = await getPrismaClient().productReview.create({
+        data: { productId, userId: null, guestName, rating: null, comment }
+    });
+    return {
+        id: row.id,
+        authorType: "guest",
+        username: row.guestName,
+        rating: null,
+        comment: row.comment ?? null,
+        createdAt: toIsoString(row.createdAt),
+        updatedAt: toIsoString(row.updatedAt)
+    };
+};
+
 /** Returns the updated review, or null when the user has none. isHidden is untouched. */
 const updateOwnReview = async (productId, userId, { rating, comment }) => {
     try {
+        const existing = await findOwnRow(productId, userId);
+        if (!existing) return null;
         const row = await getPrismaClient().productReview.update({
-            where: { productId_userId: { productId, userId } },
+            where: { id: existing.id },
             data: { rating, comment }
         });
         return mapOwnReview(row);
@@ -74,10 +92,12 @@ const updateOwnReview = async (productId, userId, { rating, comment }) => {
     }
 };
 
-/** Returns true when a row was removed. */
+/** Returns the removed review, or null when the user had none. */
 const deleteOwnReview = async (productId, userId) => {
-    const result = await getPrismaClient().productReview.deleteMany({ where: { productId, userId } });
-    return result.count > 0;
+    const existing = await findOwnRow(productId, userId);
+    if (!existing) return null;
+    const result = await getPrismaClient().productReview.deleteMany({ where: { id: existing.id } });
+    return result.count > 0 ? mapOwnReview(existing) : null;
 };
 
 const listVisible = async (productId, page, pageSize) => {
@@ -96,6 +116,8 @@ const listVisible = async (productId, page, pageSize) => {
                 comment: true,
                 createdAt: true,
                 updatedAt: true,
+                userId: true,
+                guestName: true,
                 user: { select: { username: true } }
             }
         })
@@ -104,7 +126,8 @@ const listVisible = async (productId, page, pageSize) => {
         total,
         rows: rows.map((row) => ({
             id: row.id,
-            username: row.user?.username || null,
+            authorType: row.userId ? "user" : "guest",
+            username: (row.userId ? row.user?.username : row.guestName) || null,
             rating: row.rating ?? null,
             comment: row.comment ?? null,
             createdAt: toIsoString(row.createdAt),
@@ -167,7 +190,9 @@ const mapAdminReview = (row) => ({
     id: row.id,
     productId: row.productId,
     productName: row.product?.name ?? null,
+    authorType: row.userId ? "user" : "guest",
     username: row.user?.username || null,
+    guestName: row.guestName ?? null,
     rating: row.rating ?? null,
     comment: row.comment ?? null,
     isHidden: Boolean(row.isHidden),
@@ -178,6 +203,8 @@ const mapAdminReview = (row) => ({
 const ADMIN_SELECT = {
     id: true,
     productId: true,
+    userId: true,
+    guestName: true,
     rating: true,
     comment: true,
     isHidden: true,
@@ -225,6 +252,7 @@ module.exports = {
     hasDeliveredOrderForProduct,
     findOwnReview,
     createReview,
+    createGuestComment,
     updateOwnReview,
     deleteOwnReview,
     listVisible,

@@ -64,7 +64,8 @@
         // ---------- tên / ảnh sản phẩm ----------
         const productOf = (id) => state.products.find((p) => String(p.id) === String(id));
         const nameOf = (r) => r.productName || (productOf(r.productId) && productOf(r.productId).name) || `Sản phẩm #${r.productId}`;
-        const userOf = (r) => r.username || "Khách hàng";
+        // Bình luận không đăng nhập hiện "Khách · <tên>"; tên khách luôn qua esc() / textContent khi vẽ.
+        const userOf = (r) => (r.authorType === "guest" ? `Khách · ${r.guestName || "?"}` : r.username || "Khách hàng");
         const thumbHtml = (r, cls = "") => {
             const p = productOf(r.productId);
             return p && p.image ? `<img class="ar-thumb ${cls}" src="${esc(p.image)}" alt="" loading="lazy">` : `<span class="ar-thumb ar-thumb-blank ${cls}" aria-hidden="true"></span>`;

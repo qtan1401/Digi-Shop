@@ -4,6 +4,9 @@ const { after, before, beforeEach, test } = require("node:test");
 
 process.env.APP_ORIGIN = "https://reviews.example.test";
 process.env.JWT_ACCESS_SECRET = "integration-test-secret-that-is-more-than-thirty-two-bytes";
+process.env.ADMIN_EXTRAS = "1"; // review moderation is an optional admin extra, off by default
+// Lets a test pick the client address (X-Forwarded-For) so the per-IP guest comment limit can be exercised in isolation.
+process.env.TRUST_PROXY = "1";
 
 // ===== In-memory Prisma fake (only what the review/product code paths use) =====
 let users;
@@ -23,7 +26,7 @@ const textContains = (value, needle) => String(value ?? "").toLowerCase().includ
 
 const reviewRelations = (row) => ({
     ...row,
-    user: { username: users.find((user) => user.id === row.userId)?.username ?? null },
+    user: row.userId ? { username: users.find((user) => user.id === row.userId)?.username ?? null } : null,
     product: { name: products.find((product) => product.id === row.productId)?.name ?? null }
 });
 
@@ -32,6 +35,7 @@ const reviewMatches = (row, where = {}) => {
         const { productId } = where;
         if (typeof productId === "object" ? !productId.in.includes(row.productId) : row.productId !== productId) return false;
     }
+    if (where.id !== undefined && row.id !== where.id) return false;
     if (where.userId !== undefined && row.userId !== where.userId) return false;
     if (where.isHidden !== undefined && row.isHidden !== where.isHidden) return false;
     if (where.rating?.not === null && row.rating === null) return false;
@@ -40,7 +44,8 @@ const reviewMatches = (row, where = {}) => {
         const related = reviewRelations(row);
         const hit = where.OR.some((clause) =>
             (clause.comment && textContains(row.comment, clause.comment.contains)) ||
-            (clause.user && textContains(related.user.username, clause.user.username.contains)) ||
+            (clause.user && textContains(related.user?.username, clause.user.username.contains)) ||
+            (clause.guestName && textContains(row.guestName, clause.guestName.contains)) ||
             (clause.product && textContains(related.product.name, clause.product.name.contains)));
         if (!hit) return false;
     }
@@ -76,23 +81,22 @@ const fakePrisma = {
     },
     productReview: {
         findUnique: async ({ where }) => {
-            const key = where.productId_userId;
-            const row = reviews.find((review) => key
-                ? review.productId === key.productId && review.userId === key.userId
-                : review.id === where.id);
+            const row = reviews.find((review) => review.id === where.id);
             return row ? reviewRelations(row) : null;
         },
+        findFirst: async ({ where }) => {
+            const row = reviews.find((review) => reviewMatches(review, where));
+            return row ? { ...row, createdAt: new Date(row.createdAt * 1000), updatedAt: new Date(row.updatedAt * 1000) } : null;
+        },
         create: async ({ data }) => {
-            if (reviews.some((row) => row.productId === data.productId && row.userId === data.userId)) throw uniqueViolation();
-            const row = { id: nextReviewId++, isHidden: false, createdAt: ++clock, updatedAt: clock, ...data };
+            // The filtered unique index only covers signed-in users; guests may comment as often as they like.
+            if (data.userId && reviews.some((row) => row.productId === data.productId && row.userId === data.userId)) throw uniqueViolation();
+            const row = { id: nextReviewId++, isHidden: false, guestName: null, createdAt: ++clock, updatedAt: clock, ...data };
             reviews.push(row);
             return { ...row, createdAt: new Date(row.createdAt * 1000), updatedAt: new Date(row.updatedAt * 1000) };
         },
         update: async ({ where, data }) => {
-            const key = where.productId_userId;
-            const row = reviews.find((review) => key
-                ? review.productId === key.productId && review.userId === key.userId
-                : review.id === where.id);
+            const row = reviews.find((review) => review.id === where.id);
             if (!row) throw missingRow();
             Object.assign(row, data, { updatedAt: ++clock });
             return { ...row, createdAt: new Date(row.createdAt * 1000), updatedAt: new Date(row.updatedAt * 1000) };
@@ -162,8 +166,11 @@ const tokenFor = (id, role) => jwt.sign(
     { subject: id, expiresIn: "10m" }
 );
 
-const call = (method, path, { as, body, csrf = true } = {}) => {
-    const headers = { Origin: process.env.APP_ORIGIN };
+let nextClientIp = 1;
+
+const call = (method, path, { as, body, csrf = true, ip } = {}) => {
+    // Every call comes from its own address unless the test pins one.
+    const headers = { Origin: process.env.APP_ORIGIN, "X-Forwarded-For": ip || `10.0.${Math.floor(nextClientIp / 250)}.${nextClientIp++ % 250}` };
     const cookies = [];
     if (as) cookies.push(`__Host-access_token=${tokenFor(as.id, as.role)}`);
     if (csrf) {
@@ -415,7 +422,7 @@ test("hidden reviews leave the list, average and count; comment-only reviews sho
         commentCount: 2
     });
     assert.deepEqual(body.meta, { page: 1, pageSize: 5, total: 3, totalPages: 1 });
-    for (const row of body.data) assert.deepEqual(Object.keys(row).sort(), ["comment", "createdAt", "id", "rating", "updatedAt", "username"]);
+    for (const row of body.data) assert.deepEqual(Object.keys(row).sort(), ["authorType", "comment", "createdAt", "id", "rating", "updatedAt", "username"]);
     assert.equal(JSON.stringify(body).includes("@x.test"), false);
 
     const empty = await (await call("GET", "/api/products/2/reviews")).json();
@@ -496,7 +503,7 @@ test("admin review list filters by product, visibility and text", async () => {
     assert.equal(all.meta.total, 3);
     assert.deepEqual(all.data.map((row) => row.id), [3, 2, 1]);
     assert.deepEqual(Object.keys(all.data[0]).sort(), [
-        "comment", "createdAt", "id", "isHidden", "productId", "productName", "rating", "updatedAt", "username"
+        "authorType", "comment", "createdAt", "guestName", "id", "isHidden", "productId", "productName", "rating", "updatedAt", "username"
     ]);
     assert.equal(all.data[0].productName, "Laptop Two");
 
@@ -530,4 +537,149 @@ test("product list carries rating aggregates from one grouped query per page", a
     assert.equal(byId.get(1).ratingCount, 2);
     assert.equal(byId.get(2).ratingAverage, null);
     assert.equal(byId.get(2).ratingCount, 0);
+});
+
+// ===== Guest comments (no account, no Rating) =====
+
+const guestComment = (body, options = {}) => call("POST", "/api/products/1/reviews", { body, ...options });
+
+test("an anonymous visitor can post a guest comment, and the list marks it as a guest", async () => {
+    const response = await guestComment({ guestName: "  Minh   Anh ", comment: "  Giao hàng nhanh  " });
+    assert.equal(response.status, 201);
+    const created = (await response.json()).data;
+    assert.equal(created.authorType, "guest");
+    assert.equal(created.username, "Minh Anh");
+    assert.equal(created.rating, null);
+    assert.equal(created.comment, "Giao hàng nhanh");
+
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0].userId, null);
+    assert.equal(reviews[0].guestName, "Minh Anh");
+    assert.equal(reviews[0].rating, null);
+
+    seedReview(1, "alice", { rating: 4, comment: "Ổn" });
+    const list = await (await call("GET", "/api/products/1/reviews")).json();
+    assert.deepEqual(list.data.map((row) => [row.authorType, row.username]), [["user", "alice_k"], ["guest", "Minh Anh"]]);
+    assert.equal(list.summary.ratingCount, 1, "a guest comment never counts as a rating");
+    assert.equal(list.summary.commentCount, 2);
+});
+
+test("the same visitor may leave several guest comments on one product", async () => {
+    const ip = "198.51.100.7";
+    for (const text of ["một", "hai", "ba"]) {
+        assert.equal((await guestComment({ guestName: "Lan", comment: text }, { ip })).status, 201);
+    }
+    assert.equal(reviews.length, 3);
+});
+
+test("a guest comment needs a clean display name and a comment, otherwise 400", async () => {
+    const bad = [
+        {},
+        { comment: "Không có tên" },
+        { guestName: "Lan" },
+        { guestName: "Lan", comment: "   " },
+        { guestName: "", comment: "x" },
+        { guestName: "L", comment: "x" },
+        { guestName: "a".repeat(61), comment: "x" },
+        { guestName: "x".repeat(5000), comment: "x" },
+        { guestName: 42, comment: "x" },
+        { guestName: ["Lan"], comment: "x" },
+        { guestName: "Lan", comment: "a".repeat(1001) },
+        { guestName: "Lan", comment: { text: "x" } },
+        { guestName: "<script>alert(1)</script>", comment: "x" },
+        { guestName: "Lan 😀", comment: "x" },
+        { guestName: "Lan\u202Etset", comment: "x" },
+        { guestName: "аdmin", comment: "x" }, // Cyrillic a
+        { guestName: "..", comment: "x" }
+    ];
+    for (const body of bad) {
+        const response = await guestComment(body);
+        assert.equal(response.status, 400, JSON.stringify(body).slice(0, 80));
+        assert.equal((await response.json()).error.code, "VALIDATION_FAILED");
+    }
+    assert.equal(reviews.length, 0);
+});
+
+test("a guest name cannot pass for the staff or the shop", async () => {
+    for (const guestName of ["admin", "Admin", "ADMIN 01", "a.d.m.i.n", "Quản trị viên", "quan tri", "Quản-Trị", "NodeShop Support", "Digi Shop"]) {
+        const response = await guestComment({ guestName, comment: "x" });
+        assert.equal(response.status, 400, guestName);
+    }
+    assert.equal((await guestComment({ guestName: "Đặng Văn Nam-Hải", comment: "Tốt" })).status, 201);
+    assert.equal(reviews.length, 1);
+});
+
+test("a guest cannot rate: any rating without a session is 401 with the sign-in message", async () => {
+    for (const body of [{ rating: 5 }, { guestName: "Lan", rating: 5, comment: "x" }, { guestName: "Lan", rating: 0, comment: "x" }, { guestName: "Lan", rating: "5", comment: "x" }]) {
+        const response = await guestComment(body);
+        assert.equal(response.status, 401, JSON.stringify(body));
+        const error = (await response.json()).error;
+        assert.equal(error.code, "AUTH_REQUIRED");
+        assert.equal(error.message, "Đăng nhập để chấm sao");
+    }
+    assert.equal(reviews.length, 0);
+});
+
+test("a guest comment stores only the name and text; injected fields are ignored", async () => {
+    const response = await guestComment({
+        guestName: "Lan", comment: "Tốt", userId: "alice", isHidden: true, rating: undefined, createdAt: "2001-01-01", productId: 2
+    });
+    assert.equal(response.status, 201);
+    assert.equal(reviews[0].userId, null);
+    assert.equal(reviews[0].isHidden, false);
+    assert.equal(reviews[0].productId, 1);
+});
+
+test("guest comments keep CSRF and the product rules", async () => {
+    assert.equal((await guestComment({ guestName: "Lan", comment: "x" }, { csrf: false })).status, 403);
+    for (const path of ["/api/products/3/reviews", "/api/products/999/reviews"]) {
+        const response = await call("POST", path, { body: { guestName: "Lan", comment: "x" } });
+        assert.equal(response.status, 404, path);
+    }
+    assert.equal(reviews.length, 0);
+});
+
+test("guest comments are limited to 5 per IP per 15 minutes, and signed-in customers are not counted", async () => {
+    const ip = "203.0.113.50";
+    for (let n = 1; n <= 5; n++) {
+        assert.equal((await guestComment({ guestName: "Spam", comment: `n${n}` }, { ip })).status, 201, `comment ${n}`);
+    }
+    const blocked = await guestComment({ guestName: "Spam", comment: "n6" }, { ip });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.headers.get("retry-after"), "900");
+    assert.equal(reviews.length, 5);
+
+    // another address is unaffected
+    assert.equal((await guestComment({ guestName: "Lan", comment: "ok" }, { ip: "203.0.113.51" })).status, 201);
+
+    // a Verified reviewer on the exhausted address still reviews normally
+    deliver("alice", 11);
+    const signedIn = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 }, ip });
+    assert.equal(signedIn.status, 201);
+});
+
+test("a signed-in customer keeps one review per product even if the body carries a guestName", async () => {
+    deliver("alice", 11);
+    const first = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5, guestName: "Someone Else" } });
+    assert.equal(first.status, 201);
+    assert.equal(reviews[0].userId, "alice");
+    assert.equal(reviews[0].guestName ?? null, null);
+    const second = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { guestName: "Someone Else", comment: "again" } });
+    assert.equal(second.status, 409);
+    assert.equal(reviews.length, 1);
+    // a signed-in customer without a delivered order cannot sneak in a guest comment
+    const bobTry = await call("POST", "/api/products/1/reviews", { as: BOB, body: { guestName: "Bob", comment: "hi" } });
+    assert.equal(bobTry.status, 403);
+});
+
+test("admins can search guest comments by name and see them flagged as guests", async () => {
+    await guestComment({ guestName: "Hoàng Long", comment: "Ổn áp" });
+    seedReview(1, "alice", { rating: 5, comment: "Tốt" });
+    const found = await (await call("GET", "/api/admin/reviews?q=hoàng", { as: ADMIN })).json();
+    assert.equal(found.data.length, 1);
+    assert.equal(found.data[0].authorType, "guest");
+    assert.equal(found.data[0].guestName, "Hoàng Long");
+    assert.equal(found.data[0].username, null);
+    const all = await (await call("GET", "/api/admin/reviews", { as: ADMIN })).json();
+    assert.deepEqual(all.data.map((row) => row.authorType), ["user", "guest"]);
 });

@@ -2,6 +2,9 @@
 // Khối "Đánh giá của khách" ở trang chi tiết sản phẩm (danhgia-sanpham C):
 // điểm gọn + nút viết, danh sách mới nhất trước (5 mỗi trang), hộp thoại viết/sửa (kèm hỏi Username
 // lần đầu), xác nhận xoá ngay trên thẻ, ghi chú khi bị quản trị ẩn.
+// Khách chưa đăng nhập chỉ viết được bình luận (tên hiển thị + nội dung, không sao), gắn nhãn "Khách".
+// Tên và nội dung do người dùng nhập luôn được đặt bằng textContent, không qua innerHTML.
+// Cập nhật trực tiếp qua ReviewLive (review-live.js, tải trước file này).
 // Cần: catalog-renderer.js, ui-icons.js, auth.js (DigiAuth). showToast từ cart.js.
 
 (function () {
@@ -14,6 +17,9 @@
     const CLAMP_AT = 300;
     const STAR_LABELS = ["", "Rất tệ", "Tệ", "Bình thường", "Tốt", "Rất tốt"];
     const FALLBACK_NAME = "Khách hàng";
+    const GUEST_NAME_MIN = 2;
+    const GUEST_NAME_MAX = 60;
+    const STYLESHEET = "/css/reviews.css";
 
     const s = {
         productId: 0,
@@ -23,13 +29,17 @@
         mine: { status: "loading", kind: "guest", eligible: false, hasUsername: false, review: null },
         confirmDelete: false,
         busy: false,
-        expanded: new Set()
+        expanded: new Set(),
+        freshId: 0
     };
     let root = null;
     let dialog = null;
     let dialogState = null; // { mode: "create" | "edit", step: "username" | "form", rating, text, error, busy }
     let returnFocus = null;
     let listSeq = 0;
+    let live = null;
+    let resyncTimer = null;
+    let freshTimer = null;
 
     const session = () => (window.DigiAuth?.getSession?.() || { authenticated: false });
     const fmtDate = (iso) => new Date(iso).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -50,11 +60,13 @@
     };
 
     // ---------- tải dữ liệu ----------
-    const loadList = async (page = s.page) => {
+    const loadList = async (page = s.page, { silent = false } = {}) => {
         const seq = ++listSeq;
-        s.page = page;
-        s.list.status = "loading";
-        renderList();
+        if (!silent) {
+            s.page = page;
+            s.list.status = "loading";
+            renderList();
+        }
         try {
             const response = await fetch(`/api/products/${encodeURIComponent(s.productId)}/reviews?page=${page}&pageSize=${PAGE_SIZE}`, { credentials: "same-origin", headers: { Accept: "application/json" } });
             const body = await response.json();
@@ -64,6 +76,7 @@
             s.list = { status: "ready", data: body.data || [], meta: body.meta, summary: body.summary };
         } catch (_) {
             if (seq !== listSeq) return;
+            if (silent) return; // làm mới nền thất bại thì giữ nguyên danh sách đang hiện
             s.list.status = "error";
         }
         renderSummary();
@@ -135,7 +148,7 @@
         let html;
         if (m.status === "loading") html = '<div class="skeleton" style="width:160px;height:16px" aria-busy="true"></div>';
         else if (m.status === "error") html = `<p class="reviews__hint">${icon("circle-alert")}Không kiểm tra được quyền đánh giá.</p><button type="button" class="btn btn--secondary" data-rv-action="retry-mine">${icon("rotate-cw")}Thử lại</button>`;
-        else if (m.kind === "guest") html = `<p class="reviews__hint">Đăng nhập để đánh giá.</p><a href="${escapeHtml(window.DigiAuth?.loginUrl?.(`/product_info.html?id=${encodeURIComponent(s.productId)}#danh-gia`) || "/auth.html?tab=login")}" class="btn btn--secondary">Đăng nhập</a>`;
+        else if (m.kind === "guest") html = `<p class="reviews__hint">Bình luận không cần đăng nhập. Muốn chấm sao thì đăng nhập.</p><div class="reviews__cta-actions"><button type="button" class="btn btn--primary" data-rv-action="write-guest" aria-haspopup="dialog">${icon("pencil")}Viết bình luận</button><a href="${escapeHtml(window.DigiAuth?.loginUrl?.(`/product_info.html?id=${encodeURIComponent(s.productId)}#danh-gia`) || "/auth.html?tab=login")}" class="btn btn--secondary">Đăng nhập để chấm sao</a></div>`;
         else if (m.kind === "admin") html = `<p class="reviews__hint">Tài khoản Admin chỉ xem đánh giá.</p>`;
         else if (m.review) html = `<p class="reviews__hint">Bạn đã đánh giá sản phẩm này, xem ở đầu danh sách.</p>`;
         else if (!m.eligible) html = `<p class="reviews__hint">${icon("package-check")}<span>Đánh giá mở sau khi bạn nhận đơn có ${escapeHtml(s.productName)}.</span></p>`;
@@ -143,22 +156,39 @@
         box.innerHTML = html;
     };
 
-    const reviewHtml = (review, { own = false, below = "", actions = "" } = {}) => {
+    // Trả về phần tử DOM: tên, nội dung, ngày do người dùng nhập chỉ được gán bằng textContent / thuộc tính, không nối vào HTML.
+    // `below` và `actions` là HTML tin cậy do chính file này dựng.
+    const reviewEl = (review, { own = false, below = "", actions = "" } = {}) => {
         const name = own ? (session().user?.username || FALLBACK_NAME) : review.username;
+        const guest = !own && review.authorType === "guest";
         const text = review.comment || "";
+        const id = Number(review.id);
+        const rating = Number(review.rating) || 0;
         const long = text.length > CLAMP_AT || text.split("\n").length > 4;
         const open = s.expanded.has(review.id);
-        return `<article class="review" data-review-id="${escapeHtml(review.id)}" ${own ? 'tabindex="-1" data-rv-mine' : ""}>
-            <span class="review__avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>
+        const article = document.createElement("article");
+        article.className = `review${s.freshId === review.id ? " review--new" : ""}`;
+        article.dataset.reviewId = String(id);
+        if (own) { article.tabIndex = -1; article.setAttribute("data-rv-mine", ""); }
+        article.innerHTML = `<span class="review__avatar" aria-hidden="true" data-f="avatar"></span>
             <div class="review__main">
-                <div class="review__head"><span class="review__name" title="${escapeHtml(displayName(name))}">${escapeHtml(displayName(name))}</span>${own ? '<span class="review__mine">Của bạn</span>' : ""}<time class="review__date" datetime="${escapeHtml(review.createdAt)}">${fmtDate(review.createdAt)}</time></div>
-                ${review.rating ? `<div class="review__stars">${renderStars(review.rating)}<span class="sr-only">${review.rating} trên 5 sao</span></div>` : ""}
-                ${text ? `<p class="review__text${long && !open ? " review__text--clamp" : ""}">${escapeHtml(text)}</p>` : ""}
-                ${long ? `<button type="button" class="review__more" data-rv-action="toggle-more" data-id="${escapeHtml(review.id)}" aria-expanded="${open}">${open ? "Thu gọn" : "Xem thêm"}</button>` : ""}
+                <div class="review__head"><span class="review__name" data-f="name"></span>${guest ? '<span class="review__guest">Khách</span>' : ""}${own ? '<span class="review__mine">Của bạn</span>' : ""}<time class="review__date" data-f="date"></time></div>
+                ${rating ? `<div class="review__stars">${renderStars(rating)}<span class="sr-only">${rating} trên 5 sao</span></div>` : ""}
+                ${text ? `<p class="review__text${long && !open ? " review__text--clamp" : ""}" data-f="text"></p>` : ""}
+                ${long ? `<button type="button" class="review__more" data-rv-action="toggle-more" data-id="${id}" aria-expanded="${open}">${open ? "Thu gọn" : "Xem thêm"}</button>` : ""}
                 ${below}
                 ${actions ? `<div class="review__actions">${actions}</div>` : ""}
-            </div>
-        </article>`;
+            </div>`;
+        const field = (key) => article.querySelector(`[data-f="${key}"]`);
+        field("avatar").textContent = initials(name);
+        const nameNode = field("name");
+        nameNode.textContent = displayName(name);
+        nameNode.title = displayName(name);
+        const dateNode = field("date");
+        dateNode.dateTime = String(review.createdAt || "");
+        dateNode.textContent = fmtDate(review.createdAt);
+        if (text) field("text").textContent = text;
+        return article;
     };
 
     const renderOwn = () => {
@@ -173,7 +203,10 @@
         } else if (review.isHidden) {
             below = `<div class="review__note review__note--warn" role="note">${icon("eye-off")}<p>Quản trị viên đã ẩn đánh giá này. Người khác không thấy và đánh giá không tính vào điểm. Sửa lại nội dung rồi liên hệ cửa hàng nếu bạn cho rằng bị ẩn nhầm.</p></div>`;
         }
-        box.innerHTML = `<div class="review--own">${reviewHtml(review, { own: true, below, actions })}</div>`;
+        const wrapper = document.createElement("div");
+        wrapper.className = "review--own";
+        wrapper.appendChild(reviewEl(review, { own: true, below, actions }));
+        box.replaceChildren(wrapper);
     };
 
     const skeletonRow = () => '<div class="review review--skeleton"><div class="skeleton" style="width:36px;height:36px;flex-shrink:0"></div><div style="flex:1;display:flex;flex-direction:column;gap:10px"><div class="skeleton" style="width:25%"></div><div class="skeleton" style="width:96px"></div><div class="skeleton" style="width:100%"></div><div class="skeleton" style="width:66%"></div></div></div>';
@@ -188,8 +221,11 @@
         if (status === "error") { box.innerHTML = `<div class="reviews__error" role="alert"><div><p>Không tải được đánh giá</p><p>Mất kết nối mạng hoặc máy chủ chưa phản hồi.</p></div><button type="button" class="btn btn--secondary" data-rv-action="retry-list">${icon("rotate-cw")}Thử lại</button></div>`; return; }
         const ownId = s.mine.review?.id;
         const rows = data.filter((review) => review.id !== ownId);
-        if (!meta?.total && !s.mine.review) { box.innerHTML = `<div class="reviews__empty">${icon("message-square-text")}<p>Chưa có đánh giá nào</p><p>Khách đã nhận hàng sẽ đánh giá ở đây.</p></div>`; return; }
-        box.innerHTML = `<h3 class="sr-only">Đánh giá mới nhất</h3>${rows.map((review) => reviewHtml(review)).join("")}`;
+        if (!meta?.total && !s.mine.review) { box.innerHTML = `<div class="reviews__empty">${icon("message-square-text")}<p>Chưa có đánh giá nào</p><p>Khách đã nhận hàng đánh giá, ai cũng có thể bình luận.</p></div>`; return; }
+        const heading = document.createElement("h3");
+        heading.className = "sr-only";
+        heading.textContent = "Đánh giá mới nhất";
+        box.replaceChildren(heading, ...rows.map((review) => reviewEl(review)));
         if (meta && meta.totalPages > 1) {
             pager.innerHTML = R.renderPagination({ page: meta.page, totalPages: meta.totalPages, total: meta.total, pageSize: meta.pageSize, ariaLabel: "Phân trang đánh giá", noun: "đánh giá", hrefForPage: (n) => `#danh-gia-trang-${n}` });
         }
@@ -211,6 +247,22 @@
         </div>
         <div data-rv-alert>${alertHtml(d.alert)}</div>
         <div class="rv-form__actions">${d.mode === "edit" ? '<button type="button" class="btn btn--secondary" data-rv-action="close-dialog">Huỷ</button>' : ""}<button type="submit" class="btn btn--primary" ${d.busy ? "disabled" : ""}>${d.busy ? "Đang gửi…" : d.mode === "edit" ? "Lưu thay đổi" : "Gửi đánh giá"}</button></div>
+    </form>`;
+
+    const guestFormHtml = (d) => `<form class="rv-form" data-rv-guest novalidate>
+        <div class="rv-form__note">${icon("message-square-text")}<p>Bình luận hiện với nhãn “Khách”, không có sao và không sửa hay xoá được sau khi gửi.</p></div>
+        <div>
+            <label for="rv-guest-name" class="rv-form__label">Tên hiển thị</label>
+            <input id="rv-guest-name" class="rv-input" type="text" autocomplete="nickname" spellcheck="false" maxlength="${GUEST_NAME_MAX}" placeholder="Ví dụ: Minh Anh" aria-describedby="${d.nameError ? "rv-guest-name-e" : "rv-guest-name-h"}" ${d.nameError ? 'aria-invalid="true"' : ""}>
+            ${d.nameError ? `<p id="rv-guest-name-e" class="rv-form__error" role="alert" style="margin-top:8px">${icon("circle-alert")}<span>${escapeHtml(d.nameError)}</span></p>` : `<p id="rv-guest-name-h" class="rv-form__hint" style="margin-top:8px">${GUEST_NAME_MIN}–${GUEST_NAME_MAX} ký tự: chữ, số, khoảng trắng, dấu chấm, gạch ngang và gạch dưới.</p>`}
+        </div>
+        <div>
+            <label for="rv-text" class="rv-form__label">Bình luận</label>
+            <textarea id="rv-text" class="rv-textarea" maxlength="${MAX_COMMENT}" rows="4" placeholder="Bạn nghĩ gì về sản phẩm này?" aria-describedby="${d.fieldError ? "rv-text-e" : "rv-text-h"}" ${d.fieldError ? 'aria-invalid="true"' : ""}></textarea>
+            <div class="rv-form__row">${d.fieldError ? `<p id="rv-text-e" class="rv-form__error" role="alert">${icon("circle-alert")}<span>${escapeHtml(d.fieldError)}</span></p>` : '<p id="rv-text-h" class="rv-form__hint">Bắt buộc.</p>'}${counterHtml(d.text.length)}</div>
+        </div>
+        <div data-rv-alert>${alertHtml(d.alert)}</div>
+        <div class="rv-form__actions"><button type="submit" class="btn btn--primary" ${d.busy ? "disabled" : ""}>${d.busy ? "Đang gửi…" : "Gửi bình luận"}</button></div>
     </form>`;
 
     const usernameHtml = (d) => `<form class="rv-form" data-rv-username novalidate>
@@ -246,8 +298,13 @@
         const d = dialogState;
         if (!d) return;
         ensureDialog();
-        dialog.querySelector("#rv-dialog-title").textContent = d.mode === "edit" ? "Sửa đánh giá của bạn" : "Viết đánh giá";
-        dialog.querySelector("[data-rv-dialog-body]").innerHTML = d.step === "username" ? usernameHtml(d) : formHtml(d);
+        dialog.querySelector("#rv-dialog-title").textContent = d.mode === "guest" ? "Viết bình luận" : d.mode === "edit" ? "Sửa đánh giá của bạn" : "Viết đánh giá";
+        dialog.querySelector("[data-rv-dialog-body]").innerHTML = d.mode === "guest" ? guestFormHtml(d) : d.step === "username" ? usernameHtml(d) : formHtml(d);
+        if (d.mode === "guest") {
+            // Giá trị người dùng đã gõ được đặt lại bằng thuộc tính value, không đưa vào chuỗi HTML.
+            dialog.querySelector("#rv-guest-name").value = d.guestName;
+            dialog.querySelector("#rv-text").value = d.text;
+        }
         if (focusSelector) dialog.querySelector(focusSelector)?.focus();
     };
 
@@ -255,10 +312,10 @@
         const review = s.mine.review;
         returnFocus = document.activeElement;
         const needsUsername = mode === "create" && !s.mine.hasUsername;
-        dialogState = { mode, step: needsUsername ? "username" : "form", rating: mode === "edit" ? review?.rating || 0 : 0, text: mode === "edit" ? review?.comment || "" : "", username: "", fieldError: "", alert: "", busy: false };
+        dialogState = { mode, step: needsUsername ? "username" : "form", rating: mode === "edit" ? review?.rating || 0 : 0, text: mode === "edit" ? review?.comment || "" : "", username: "", guestName: "", nameError: "", fieldError: "", alert: "", busy: false };
         ensureDialog().hidden = false;
         document.documentElement.classList.add("is-locked");
-        renderDialog(needsUsername ? "#rv-user" : "#rv-text");
+        renderDialog(needsUsername ? "#rv-user" : mode === "guest" ? "#rv-guest-name" : "#rv-text");
     };
 
     const closeDialog = () => {
@@ -267,7 +324,7 @@
         dialogState = null;
         document.documentElement.classList.remove("is-locked");
         if (returnFocus && document.contains(returnFocus)) returnFocus.focus();
-        else root.querySelector("[data-rv-action='write'], [data-rv-action='edit']")?.focus();
+        else root.querySelector("[data-rv-action='write'], [data-rv-action='write-guest'], [data-rv-action='edit']")?.focus();
     };
 
     const focusables = () => [...dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href]")].filter((node) => node.offsetParent !== null && node.tabIndex >= 0);
@@ -308,6 +365,8 @@
             counter.classList.toggle("rv-form__counter--full", event.target.value.length >= MAX_COMMENT);
         } else if (event.target.id === "rv-user") {
             dialogState.username = event.target.value;
+        } else if (event.target.id === "rv-guest-name") {
+            dialogState.guestName = event.target.value;
         }
     };
 
@@ -365,11 +424,43 @@
         }
     };
 
+    const submitGuest = async () => {
+        const d = dialogState;
+        const guestName = d.guestName.replace(/\s+/g, " ").trim();
+        const comment = d.text.trim();
+        d.nameError = ""; d.fieldError = ""; d.alert = "";
+        if (guestName.length < GUEST_NAME_MIN || guestName.length > GUEST_NAME_MAX) { d.nameError = `Tên hiển thị dài từ ${GUEST_NAME_MIN} đến ${GUEST_NAME_MAX} ký tự.`; return renderDialog("#rv-guest-name"); }
+        if (!comment) { d.fieldError = "Hãy viết nội dung bình luận."; return renderDialog("#rv-text"); }
+        d.busy = true;
+        renderDialog();
+        try {
+            await window.DigiAuth.api(`/api/products/${encodeURIComponent(s.productId)}/reviews`, { method: "POST", body: { guestName, comment } });
+            closeDialog();
+            toast("Cảm ơn bạn đã bình luận", "success");
+            await loadList(1);
+            announce("Đã gửi bình luận.");
+        } catch (error) {
+            const e = apiError(error);
+            d.busy = false;
+            const fieldError = (field) => e.errors.find((item) => item.field === field)?.message || "";
+            if (e.status === 400 && (fieldError("guestName") || fieldError("comment"))) {
+                d.nameError = fieldError("guestName");
+                d.fieldError = fieldError("comment");
+                return renderDialog(d.nameError ? "#rv-guest-name" : "#rv-text");
+            }
+            if (e.status === 429) d.alert = "Bạn gửi bình luận quá nhanh. Hãy thử lại sau ít phút.";
+            else if (e.status === 401) d.alert = e.message || "Đăng nhập để chấm sao.";
+            else d.alert = e.status >= 400 && e.status < 500 && e.message ? e.message : "Không gửi được bình luận. Kiểm tra kết nối rồi thử lại, nội dung của bạn vẫn được giữ.";
+            renderDialog();
+        }
+    };
+
     const onSubmit = (event) => {
         if (!dialogState) return;
         event.preventDefault();
         if (dialogState.busy) return;
-        if (event.target.matches("[data-rv-username]")) submitUsername();
+        if (event.target.matches("[data-rv-guest]")) submitGuest();
+        else if (event.target.matches("[data-rv-username]")) submitUsername();
         else if (event.target.matches("[data-rv-form]")) submitReview();
     };
 
@@ -404,6 +495,7 @@
         if (target.dataset.rvStar && dialogState) { const value = Number(target.dataset.rvStar); setRating(dialogState.rating === value ? 0 : value, true); return; }
         switch (target.dataset.rvAction) {
             case "write": openDialog("create"); break;
+            case "write-guest": openDialog("guest"); break;
             case "edit": openDialog("edit"); break;
             case "close-dialog": closeDialog(); break;
             case "delete": s.confirmDelete = true; renderOwn(); root.querySelector("[data-rv-confirm]")?.focus(); break;
@@ -422,6 +514,64 @@
         }
     }
 
+    // ---------- cập nhật trực tiếp ----------
+    const scheduleResync = () => {
+        clearTimeout(resyncTimer);
+        resyncTimer = setTimeout(() => loadList(s.page, { silent: true }), 400);
+    };
+
+    const setLiveStatus = (state) => {
+        const node = root?.querySelector("[data-rv-live-state]");
+        if (!node) return;
+        node.hidden = false;
+        node.dataset.state = state;
+        node.textContent = state === "live" ? "Cập nhật trực tiếp" : "Tự làm mới mỗi 30 giây";
+    };
+
+    const validAggregate = (a) => a && typeof a === "object" && Number.isFinite(a.ratingCount) && Number.isFinite(a.commentCount)
+        && a.distribution && typeof a.distribution === "object" && (a.ratingAverage === null || Number.isFinite(a.ratingAverage));
+
+    // Áp một sự kiện từ máy chủ: điểm trung bình đổi ngay, trang 1 chèn/xoá tại chỗ, trang khác thì tải lại nền.
+    const applyLiveEvent = ({ type, review, aggregate }) => {
+        if (validAggregate(aggregate)) {
+            s.list.summary = aggregate;
+            renderSummary();
+            syncHeaderRating();
+        }
+        if (s.list.status !== "ready" || !s.list.meta) { scheduleResync(); return; }
+        if (review.id === s.mine.review?.id) return; // đánh giá của chính mình đã có khối riêng
+        const { data, meta } = s.list;
+        const index = data.findIndex((row) => row.id === review.id);
+        let needsResync = s.page > 1;
+        if (type === "review.deleted" || type === "review.hidden") {
+            if (index >= 0) { data.splice(index, 1); meta.total = Math.max(0, meta.total - 1); }
+            needsResync = true; // refill the page, or refresh the totals when an older review went away
+        } else if (index >= 0) {
+            data[index] = review;
+        } else {
+            meta.total += 1;
+            if (s.page === 1) {
+                data.unshift(review);
+                if (data.length > PAGE_SIZE) { data.pop(); needsResync = true; }
+                s.freshId = review.id;
+                clearTimeout(freshTimer);
+                freshTimer = setTimeout(() => { s.freshId = 0; }, 3000);
+                if (type === "review.created") announce("Có bình luận mới.");
+            }
+        }
+        meta.totalPages = Math.max(1, Math.ceil(meta.total / (meta.pageSize || PAGE_SIZE)));
+        renderList();
+        if (needsResync) scheduleResync();
+    };
+
+    const ensureStyles = () => {
+        if (document.querySelector(`link[href="${STYLESHEET}"]`)) return;
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = STYLESHEET;
+        document.head.appendChild(link);
+    };
+
     // Liên kết từ trang Đơn hàng của tôi (product_info.html?id=…#danh-gia): khách đủ điều kiện vào thẳng hộp thoại,
     // đã có đánh giá thì mở bản sửa. Khách chưa đăng nhập, quản trị, chưa đủ điều kiện chỉ dừng ở khối đánh giá.
     const openFromDeepLink = () => {
@@ -433,14 +583,26 @@
         returnFocus = null;
     };
 
+    const startLive = () => {
+        if (live || !window.ReviewLive) return;
+        live = window.ReviewLive.connect({
+            productId: s.productId,
+            onEvent: applyLiveEvent,
+            onResync: () => loadList(s.page, { silent: true }),
+            onStatus: setLiveStatus
+        });
+        window.addEventListener("pagehide", () => live?.close(), { once: true });
+    };
+
     const mount = ({ container, product }) => {
         s.productId = product.id;
         s.productName = product.name || "";
+        ensureStyles();
         root = document.createElement("section");
         root.className = "reviews";
         root.id = "danh-gia";
         root.setAttribute("aria-labelledby", "reviews-title");
-        root.innerHTML = `<h2 class="reviews__title" id="reviews-title">Đánh giá của khách</h2>
+        root.innerHTML = `<div class="reviews__head"><h2 class="reviews__title" id="reviews-title">Đánh giá của khách</h2><span class="reviews__live" data-rv-live-state hidden></span></div>
             <div data-rv-summary></div>
             <div class="reviews__cta" data-rv-cta></div>
             <div data-rv-own></div>
@@ -451,6 +613,7 @@
         root.addEventListener("click", onClick);
         renderSummary(); renderCta(); renderList();
         window.DigiAuth?.ready?.then(() => reloadAll(1)).catch(() => reloadAll(1)).then(() => {
+            startLive();
             if (location.hash !== "#danh-gia") return;
             root.scrollIntoView({ block: "start" });
             openFromDeepLink();

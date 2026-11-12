@@ -1,9 +1,11 @@
 // ===== REVIEW SERVICE =====
 // Business rules for Product reviews: Verified reviewer eligibility, Rating/comment
-// validation, one review per customer per Product, moderation and rating aggregates.
+// validation, one review per customer per Product, Guest comments, moderation, rating aggregates,
+// and the realtime broadcast of every change that is visible to the public.
 
 const reviewRepository = require("../repositories/review.repository");
 const auditRepository = require("../repositories/audit.repository");
+const reviewHub = require("../realtime/review-hub");
 
 const COMMENT_MAX_LENGTH = 1000;
 const PUBLIC_PAGE_SIZE_DEFAULT = 5;
@@ -12,6 +14,12 @@ const ADMIN_PAGE_SIZE_DEFAULT = 20;
 const ADMIN_PAGE_SIZE_MAX = 100;
 const FALLBACK_USERNAME = "Khach hang";
 const MAX_INT32 = 2147483647;
+const GUEST_NAME_MIN_LENGTH = 2;
+const GUEST_NAME_MAX_LENGTH = 60;
+// Latin letters (Vietnamese included), digits, space and . ' _ - only: no emoji, no look-alike scripts, no control or bidi characters.
+const GUEST_NAME_PATTERN = /^[\p{Script=Latin}\p{Nd} .'_-]+$/u;
+// A Guest comment must not pass for the shop's staff or brand. Compared after folding accents, case and punctuation.
+const RESERVED_NAME_PARTS = ["admin", "quantri", "nodeshop", "digishop"];
 
 class ReviewError extends Error {
     constructor(code, statusCode, message, errors = []) {
@@ -45,6 +53,13 @@ const parsePositive = (value, fallback, maximum) => {
     return parsed;
 };
 
+const foldName = (name) => name
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
 /** Average of Ratings rounded to one decimal; null when there are none. */
 const roundAverage = (sum, count) => count > 0 ? Math.round((sum / count) * 10) / 10 : null;
 
@@ -61,6 +76,46 @@ const attachRatings = async (products) => {
         product.ratingCount = entry ? entry.count : 0;
     }
     return products;
+};
+
+/** Rating average, count, star distribution and comment count of the visible reviews of one Product. */
+const buildSummary = async (productId) => {
+    const summary = await reviewRepository.getProductSummary(productId);
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let sum = 0;
+    let ratingCount = 0;
+    for (const { rating, count } of summary.counts) {
+        distribution[rating] += count;
+        sum += rating * count;
+        ratingCount += count;
+    }
+    return {
+        ratingAverage: roundAverage(sum, ratingCount),
+        ratingCount,
+        distribution,
+        commentCount: summary.commentCount
+    };
+};
+
+/** The one public shape of a review: the list API and the websocket events both use it. Never carries an email or user id. */
+const toPublicReview = (row) => ({
+    id: row.id,
+    authorType: row.authorType === "guest" ? "guest" : "user",
+    username: row.username || FALLBACK_USERNAME,
+    rating: row.rating ?? null,
+    comment: row.comment ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+});
+
+/** Broadcast after the database change is committed. A broadcast failure never fails the request. */
+const publishChange = async (productId, type, review) => {
+    if (!reviewHub.hasSubscribers(productId)) return;
+    try {
+        reviewHub.publish(productId, { type, review, aggregate: await buildSummary(productId) });
+    } catch (error) {
+        console.error(`Review broadcast failed: ${error?.message || "unknown error"}`);
+    }
 };
 
 const requireVisibleProduct = async (productIdParam) => {
@@ -104,11 +159,57 @@ const validateReviewInput = (body) => {
     return { rating, comment };
 };
 
+const guestValidationError = (errors) =>
+    new ReviewError("VALIDATION_FAILED", 400, "Dữ liệu bình luận không hợp lệ", errors);
+
+/** Trim, collapse whitespace; returns the clean name or a Vietnamese problem message. */
+const cleanGuestName = (value) => {
+    if (typeof value !== "string") return { problem: "Hãy nhập tên hiển thị" };
+    // Cheap guard before normalising, so a huge string never reaches NFKC and the regexes.
+    if (value.length > GUEST_NAME_MAX_LENGTH * 4) return { problem: `Tên hiển thị dài từ ${GUEST_NAME_MIN_LENGTH} đến ${GUEST_NAME_MAX_LENGTH} ký tự` };
+    const name = value.normalize("NFKC").replace(/\s+/g, " ").trim();
+    if (name.length < GUEST_NAME_MIN_LENGTH || name.length > GUEST_NAME_MAX_LENGTH) {
+        return { problem: `Tên hiển thị dài từ ${GUEST_NAME_MIN_LENGTH} đến ${GUEST_NAME_MAX_LENGTH} ký tự` };
+    }
+    if (!GUEST_NAME_PATTERN.test(name) || !/\p{L}/u.test(name)) {
+        return { problem: "Tên hiển thị chỉ gồm chữ cái, số, khoảng trắng và các ký tự . ' _ -" };
+    }
+    const folded = foldName(name);
+    if (RESERVED_NAME_PARTS.some((part) => folded.includes(part))) {
+        return { problem: "Tên hiển thị này không được dùng, hãy chọn tên khác" };
+    }
+    return { name };
+};
+
+const validateGuestInput = (input) => {
+    const errors = [];
+    const { name, problem } = cleanGuestName(input.guestName);
+    if (problem) errors.push({ field: "guestName", message: problem });
+
+    let comment = null;
+    if (typeof input.comment !== "string") {
+        errors.push({ field: "comment", message: "Hãy viết nội dung bình luận" });
+    } else {
+        const trimmed = input.comment.trim();
+        if (trimmed.length === 0) errors.push({ field: "comment", message: "Hãy viết nội dung bình luận" });
+        else if (trimmed.length > COMMENT_MAX_LENGTH) {
+            errors.push({ field: "comment", message: `Nhận xét tối đa ${COMMENT_MAX_LENGTH} ký tự` });
+        } else comment = trimmed;
+    }
+    if (errors.length) throw guestValidationError(errors);
+    return { guestName: name, comment };
+};
+
 const isCustomer = (user) => Boolean(user?.id) && user.role === "user";
 
 const assertCustomer = (user) => {
     if (!isCustomer(user)) throw new ReviewError("FORBIDDEN", 403, "Bạn không có quyền thực hiện thao tác này");
 };
+
+/** Own reviews hidden by an admin stay invisible, so their changes are not broadcast. */
+const publishOwnChange = (productId, type, user, review) => review.isHidden
+    ? undefined
+    : publishChange(productId, type, toPublicReview({ ...review, authorType: "user", username: user.username }));
 
 // ===== Customer API =====
 
@@ -125,28 +226,10 @@ const listProductReviews = async (productIdParam, query = {}) => {
         result = await reviewRepository.listVisible(productId, actualPage, pageSize);
     }
 
-    const summary = await reviewRepository.getProductSummary(productId);
-    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    let sum = 0;
-    let ratingCount = 0;
-    for (const { rating, count } of summary.counts) {
-        distribution[rating] += count;
-        sum += rating * count;
-        ratingCount += count;
-    }
-
     return {
-        data: result.rows.map(({ username, ...review }) => ({
-            ...review,
-            username: username || FALLBACK_USERNAME
-        })),
+        data: result.rows.map(toPublicReview),
         meta: { page: actualPage, pageSize, total: result.total, totalPages },
-        summary: {
-            ratingAverage: roundAverage(sum, ratingCount),
-            ratingCount,
-            distribution,
-            commentCount: summary.commentCount
-        }
+        summary: await buildSummary(productId)
     };
 };
 
@@ -160,7 +243,23 @@ const getMyReview = async (productIdParam, user) => {
     return { eligible, hasUsername: Boolean(user.username), review };
 };
 
+/**
+ * A Guest comment: no account, no Rating, a typed display name. A body carrying a rating needs a session.
+ * Only the comment text and the cleaned name are stored.
+ */
+const createGuestComment = async (productIdParam, body) => {
+    const input = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+    if (input.rating !== undefined && input.rating !== null) {
+        throw new ReviewError("AUTH_REQUIRED", 401, "Đăng nhập để chấm sao");
+    }
+    const productId = await requireVisibleProduct(productIdParam);
+    const review = await reviewRepository.createGuestComment(productId, validateGuestInput(input));
+    await publishChange(productId, "review.created", toPublicReview(review));
+    return review;
+};
+
 const createReview = async (productIdParam, user, body) => {
+    if (!user) return createGuestComment(productIdParam, body);
     assertCustomer(user);
     const productId = await requireVisibleProduct(productIdParam);
     const input = validateReviewInput(body);
@@ -175,6 +274,7 @@ const createReview = async (productIdParam, user, body) => {
     }
     const review = await reviewRepository.createReview(productId, user.id, input);
     if (!review) throw reviewExists();
+    await publishOwnChange(productId, "review.created", user, review);
     return review;
 };
 
@@ -184,13 +284,16 @@ const updateMyReview = async (productIdParam, user, body) => {
     const input = validateReviewInput(body);
     const review = await reviewRepository.updateOwnReview(productId, user.id, input);
     if (!review) throw reviewNotFound();
+    await publishOwnChange(productId, "review.updated", user, review);
     return review;
 };
 
 const deleteMyReview = async (productIdParam, user) => {
     assertCustomer(user);
     const productId = await requireVisibleProduct(productIdParam);
-    if (!await reviewRepository.deleteOwnReview(productId, user.id)) throw reviewNotFound();
+    const removed = await reviewRepository.deleteOwnReview(productId, user.id);
+    if (!removed) throw reviewNotFound();
+    await publishOwnChange(productId, "review.deleted", user, removed);
 };
 
 // ===== Admin API =====
@@ -219,6 +322,7 @@ const listAdminReviews = async (query = {}) => {
         where.OR = [
             { comment: { contains: q } },
             { user: { username: { contains: q } } },
+            { guestName: { contains: q } },
             { product: { name: { contains: q } } }
         ];
     }
@@ -251,6 +355,12 @@ const setReviewHidden = async (idParam, body, actor) => {
         entityId: id,
         changes: { isHidden: { old: before.isHidden, new: after.isHidden } }
     });
+    if (before.isHidden !== after.isHidden) {
+        await publishChange(after.productId, after.isHidden ? "review.hidden" : "review.updated", toPublicReview({
+            ...after,
+            username: after.authorType === "guest" ? after.guestName : after.username
+        }));
+    }
     return after;
 };
 
