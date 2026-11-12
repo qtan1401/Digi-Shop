@@ -158,3 +158,35 @@ _Avoid_: Anonymous review
 **Banned account**:
 A customer account with status BANNED. It cannot sign in and any existing session is revoked; an admin can unban it. Admin accounts cannot be banned.
 _Avoid_: Blocked, suspended
+
+### Landing page and catalog
+
+**Landing page**:
+The shop's front page at `/`: a short introduction, the New products, the Best sellers and one strip of four Products per device type. It lists nothing in full; each group links to the Catalog page.
+_Avoid_: Home catalog
+
+**Catalog page**:
+The page at `/catalog.html` (also `/danh-muc/<device type>` and `/the/<brand>`) that lists the whole Product catalog, 12 per page, filterable by device type, brand, price range and minimum rating, with the page number always shown.
+_Avoid_: Home page
+
+**New products**:
+The eight Products with the latest creation time that are not deleted and still have an active variant.
+
+**Best sellers**:
+The eight Products with the most units sold (sum of order line quantities) in Orders that are not CANCELLED. Units sold in the last 90 days rank first; units sold at any time fill the list when fewer than eight sold recently.
+_Avoid_: Top products, popular
+
+**Minimum rating**:
+A catalog filter (4 or 3 stars) that keeps Products whose average Rating, rounded to one decimal as the card shows it, is at least that number. A Product with no Rating never matches.
+
+**Live review update**:
+A message pushed over WebSocket to everyone viewing a Product when a Product review there is created, edited, deleted or hidden, carrying the public review and the Product's new rating figures. Only public data travels in it. Where the socket is down, the page falls back to reloading the reviews every 30 seconds.
+_Avoid_: Notification, push
+
+**Revenue**:
+The total price of the Orders in a period that are PAID or DELIVERED and not CANCELLED. A pending or unpaid Order is counted as an order placed but never as Revenue, and a CANCELLED Order is left out of every dashboard figure. The period is read in shop time (UTC+7) with weeks starting on Monday. Profit and units sold are counted on the same Orders as Revenue.
+_Avoid_: Sales, turnover, income
+
+**Main photo**:
+The photo kept on the Product itself, shown first (position 0). Product images follow it from position 1. Photos that belong to a Product variant (for example a colour) are shown alongside them, never instead of the Product images. Removing a Product image deletes its file only when an admin uploaded it; the sample catalog's photos stay on disk.
+_Avoid_: Cover, thumbnail

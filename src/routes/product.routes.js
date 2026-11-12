@@ -5,7 +5,7 @@
 const express = require("express");
 const productController = require("../controllers/product.controller");
 const reviewController = require("../controllers/review.controller");
-const { requireRole, requireCsrf } = require("../middlewares/auth");
+const { requireRole, requireCsrf, rateLimitAuth } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -16,10 +16,17 @@ router.get("/", productController.getAll);
 // Trang product_info.html đọc `id` từ query string rồi gọi endpoint này.
 router.get("/info/:id", productController.getProductID);
 
-// Product reviews. "/mine" is the caller's own review; only customers (role user) may write.
+// Writing a review: signed-in callers must be customers (role user) and keep the Verified reviewer rules.
+// Anonymous callers may only post a Guest comment (guestName, no rating); the service enforces that, and
+// only they are rate limited (guestReview), so a signed-in customer is never throttled by a shared IP.
+const guestReviewLimit = rateLimitAuth("guestReview");
+const limitGuests = (req, res, next) => (req.user ? next() : guestReviewLimit(req, res, next));
+const requireCustomerWhenSignedIn = (req, res, next) => (req.user ? requireRole("user")(req, res, next) : next());
+
+// Product reviews. "/mine" is the caller's own review; only customers (role user) may edit or delete it.
 router.get("/:id/reviews", reviewController.list);
 router.get("/:id/reviews/mine", requireRole("user", "admin"), reviewController.getMine);
-router.post("/:id/reviews", requireRole("user"), requireCsrf, reviewController.create);
+router.post("/:id/reviews", limitGuests, requireCustomerWhenSignedIn, requireCsrf, reviewController.create);
 router.put("/:id/reviews/mine", requireRole("user"), requireCsrf, reviewController.updateMine);
 router.delete("/:id/reviews/mine", requireRole("user"), requireCsrf, reviewController.removeMine);
 
