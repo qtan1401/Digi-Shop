@@ -1,0 +1,47 @@
+/* ===== TRANG CHỦ (landing) =====
+   Dùng lại token, font và thẻ sản phẩm của styles.css. Không bóng, một màu nhấn, khoảng cách theo thang 4/8/12/16/20/24/32/40. */
+
+.landing .shop-wrap { padding-bottom: 40px; }
+
+/* Đầu trang */
+.landing-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-surface); }
+.landing-hero__copy { min-width: 0; }
+.landing-hero h1 { max-width: 20ch; font: 700 28px/36px var(--font-display); letter-spacing: -0.025em; text-wrap: balance; color: var(--text-primary); }
+.landing-hero p { max-width: 56ch; margin-top: 12px; font-size: 16px; line-height: 24px; color: var(--text-secondary); }
+.landing-hero__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.landing-hero__actions .ui-btn { flex: 1 1 auto; }
+
+/* Lối vào từng loại: danh sách điều hướng thật, không phải trang trí */
+.landing-index { min-width: 0; padding-top: 20px; border-top: 1px solid var(--border); }
+.landing-index__title { margin-bottom: 8px; font: 500 14px/20px var(--font-body); color: var(--text-secondary); }
+.landing-index__list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; list-style: none; }
+.landing-index__list a { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 0 8px; border-radius: 8px; font: 600 16px/24px var(--font-display); color: var(--text-primary); transition: background-color 0.15s, color 0.15s; }
+.landing-index__list a:hover, .landing-index__list a:focus-visible { background: var(--item-hover); color: var(--accent); }
+.landing-index__list .icon { color: var(--text-muted); }
+.landing-index__list a:hover .icon, .landing-index__list a:focus-visible .icon { color: var(--accent); }
+
+/* Mỗi nhóm sản phẩm: tiêu đề + "Xem tất cả" + lưới thẻ */
+.landing-section { margin-top: 40px; }
+.landing-section[hidden] { display: none; }
+.landing-section__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.landing-section__head h2 { min-width: 0; font: 600 20px/28px var(--font-display); letter-spacing: -0.01em; color: var(--text-primary); }
+.landing-section__more { display: inline-flex; flex-shrink: 0; align-items: center; height: 32px; padding: 0 8px; margin-right: -8px; border-radius: 8px; font: 500 14px/20px var(--font-body); color: var(--text-secondary); transition: background-color 0.15s, color 0.15s; }
+.landing-section__more:hover, .landing-section__more:focus-visible { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.landing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.landing .catalog-error[hidden] { display: none; }
+.landing .catalog-error { margin-top: 40px; }
+
+@media (min-width: 640px) {
+    .landing-hero { gap: 32px; padding: 32px; }
+    .landing-hero h1 { font-size: 36px; line-height: 44px; }
+    .landing-hero__actions .ui-btn { flex: 0 0 auto; }
+    .landing-section__head h2 { font-size: 24px; line-height: 32px; }
+}
+@media (min-width: 900px) {
+    .landing-hero { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: center; gap: 40px; padding: 40px; }
+    .landing-index { padding-top: 0; padding-left: 40px; border-top: 0; border-left: 1px solid var(--border); }
+    .landing-index__list { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 1024px) {
+    .landing-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+}

@@ -4,6 +4,7 @@
 const crypto = require("crypto");
 const { getPrismaClient } = require("../db/prisma");
 const { Prisma } = require("@prisma/client");
+const productImageRepository = require("./product-image.repository");
 
 const toId = (id) => {
     const value = Number(id);
@@ -36,6 +37,7 @@ const SUMMARY_INCLUDE = {
 };
 
 const DETAIL_INCLUDE = {
+    images: { orderBy: { position: "asc" } },
     options: {
         where: { isActive: true },
         orderBy: { position: "asc" },
@@ -107,7 +109,10 @@ const mapProduct = (row, { includeConfiguration = false } = {}) => {
             name: option.name,
             values: (option.values || []).map((value) => ({ value: value.value, colorHex: value.colorHex || null }))
         }));
-        product.variants = variants.map(mapVariant);
+        // costPrice is admin data: only this configuration view carries it (mapVariant, used by cart and checkout, never does)
+        // and the product service strips it from public responses.
+        product.variants = variants.map((variant) => ({ ...mapVariant(variant), costPrice: toNumber(variant.costPrice ?? 0) }));
+        product.gallery = (row.images || []).map((image) => ({ id: image.id, url: image.url, position: image.position }));
     }
     return product;
 };
@@ -274,6 +279,7 @@ const saveConfiguration = async (transaction, productId, options, variants) => {
             sku: variantInput.sku,
             combinationKey: key,
             price: variantInput.price,
+            costPrice: variantInput.costPrice ?? 0,
             stock: variantInput.stock,
             image: variantInput.image || null,
             isActive: true
@@ -322,6 +328,7 @@ const createProduct = async (productData = {}) => {
 
         const row = await transaction.product.create({ data });
         await saveConfiguration(transaction, row.id, productData.options || [], productData.variants || []);
+        await productImageRepository.applyGalleryPlan(transaction, row.id, productData.galleryPlan);
         return await getProductByIdFrom(transaction, row.id);
     });
 };
@@ -340,6 +347,7 @@ const updateProduct = async (id, changes = {}) => {
         if (Object.prototype.hasOwnProperty.call(changes, "deletedAt")) data.deletedAt = toDate(changes.deletedAt);
         await transaction.product.update({ where: { id: productId }, data });
         await saveConfiguration(transaction, productId, changes.options || [], changes.variants || []);
+        await productImageRepository.applyGalleryPlan(transaction, productId, changes.galleryPlan);
         return await getProductByIdFrom(transaction, productId);
     });
 };
@@ -365,7 +373,7 @@ const restoreProduct = async (id) => restore(id);
 
 
 
-const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxPrice, sort, order }) => {
+const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxPrice, minRating = null, sort, order }) => {
     const client = getPrismaClient();
     const predicates = [Prisma.sql`p.is_deleted = 0`];
     if (q) predicates.push(Prisma.sql`(
@@ -376,6 +384,11 @@ const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxP
     if (tag.length) predicates.push(Prisma.sql`p.brand IN (${Prisma.join(tag)})`);
     if (minPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) >= ${minPrice}`);
     if (maxPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) <= ${maxPrice}`);
+    // Same figure the cards show: average of visible star ratings rounded to one decimal; unrated Products never match.
+    if (minRating !== null) predicates.push(Prisma.sql`(
+        SELECT ROUND(AVG(CAST(r.rating AS float)), 1) FROM product_reviews r
+        WHERE r.product_id = p.id AND r.is_hidden = 0 AND r.rating IS NOT NULL
+    ) >= ${minRating}`);
 
     const primaryOrder = sort === "name"
         ? Prisma.sql`p.name COLLATE Vietnamese_100_CI_AS ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`

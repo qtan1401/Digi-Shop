@@ -4,10 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="NodeShop — Cửa hàng công nghệ cao cấp tại Việt Nam">
-    <title>NodeShop — Công nghệ cao cấp</title>
+    <meta name="description" content="NodeShop bán laptop, màn hình, bàn phím, chuột, tai nghe và ổ cứng SSD chính hãng. Giá đã gồm VAT, mua không cần tài khoản.">
+    <title>NodeShop — Laptop, màn hình và phụ kiện máy tính</title>
     <link rel="stylesheet" href="/css/styles.css">
     <link rel="stylesheet" href="/css/auth.css">
+    <link rel="stylesheet" href="/css/landing.css">
 </head>
 
 <body class="home">
@@ -15,23 +16,18 @@
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
         <defs>
             <symbol id="i-shopping-cart" viewBox="0 0 24 24"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></symbol>
-            <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
-            <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
-            <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
-            <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
-            <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
             <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
             <symbol id="i-rotate-cw" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></symbol>
-            <symbol id="i-sliders-horizontal" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></symbol>
         </defs>
     </svg>
 
-    <!-- KHỐI 1: THANH ĐIỀU HƯỚNG -->
+    <!-- THANH ĐIỀU HƯỚNG -->
     <header class="site-header">
         <div class="site-header__inner">
             <a href="/" class="site-brand">NodeShop</a>
             <nav class="site-nav" aria-label="Chính">
                 <a href="/" aria-current="page">Trang chủ</a>
+                <a href="/catalog.html">Sản phẩm</a>
             </nav>
             <ul class="site-header__actions">
                 <li>
@@ -45,68 +41,55 @@
         </div>
     </header>
 
-    <main class="shop-main" id="products">
+    <main class="shop-main landing">
         <div class="shop-wrap">
-            <div class="shop-layout">
-                <!-- KHỐI 3: CỘT LỌC (từ 1024px); dưới đó là nút Lọc + panel trượt -->
-                <aside class="filter-col" aria-label="Bộ lọc">
-                    <div class="filter-col__head">
-                        <h2>Bộ lọc</h2>
-                        <button type="button" class="filter-clear" data-filter-clear>Xoá lọc</button>
-                    </div>
-                    <div class="filter-body" data-filter-host="col"></div>
-                </aside>
-
-                <div class="shop-content">
-                    <!-- KHỐI 2: ĐẦU TRANG -->
-                    <div class="shop-head">
-                        <h1>Thiết bị công nghệ</h1>
-                        <p class="shop-head__count" id="catalog-count" aria-live="polite"></p>
-                        <button type="button" class="ui-btn ui-btn--outline ui-btn--page shop-head__filter" data-filter-open aria-haspopup="dialog" aria-expanded="false" aria-controls="filter-panel">
-                            <svg class="icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>Lọc
-                        </button>
-                        <div class="shop-head__sort">
-                            <div class="sort" data-sort>
-                                <button type="button" class="sort__trigger" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="sort-list" data-sort-trigger>
-                                    <span class="sort__value"><span class="sort__prefix">Sắp xếp: </span><span data-sort-label>Mặc định</span></span>
-                                    <svg class="icon sort__chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
-                                </button>
-                                <ul class="sort__list" id="sort-list" role="listbox" aria-label="Sắp xếp" data-sort-list>
-                                    <li role="option" aria-selected="false"><button type="button" data-catalog-sort="name" data-sort-option><span>Tên A–Z</span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></button></li>
-                                    <li role="option" aria-selected="false"><button type="button" data-catalog-sort="price" data-sort-option><span>Giá thấp đến cao</span><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></button></li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- KHỐI 4 + 5: LƯỚI SẢN PHẨM VÀ PHÂN TRANG -->
-                    <span class="sr-only" role="status" id="catalog-status"></span>
-                    <div class="shop-products">
-                        <div class="product-grid" id="product-grid"></div>
-                        <div id="catalog-pagination" class="catalog-pagination"></div>
+            <!-- ĐẦU TRANG: lời chào ngắn và lối vào từng loại sản phẩm -->
+            <section class="landing-hero" aria-labelledby="landing-title">
+                <div class="landing-hero__copy">
+                    <h1 id="landing-title">Laptop, màn hình và phụ kiện cho bàn làm việc của bạn</h1>
+                    <p>Hàng chính hãng, giá đã gồm VAT. Mua ngay, không cần tạo tài khoản.</p>
+                    <div class="landing-hero__actions">
+                        <a href="/catalog.html" class="ui-btn ui-btn--primary ui-btn--tall">Xem tất cả sản phẩm</a>
+                        <a href="#ban-chay" class="ui-btn ui-btn--outline ui-btn--tall">Xem hàng bán chạy</a>
                     </div>
                 </div>
+                <nav class="landing-index" aria-label="Loại sản phẩm">
+                    <p class="landing-index__title">Chọn theo loại</p>
+                    <ul class="landing-index__list" id="landing-categories"></ul>
+                </nav>
+            </section>
+
+            <span class="sr-only" role="status" id="landing-status"></span>
+
+            <section class="landing-section" id="san-pham-moi" aria-labelledby="new-title" hidden>
+                <div class="landing-section__head">
+                    <h2 id="new-title">Sản phẩm mới</h2>
+                    <a href="/catalog.html" class="landing-section__more">Xem tất cả</a>
+                </div>
+                <div class="landing-grid" id="new-products"></div>
+            </section>
+
+            <section class="landing-section" id="ban-chay" aria-labelledby="best-title" hidden>
+                <div class="landing-section__head">
+                    <h2 id="best-title">Bán chạy</h2>
+                    <a href="/catalog.html" class="landing-section__more">Xem tất cả</a>
+                </div>
+                <div class="landing-grid" id="best-sellers"></div>
+            </section>
+
+            <div id="category-strips"></div>
+
+            <div id="landing-error" class="catalog-error" role="alert" hidden>
+                <div>
+                    <p class="catalog-error__title">Không tải được danh sách sản phẩm</p>
+                    <p class="catalog-error__reason" id="landing-error-reason"></p>
+                </div>
+                <button type="button" class="ui-btn ui-btn--outline" data-landing-retry><svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"/></svg>Thử lại</button>
             </div>
         </div>
     </main>
 
-    <!-- PANEL LỌC TRƯỢT PHẢI (dưới 1024px) -->
-    <div class="filter-panel" id="filter-panel" data-filter-panel>
-        <div class="filter-panel__backdrop" data-filter-close></div>
-        <aside class="filter-panel__sheet" role="dialog" aria-modal="true" aria-label="Bộ lọc">
-            <div class="filter-panel__head">
-                <h2>Bộ lọc</h2>
-                <button type="button" class="icon-btn" data-filter-close aria-label="Đóng bộ lọc"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
-            </div>
-            <div class="filter-panel__body"><div class="filter-body" data-filter-host="panel"></div></div>
-            <div class="filter-panel__foot">
-                <button type="button" class="filter-clear" data-filter-clear>Xoá lọc</button>
-                <button type="button" class="ui-btn ui-btn--primary ui-btn--tall" data-filter-close data-filter-apply>Xem 0 sản phẩm</button>
-            </div>
-        </aside>
-    </div>
-
-    <!-- KHỐI 6: CHÂN TRANG -->
+    <!-- CHÂN TRANG -->
     <footer class="site-footer">
         <div class="site-footer__inner"><p>© 2026 NodeShop</p></div>
     </footer>
@@ -115,7 +98,7 @@
     <script src="/js/catalog-renderer.js"></script>
     <script src="/js/auth.js"></script>
     <script src="/js/cart.js"></script>
-    <script src="/js/main.js"></script>
+    <script src="/js/landing.js"></script>
 </body>
 
 </html>

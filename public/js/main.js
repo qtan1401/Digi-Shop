@@ -1,9 +1,11 @@
 // ===== MAIN.JS =====
 // Product cards link to detail; customers must select a purchasable variant there.
-const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", categories: new Set(), tags: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
+const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", minRating: "", categories: new Set(), tags: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
 const normalizeCatalogText = (value) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("vi-VN").replace(/đ/g, "d");
 const { DEVICE_TYPES: categoryValues, BRANDS: tagValues, brandFromSlug } = window.CatalogTaxonomy;
 // Chip khoảng giá: [nhãn, minPrice, maxPrice]
+// Chip đánh giá: [nhãn, minRating]
+const ratingRanges = [["Mọi đánh giá", ""], ["Từ 4 sao", "4"], ["Từ 3 sao", "3"]];
 const priceRanges = [["Mọi mức giá", "", ""], ["Dưới 10 triệu", "", "10000000"], ["10–20 triệu", "10000000", "20000000"], ["20–30 triệu", "20000000", "30000000"], ["Trên 30 triệu", "30000000", ""]];
 const getPriceFilterError = () => {
     const min = catalogState.minPrice === "" ? null : Number(catalogState.minPrice), max = catalogState.maxPrice === "" ? null : Number(catalogState.maxPrice);
@@ -12,7 +14,7 @@ const getPriceFilterError = () => {
 };
 const renderer = () => window.CatalogRenderer;
 const el = (id) => document.getElementById(id);
-const hasActiveFilter = () => catalogState.search !== "" || catalogState.minPrice !== "" || catalogState.maxPrice !== "" || catalogState.categories.size > 0 || catalogState.tags.size > 0;
+const hasActiveFilter = () => catalogState.search !== "" || catalogState.minPrice !== "" || catalogState.maxPrice !== "" || catalogState.minRating !== "" || catalogState.categories.size > 0 || catalogState.tags.size > 0;
 
 // ----- Bộ lọc: một mẫu, vẽ hai bản (cột từ 1024px, panel trượt dưới 1024px) -----
 const filterBodyHtml = (kind) => {
@@ -20,10 +22,12 @@ const filterBodyHtml = (kind) => {
     const radio = (label, value) => `<label class="filter-option"><input type="radio" name="loai-${kind}" value="${value}" data-filter-category>${label}</label>`;
     const brand = (value) => `<label class="filter-option"><span class="filter-check"><input type="checkbox" name="hang-${kind}" value="${value}" data-filter-brand>${icon("check")}</span>${value}</label>`;
     const chips = priceRanges.map(([label], index) => `<button type="button" role="radio" aria-checked="false" data-price-chip="${index}" class="chip ${kind === "col" ? "chip--sm" : "chip--md"}${kind === "col" && index === 0 ? " chip--wide" : ""}">${label}</button>`).join("");
+    const ratingChips = ratingRanges.map(([label], index) => `<button type="button" role="radio" aria-checked="false" data-rating-chip="${index}" class="chip ${kind === "col" ? "chip--sm" : "chip--md"}${kind === "col" && index === 0 ? " chip--wide" : ""}">${label}</button>`).join("");
     const priceField = (label, key) => `<label class="price-field">${label}${kind === "col" ? " (đ)" : ""}<span class="price-field__box"><input type="text" inputmode="numeric" autocomplete="off" class="ui-input tabular${kind === "col" ? " ui-input--compact" : ""}" data-filter-price="${key}">${kind === "col" ? "" : '<span class="price-field__unit">đ</span>'}</span></label>`;
     return `<div class="filter-search"><div class="search"><svg class="icon search__icon" aria-hidden="true"><use href="#i-search"/></svg><input type="search" maxlength="120" autocomplete="off" aria-label="Tìm theo tên" placeholder="Tìm theo tên" class="ui-input search__input" data-filter-search><button type="button" class="search__clear" aria-label="Xoá từ khoá" data-filter-search-clear hidden>${icon("x")}</button></div><p class="filter-hint" data-filter-search-hint aria-live="polite"></p></div>`
         + `<fieldset><legend>Loại</legend>${radio("Tất cả", "")}${categoryValues.map((value) => radio(deviceTypeLabels[value], value)).join("")}</fieldset>`
         + `<fieldset><legend>Hãng</legend>${tagValues.map(brand).join("")}</fieldset>`
+        + `<fieldset><legend class="legend--chips">Đánh giá</legend><div role="radiogroup" aria-label="Đánh giá tối thiểu" class="chips chips--${kind}">${ratingChips}</div></fieldset>`
         + `<fieldset><legend class="legend--chips">Khoảng giá</legend><div role="radiogroup" aria-label="Khoảng giá có sẵn" class="chips chips--${kind}">${chips}</div><div class="price-fields">${priceField("Từ", "min")}${priceField("Đến", "max")}</div><p class="filter-error" role="alert" data-filter-price-error></p></fieldset>`;
 };
 const renderFilterControls = () => document.querySelectorAll("[data-filter-host]").forEach((host) => { host.innerHTML = filterBodyHtml(host.dataset.filterHost); });
@@ -39,6 +43,7 @@ const syncCatalogControls = () => {
     });
     document.querySelectorAll("[data-filter-price-error]").forEach((node) => { node.textContent = priceError; });
     document.querySelectorAll("[data-price-chip]").forEach((chip) => { const [, min, max] = priceRanges[Number(chip.dataset.priceChip)]; chip.setAttribute("aria-checked", String(catalogState.minPrice === min && catalogState.maxPrice === max)); });
+    document.querySelectorAll("[data-rating-chip]").forEach((chip) => chip.setAttribute("aria-checked", String(catalogState.minRating === ratingRanges[Number(chip.dataset.ratingChip)][1])));
     document.querySelectorAll("[data-filter-category]").forEach((input) => { input.checked = input.value === "" ? catalogState.categories.size === 0 : catalogState.categories.size === 1 && catalogState.categories.has(input.value); });
     document.querySelectorAll("[data-filter-brand]").forEach((input) => { input.checked = catalogState.tags.has(input.value); });
     document.querySelectorAll("[data-filter-clear]").forEach((button) => { button.disabled = !hasActiveFilter(); });
@@ -66,21 +71,23 @@ const parseLocationState = () => {
     catalogState.page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
     catalogState.search = url.searchParams.get("q") || "";
     catalogState.minPrice = url.searchParams.get("minPrice") || ""; catalogState.maxPrice = url.searchParams.get("maxPrice") || "";
+    catalogState.minRating = ratingRanges.some(([, value]) => value && value === url.searchParams.get("minRating")) ? url.searchParams.get("minRating") : "";
     const sort = url.searchParams.get("sort"); catalogState.sortBy = ["name", "price"].includes(sort) ? sort : "default";
     catalogState.sortDirection = url.searchParams.get("order") === "desc" ? "desc" : "asc";
     syncCatalogControls();
 };
 const buildCatalogUrl = (page = catalogState.page) => {
     const url = new URL(window.location.href), params = url.searchParams;
-    ["page", "q", "sort", "order", "minPrice", "maxPrice", "category", "tag"].forEach((key) => params.delete(key));
+    ["page", "q", "sort", "order", "minPrice", "maxPrice", "minRating", "category", "tag"].forEach((key) => params.delete(key));
     const categories = [...catalogState.categories], tags = [...catalogState.tags];
     const categoryPath = categories.length === 1 && tags.length <= 1, tagPath = categories.length === 0 && tags.length === 1;
-    url.pathname = categoryPath ? `/danh-muc/${categories[0]}` : tagPath ? `/the/${tags[0].toLowerCase()}` : "/";
+    url.pathname = categoryPath ? `/danh-muc/${categories[0]}` : tagPath ? `/the/${tags[0].toLowerCase()}` : "/catalog.html";
     if (page > 1) params.set("page", String(page));
     if (catalogState.search.trim().length >= 3) params.set("q", catalogState.search.trim());
     if (catalogState.sortBy !== "default") { params.set("sort", catalogState.sortBy); params.set("order", catalogState.sortDirection); }
     if (catalogState.minPrice !== "") params.set("minPrice", catalogState.minPrice);
     if (catalogState.maxPrice !== "") params.set("maxPrice", catalogState.maxPrice);
+    if (catalogState.minRating !== "") params.set("minRating", catalogState.minRating);
     if (!categoryPath) categories.forEach((value) => params.append("category", value));
     if (!tagPath) tags.forEach((value) => params.append("tag", value));
     return url.pathname + url.search;
@@ -129,6 +136,7 @@ const loadProducts = async () => {
     if (catalogState.search.trim()) params.set("q", catalogState.search.trim());
     catalogState.categories.forEach((value) => params.append("category", value)); catalogState.tags.forEach((value) => params.append("tag", value));
     if (catalogState.minPrice !== "") params.set("minPrice", catalogState.minPrice); if (catalogState.maxPrice !== "") params.set("maxPrice", catalogState.maxPrice);
+    if (catalogState.minRating !== "") params.set("minRating", catalogState.minRating);
     if (catalogState.sortBy !== "default") params.set("sort", catalogState.sortBy);
     params.set("order", catalogState.sortDirection);
     renderLoading();
@@ -140,7 +148,7 @@ const loadProducts = async () => {
     } catch (error) { if (error.name === "AbortError" || sequence !== requestSequence) return; renderError(error instanceof TypeError); }
 };
 const changeCatalog = (delay = 0) => { catalogState.page = 1; if (catalogState.controller) catalogState.controller.abort(); syncUrl(); window.clearTimeout(catalogState.searchTimer); catalogState.searchTimer = window.setTimeout(loadProducts, delay); };
-const clearAllFilters = () => { catalogState.search = ""; catalogState.minPrice = ""; catalogState.maxPrice = ""; catalogState.categories = new Set(); catalogState.tags = new Set(); syncCatalogControls(); changeCatalog(); };
+const clearAllFilters = () => { catalogState.search = ""; catalogState.minPrice = ""; catalogState.maxPrice = ""; catalogState.minRating = ""; catalogState.categories = new Set(); catalogState.tags = new Set(); syncCatalogControls(); changeCatalog(); };
 
 // ----- Lớp nổi: dropdown sắp xếp, panel lọc -----
 const setupSortMenu = () => {
@@ -202,6 +210,8 @@ const bindCatalogControls = () => {
     document.addEventListener("click", (event) => {
         const chip = event.target.closest("[data-price-chip]");
         if (chip) { const [, min, max] = priceRanges[Number(chip.dataset.priceChip)]; catalogState.minPrice = min; catalogState.maxPrice = max; syncCatalogControls(); changeCatalog(); return; }
+        const ratingChip = event.target.closest("[data-rating-chip]");
+        if (ratingChip) { catalogState.minRating = ratingRanges[Number(ratingChip.dataset.ratingChip)][1]; syncCatalogControls(); changeCatalog(); return; }
         const clearSearch = event.target.closest("[data-filter-search-clear], [data-catalog-clear-search]");
         if (clearSearch) { catalogState.search = ""; syncCatalogControls(); changeCatalog(); document.querySelector("[data-filter-search]")?.focus({ preventScroll: true }); return; }
         if (event.target.closest("[data-filter-clear]")) { clearAllFilters(); return; }

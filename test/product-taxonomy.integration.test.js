@@ -2,7 +2,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const assert = require("node:assert/strict");
-const { BRANDS, DEVICE_TYPES } = require("../public/js/catalog-taxonomy");
+const { BRANDS, DEVICE_TYPES, DEVICE_TYPE_LABELS } = require("../public/js/catalog-taxonomy");
 const jwt = require("jsonwebtoken");
 const PNG = require("pngjs").PNG;
 const { after, before, beforeEach, test } = require("node:test");
@@ -569,11 +569,19 @@ test("audit panel requests and returns only the first eight logs", async () => {
         changesJson: "null",
         timestamp: new Date(Date.UTC(2026, 0, index + 1))
     }));
-    const response = await fetch(`${baseUrl}/api/admin/audit-logs`, { headers: adminHeaders });
-    assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.equal(payload.data.length, 8);
-    assert.equal(payload.total, 10);
+    // The audit log view is an admin extra: hidden (404) unless ADMIN_EXTRAS is on.
+    const hidden = await fetch(`${baseUrl}/api/admin/audit-logs`, { headers: adminHeaders });
+    assert.equal(hidden.status, 404);
+    process.env.ADMIN_EXTRAS = "1";
+    try {
+        const response = await fetch(`${baseUrl}/api/admin/audit-logs`, { headers: adminHeaders });
+        assert.equal(response.status, 200);
+        const payload = await response.json();
+        assert.equal(payload.data.length, 8);
+        assert.equal(payload.total, 10);
+    } finally {
+        delete process.env.ADMIN_EXTRAS;
+    }
 });
 test("category and brand pages render server-side with canonical pagination and sitemap entries", async () => {
     for (let index = 1; index <= 13; index++) {
@@ -630,8 +638,7 @@ test("category and brand pages render server-side with canonical pagination and 
 });
 
 test("every supported device type and brand has a server-rendered page and anything else is not found", async () => {
-    const labels = { laptop: "Laptop", keyboard: "Bàn phím", mouse: "Chuột", headphone: "Tai nghe", monitor: "Màn hình", storage: "Ổ cứng SSD" };
-    for (const [slug, label] of Object.entries(labels)) {
+    for (const [slug, label] of Object.entries(DEVICE_TYPE_LABELS)) {
         const response = await fetch(`${baseUrl}/danh-muc/${slug}`);
         assert.equal(response.status, 200, slug);
         assert.match(await response.text(), new RegExp(`<h1>${label}</h1>`), slug);

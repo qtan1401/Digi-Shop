@@ -9,7 +9,7 @@ const tags = Object.fromEntries(BRANDS.map((brand) => [brandSlug(brand), brand])
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const jsonForHtml = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 const origin = () => readAuthConfig().appOrigins[0];
-const basePath = path.join(__dirname, "../../public/index.html");
+const basePath = path.join(__dirname, "../../public/catalog.html");
 const queryValues = (value) => value === undefined ? [] : Array.isArray(value) ? value : [value];
 const buildPage = async (req, res, facetType, slug) => {
     const values = facetType === "category" ? categories : tags;
@@ -21,7 +21,7 @@ const buildPage = async (req, res, facetType, slug) => {
     const tagFilters = new Set(facetType === "tag" ? [label] : []);
     queryValues(req.query.category).forEach((value) => categoryFilters.add(value));
     queryValues(req.query.tag).forEach((value) => tagFilters.add(value));
-    const filterKeys = ["q", "sort", "order", "minPrice", "maxPrice"];
+    const filterKeys = ["q", "sort", "order", "minPrice", "maxPrice", "minRating"];
     if (["page", ...filterKeys].some((key) => Array.isArray(req.query[key]))) {
         return res.status(400).send("Invalid catalog query");
     }
@@ -94,7 +94,7 @@ exports.tag = (req, res) => buildPage(req, res, "tag", req.params.tag);
 exports.robots = (_req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${origin()}/sitemap.xml\n`);
 exports.sitemap = async (_req, res) => {
     const base = origin();
-    const urls = [`${base}/`];
+    const urls = [`${base}/`, `${base}/catalog.html`];
     for (const slug of Object.keys(categories)) {
         const result = await productService.getCatalogPage({ category: [slug], page: 1, pageSize: 12 });
         for (let page = 1; page <= result.meta.totalPages; page++) urls.push(`${base}/danh-muc/${slug}${page > 1 ? `?page=${page}` : ""}`);
