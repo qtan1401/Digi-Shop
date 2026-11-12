@@ -1,5 +1,6 @@
 const { buildSeedFixtures } = require("./seed-fixtures");
 const { BRANDS, DEVICE_TYPES } = require("../public/js/catalog-taxonomy");
+const GALLERY = require("./seed-gallery");
 
 const CREATED_AT = "2026-10-22T00:00:00.000Z";
 // Deterministic stock levels; the small values exercise the "Chỉ còn N" badge on the storefront.
@@ -45,6 +46,8 @@ const buildProduct = ({ id, brand, deviceType, name, slug, intro, specs, skuBase
         id, brand, deviceType, name, slug,
         image: imagePath(primary ? primary.values[0].file : image),
         description, options, variants,
+        // Extra photos beyond the main one (position 0), numbered from 1 (see prisma/seed-gallery.js); with the main photo every product shows at least three.
+        images: (GALLERY[id] || []).map((file, index) => ({ url: imagePath(file), position: index + 1 })),
         isDeleted: false, deletedAt: null, createdAt: CREATED_AT, updatedAt: CREATED_AT
     };
 };

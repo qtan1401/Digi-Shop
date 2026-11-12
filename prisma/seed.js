@@ -79,6 +79,7 @@ const CLEAR_TABLES = [
     ["refresh_sessions", "RefreshSession"],
     ["email_verification_tokens", "EmailVerificationToken"],
     ["user_addresses", "UserAddress"],
+    ["product_images", "ProductImage"],
     ["product_variant_option_values", "ProductVariantOptionValue"],
     ["product_variants", "ProductVariant"],
     ["product_option_values", "ProductOptionValue"],
@@ -680,7 +681,39 @@ async function insertProducts(transaction, records) {
                 `);
             }
         }
+        await insertProductImages(transaction, record.id, record.images);
     }
+}
+
+async function insertProductImages(transaction, productId, images) {
+    for (const image of images) {
+        const request = transaction.request();
+        request.input("productId", sql.Int, productId);
+        request.input("url", sql.NVarChar(500), image.url);
+        request.input("position", sql.Int, image.position);
+        await request.query(`
+            INSERT INTO [dbo].[product_images] ([product_id], [url], [position])
+            VALUES (@productId, @url, @position);
+        `);
+    }
+}
+
+/**
+ * Products seeded before the photo gallery existed keep their rows; the missing gallery is filled in once,
+ * only while the product has no product_images at all, so admin edits are never overwritten.
+ */
+async function backfillProductImages(transaction, products) {
+    let filled = 0;
+    for (const product of products) {
+        if (product.images.length === 0) continue;
+        const count = transaction.request();
+        count.input("productId", sql.Int, product.id);
+        const existing = await count.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[product_images] WHERE [product_id] = @productId;`);
+        if (Number(existing.recordset[0].count) > 0) continue;
+        await insertProductImages(transaction, product.id, product.images);
+        filled += product.images.length;
+    }
+    return filled;
 }
 
 async function insertOrders(transaction, records) {
@@ -1025,10 +1058,14 @@ async function seedDatabase() {
         await insertAudits(transaction, auditInserts);
         const insertedUserIds = new Set(userInserts.map(({ id }) => id));
         const insertedOrderIds = new Set(orderInserts.map(({ id }) => id));
+        const insertedProductIds = new Set(productInserts.map(({ id }) => id));
         summary.backfilled = await backfillSeedExtras(
             transaction,
             normalized.users.filter(({ id }) => !insertedUserIds.has(id)),
             normalized.orders.filter(({ id }) => !insertedOrderIds.has(id))
+        ) + await backfillProductImages(
+            transaction,
+            normalized.products.filter(({ id }) => !insertedProductIds.has(id))
         );
 
         summary.inserted.products = productInserts.length;
@@ -1253,6 +1290,7 @@ module.exports = {
     CLEAR_TABLES,
     SeedConflictError,
     backfillSeedExtras,
+    backfillProductImages,
     classifyOrders,
     classifyReviews,
     classifyUsers,

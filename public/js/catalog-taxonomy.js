@@ -11,7 +11,7 @@
         laptop: "Laptop",
         keyboard: "Bàn phím",
         mouse: "Chuột",
-        headphone: "Tai nghe",
+        headphone: "Tai nghe máy tính",
         monitor: "Màn hình",
         storage: "Ổ cứng SSD"
     });

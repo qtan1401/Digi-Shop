@@ -10,6 +10,8 @@ const INVALID_IMAGE_MESSAGE = "Ảnh bị hỏng hoặc không đúng định d�
 const IMAGE_DIMENSION_ERROR = "Ảnh vượt giới hạn độ phân giải (tối đa 8.192 px mỗi cạnh và 25 MP).";
 const WEBP_SIGNATURE = Buffer.from("RIFF");
 const WEBP_FORMAT_SIGNATURE = Buffer.from("WEBP");
+const MAX_GALLERY_UPLOADS = 10;
+const GALLERY_FIELD = "gallery";
 const ANIMATED_WEBP_MESSAGE = "Ảnh WebP động không được hỗ trợ.";
 
 const hasCompletePngChunks = (buffer) => {
@@ -105,11 +107,11 @@ const decodeColorImageField = (fieldname) => {
 
 const parser = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: MAX_IMAGE_BYTES, files: 21, fields: 16, parts: 40 },
+    limits: { fileSize: MAX_IMAGE_BYTES, files: 32, fields: 20, parts: 60 },
     fileFilter: (_req, file, callback) => {
         const hasSupportedName = typeof file.originalname === "string" && /\.(png|webp)$/i.test(file.originalname);
         const hasSupportedMimeType = ["image/png", "image/webp"].includes(file.mimetype);
-        const isKnownField = file.fieldname === "image" || decodeColorImageField(file.fieldname) !== null;
+        const isKnownField = file.fieldname === "image" || file.fieldname === GALLERY_FIELD || decodeColorImageField(file.fieldname) !== null;
         if (!isKnownField || !hasSupportedName || !hasSupportedMimeType) {
             const error = new Error("Ảnh sản phẩm phải là PNG hoặc WebP hợp lệ");
             error.code = "INVALID_PRODUCT_IMAGE";
@@ -129,14 +131,23 @@ const uploadProductImages = (req, res, next) => {
             return imageError(res, "Dữ liệu tải ảnh không hợp lệ");
         }
         const files = req.files || [];
+        if (files.filter((file) => file.fieldname === GALLERY_FIELD).length > MAX_GALLERY_UPLOADS) {
+            return imageError(res, `Chỉ được tải tối đa ${MAX_GALLERY_UPLOADS} ảnh thư viện mỗi lần.`, GALLERY_FIELD);
+        }
+        req.galleryFiles = [];
         req.file = files.find((file) => file.fieldname === "image") || null;
         req.colorImageFiles = [];
         for (const file of files) {
-            const colorValue = file.fieldname === "image" ? null : decodeColorImageField(file.fieldname);
-            if (colorValue === null && file.fieldname !== "image") continue;
+            const isGallery = file.fieldname === GALLERY_FIELD;
+            const colorValue = file.fieldname === "image" || isGallery ? null : decodeColorImageField(file.fieldname);
+            if (colorValue === null && file.fieldname !== "image" && !isGallery) continue;
             const { error: contentError, format } = await validateImageContent(file.buffer);
-            if (contentError) return imageError(res, contentError, file.fieldname === "image" ? "image" : "colorImages");
+            if (contentError) return imageError(res, contentError, file.fieldname === "image" ? "image" : isGallery ? GALLERY_FIELD : "colorImages");
             file.productImageFormat = format;
+            if (isGallery) {
+                req.galleryFiles.push(file);
+                continue;
+            }
             if (file.fieldname === "image") continue;
             req.colorImageFiles.push({ value: colorValue, file });
         }
@@ -144,4 +155,4 @@ const uploadProductImages = (req, res, next) => {
     });
 };
 
-module.exports = { uploadProductImages, encodeColorImageField, MAX_IMAGE_BYTES };
+module.exports = { uploadProductImages, encodeColorImageField, MAX_IMAGE_BYTES, MAX_GALLERY_UPLOADS };

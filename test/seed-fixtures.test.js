@@ -1,10 +1,12 @@
 const assert = require("node:assert/strict");
+const { existsSync } = require("node:fs");
+const path = require("node:path");
 const { test } = require("node:test");
 const seedData = require("../prisma/seed-data");
 const { COMMENT_POOL_SIZE, buildSeedFixtures } = require("../prisma/seed-fixtures");
 const { normalizeSeedData, SeedDataError } = require("../scripts/db/normalize-seed");
 const {
-    backfillSeedExtras, classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary, resolveSeedOrderItems
+    backfillProductImages, backfillSeedExtras, classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary, resolveSeedOrderItems
 } = require("../prisma/seed");
 
 const { products, users, vouchers, orders, reviews } = seedData.commerce;
@@ -402,4 +404,59 @@ test("every normalized seed variant and order line has a cost below the selling 
             assert.ok(cost > 0 && cost < Number(variant.price), `${variant.sku} costPrice must be between 0 and price`);
         }
     }
+});
+
+test("every sample product shows at least three different photos: the main one plus a numbered gallery whose files exist", () => {
+    const normalized = normalizeSeedData({ products, users, vouchers, orders, reviews, audits: seedData.commerce.audits });
+    assert.equal(normalized.products.length, 24);
+    for (const product of normalized.products) {
+        const urls = [product.image, ...product.images.map((image) => image.url)];
+        assert.ok(product.images.length >= 2, `${product.name} needs at least two gallery photos`);
+        assert.equal(new Set(urls).size, urls.length, `${product.name} repeats a photo`);
+        assert.deepEqual(product.images.map((image) => image.position), product.images.map((_, index) => index + 1), `${product.name} gallery positions`);
+        for (const url of urls) {
+            assert.match(url, /^\/uploads\/products\/[\w.-]+\.(?:png|jpg)$/, url);
+            assert.ok(existsSync(path.join(__dirname, "..", "data", "product-images", path.basename(url))), url);
+        }
+    }
+    const everyFile = normalized.products.flatMap((product) => product.images.map((image) => image.url));
+    assert.equal(new Set(everyFile).size, everyFile.length, "a gallery photo is shared by two products");
+});
+
+test("seed normalization rejects a gallery that repeats a photo or a position", () => {
+    const [product] = products;
+    const normalize = (images) => normalizeSeedData({ products: [{ ...product, images }], users: [], vouchers: [], orders: [], reviews: [], audits: [] });
+    assert.throws(() => normalize([{ url: "/uploads/products/a.png", position: 1 }, { url: "/uploads/products/a.png", position: 2 }]), SeedDataError);
+    assert.throws(() => normalize([{ url: "/uploads/products/a.png", position: 1 }, { url: "/uploads/products/b.png", position: 1 }]), SeedDataError);
+    assert.deepEqual(normalize([{ url: "/uploads/products/b.png", position: 2 }, { url: "/uploads/products/a.png", position: 1 }]).products[0].images.map((image) => image.position), [1, 2]);
+});
+
+test("gallery backfill fills a product that has no gallery rows and leaves an edited one alone", async () => {
+    const [product] = normalizeSeedData({ products: products.slice(0, 1), users: [], vouchers: [], orders: [], reviews: [], audits: [] }).products;
+    const run = async (existingCount) => {
+        const writes = [];
+        const double = {
+            request() {
+                const values = {};
+                return {
+                    input(name, _type, value) { values[name] = value; },
+                    async query(text) {
+                        const statement = text.replace(/\s+/g, " ").trim();
+                        if (/COUNT_BIG/.test(statement)) return { recordset: [{ count: existingCount }] };
+                        writes.push({ statement, values });
+                        return { recordset: [], rowsAffected: [1] };
+                    }
+                };
+            }
+        };
+        const filled = await backfillProductImages(double, [product]);
+        return { filled, writes };
+    };
+    const empty = await run(0);
+    assert.equal(empty.filled, product.images.length);
+    assert.deepEqual(empty.writes.map((write) => write.values.url), product.images.map((image) => image.url));
+    assert.ok(empty.writes.every((write) => /^INSERT INTO \[dbo\]\.\[product_images\]/.test(write.statement)));
+    const populated = await run(2);
+    assert.equal(populated.filled, 0);
+    assert.equal(populated.writes.length, 0);
 });

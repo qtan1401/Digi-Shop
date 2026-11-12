@@ -241,6 +241,27 @@ function stableJson(value, identity, path = "changes") {
 }
 
 
+/** Extra gallery photos of a seeded product: distinct urls with distinct non-negative positions. */
+function normalizeProductImages(images, identity, changes) {
+    if (images === undefined) return [];
+    if (!Array.isArray(images) || images.length > 10) {
+        throw new SeedDataError(identity, "images must be an array of at most ten entries");
+    }
+    const normalized = images.map((image, index) => {
+        const imageIdentity = `${identity}/image:${index}`;
+        if (!image || typeof image !== "object" || Array.isArray(image)) {
+            throw new SeedDataError(imageIdentity, "image must be an object");
+        }
+        return {
+            url: requiredText(image.url, "url", imageIdentity, changes, 500),
+            position: normalizeInteger(image.position, "position", imageIdentity, changes, { minimum: 0, maximum: 2147483647 })
+        };
+    });
+    assertUnique(normalized.map((image, id) => ({ id, url: image.url })), "url", `product:${identity}/image`);
+    assertUnique(normalized.map((image, id) => ({ id, position: image.position })), "position", `product:${identity}/image`);
+    return normalized.sort((left, right) => left.position - right.position);
+}
+
 function normalizeProduct(record, index, changes) {
     const identity = requireRecord("product", record, index);
     const isDeleted = normalizeBoolean(record.isDeleted, "isDeleted", identity);
@@ -323,6 +344,7 @@ function normalizeProduct(record, index, changes) {
         description: requiredText(record.description, "description", identity, changes, 2147483647, (text) => text.replace(/\r\n?/g, "\n"), true),
         options,
         variants,
+        images: normalizeProductImages(record.images, identity, changes),
         isDeleted,
         deletedAt,
         createdAt: normalizeDate(record.createdAt, "createdAt", identity, changes),

@@ -9,6 +9,7 @@ const EDITABLE_FIELDS = ["name", "brand", "deviceType", "image", "description"];
 const { BRANDS, DEVICE_TYPES } = require("../../public/js/catalog-taxonomy");
 const joinChoices = (choices) => `${choices.slice(0, -1).join(", ")} hoặc ${choices.at(-1)}`;
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
+const MAX_GALLERY_IMAGES = 20;
 
 const createDomainError = (message, errors = [], statusCode = 400) => {
     const error = new Error(message);
@@ -197,6 +198,16 @@ const validateProduct = (input) => {
             errors.push({ field: "variants", message: `Tồn kho của biến thể ${field} phải là số nguyên không âm.` });
         }
 
+        // Cost price: what the shop pays per unit; whole VND, never above the selling price. Left out = 0 (callers that
+        // keep an existing variant fill it in first, see updateProduct).
+        let costPrice = 0;
+        if (!isBlank(variant.costPrice)) {
+            costPrice = Number(variant.costPrice);
+            if (!Number.isInteger(costPrice) || costPrice < 0 || (Number.isFinite(price) && costPrice > price)) {
+                errors.push({ field: "variants", message: `Giá vốn của biến thể ${field} phải là số nguyên không âm và không vượt quá giá bán.` });
+            }
+        }
+
         const optionValues = normalizeVariantOptions(variant.optionValues ?? variant.options, options, field, errors);
         const combination = JSON.stringify(Object.entries(optionValues)
             .map(([name, value]) => [optionKey(name), optionKey(value)])
@@ -206,7 +217,7 @@ const validateProduct = (input) => {
         }
         combinations.add(combination);
         for (const [name, value] of Object.entries(optionValues)) usedValues.get(name)?.add(optionKey(value));
-        return { sku, price, stock, image: typeof variant.image === "string" && variant.image.trim() ? variant.image.trim() : null, optionValues };
+        return { sku, price, costPrice, stock, image: typeof variant.image === "string" && variant.image.trim() ? variant.image.trim() : null, optionValues };
     }).filter(Boolean) : [];
 
     for (const option of options) {
@@ -247,6 +258,57 @@ const assertUniqueSkus = async (variants, productId, currentProduct) => {
 
 
 /**
+ * `images` lists every photo of the Product in display order, the main photo first (position 0), then the gallery.
+ * The admin view (it may see soft-deleted products) also keeps the gallery rows with their ids and the variants' cost
+ * price; customers never receive either.
+ */
+const presentProduct = (product, adminView) => {
+    const gallery = product.gallery || [];
+    const presented = {
+        ...product,
+        images: [{ url: product.image, position: 0 }, ...gallery.map(({ url, position }) => ({ url, position }))]
+    };
+    if (adminView) return presented;
+    delete presented.gallery;
+    if (presented.variants) presented.variants = presented.variants.map(({ costPrice, ...variant }) => variant);
+    return presented;
+};
+
+/**
+ * Turn the admin's gallery edits into the final ordered gallery.
+ * `changes.add` are freshly stored photos ({url}); `removeIds` are gallery row ids; `order` lists the final sequence by
+ * row id or `new:<index into add>`, anything not listed keeps its default place (kept photos by position, then new ones).
+ * @returns {{removeIds: number[], ordered: Array<{id?: number, url?: string}>}|null}
+ */
+const resolveGalleryPlan = (existing = [], changes) => {
+    if (!changes) return null;
+    const add = changes.add || [];
+    const removeIds = changes.removeIds || [];
+    const known = new Set(existing.map(({ id }) => id));
+    if (removeIds.some((id) => !Number.isInteger(id) || !known.has(id)) || new Set(removeIds).size !== removeIds.length) {
+        throw createDomainError("Ảnh cần xóa không thuộc sản phẩm này.", [{ field: "removeImageIds", message: "Ảnh cần xóa không thuộc sản phẩm này." }]);
+    }
+    const pool = new Map();
+    for (const image of [...existing].sort((left, right) => left.position - right.position)) {
+        if (!removeIds.includes(image.id)) pool.set(String(image.id), { id: image.id });
+    }
+    add.forEach((image, index) => pool.set(`new:${index}`, { url: image.url }));
+    if (pool.size > MAX_GALLERY_IMAGES) {
+        throw createDomainError(`Thư viện ảnh chỉ chứa tối đa ${MAX_GALLERY_IMAGES} ảnh.`, [{ field: "gallery", message: `Tối đa ${MAX_GALLERY_IMAGES} ảnh.` }]);
+    }
+    const ordered = [];
+    for (const token of changes.order || []) {
+        const key = String(token);
+        if (!pool.has(key)) {
+            throw createDomainError("Thứ tự ảnh không hợp lệ.", [{ field: "galleryOrder", message: "Thứ tự ảnh chứa ảnh không tồn tại hoặc bị lặp." }]);
+        }
+        ordered.push(pool.get(key));
+        pool.delete(key);
+    }
+    return { removeIds, ordered: [...ordered, ...pool.values()] };
+};
+
+/**
  * Public detail lookup excludes soft-deleted products by default.
  */
 const getProductByID = async (id, options = {}) => {
@@ -255,7 +317,7 @@ const getProductByID = async (id, options = {}) => {
         throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     }
     if (options.includeRatings === true) await reviewService.attachRatings([product]);
-    return product;
+    return presentProduct(product, options.includeDeleted === true);
 };
 
 const getProductById = getProductByID;
@@ -323,10 +385,12 @@ const getCatalogPage = async (filters = {}) => {
     const minPrice = price(filters.minPrice);
     const maxPrice = price(filters.maxPrice);
     if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) throw createDomainError("Invalid price range.");
+    if (filters.minRating !== undefined && !/^[1-5]$/.test(String(filters.minRating))) throw createDomainError("Invalid minRating.");
+    const minRating = filters.minRating === undefined ? null : Number(filters.minRating);
     const result = await productRepository.getCatalogPage({
         page, pageSize, q: Array.from(q).length >= 3 ? q : null,
         category: allowed("category", DEVICE_TYPES),
-        tag: allowed("tag", BRANDS), minPrice, maxPrice, sort, order
+        tag: allowed("tag", BRANDS), minPrice, maxPrice, minRating, sort, order
     });
     await reviewService.attachRatings(result.data);
     return result;
@@ -335,9 +399,11 @@ const getCatalogPage = async (filters = {}) => {
 const createProduct = async (input) => {
     const data = validateProduct(input);
     await assertUniqueSkus(data.variants);
+    const galleryPlan = resolveGalleryPlan([], input.galleryChanges);
     const timestamp = new Date().toISOString();
     return await productRepository.createProduct({
         ...data,
+        galleryPlan,
         slug: slugify(data.name),
         isDeleted: false,
         deletedAt: null,
@@ -357,15 +423,25 @@ const updateProduct = async (id, input = {}) => {
     for (const field of ["options", "variants"]) {
         if (Object.prototype.hasOwnProperty.call(input, field)) changes[field] = input[field];
     }
+    if (Array.isArray(changes.variants)) {
+        // A variant sent without a cost price keeps the one already stored for its SKU.
+        const costBySku = new Map((product.variants || []).map((variant) => [variant.sku, variant.costPrice]));
+        changes.variants = changes.variants.map((variant) =>
+            variant && isBlank(variant.costPrice) && costBySku.has(normalizeSku(variant.sku))
+                ? { ...variant, costPrice: costBySku.get(normalizeSku(variant.sku)) }
+                : variant);
+    }
 
     const merged = validateProduct({ ...product, ...changes });
     await assertUniqueSkus(merged.variants, product.id, product);
+    merged.galleryPlan = resolveGalleryPlan(product.gallery, input.galleryChanges);
 
     delete merged.id;
     delete merged.slug;
     delete merged.isDeleted;
     delete merged.deletedAt;
     delete merged.createdAt;
+    delete merged.gallery;
     return await productRepository.updateProduct(product.id, merged);
 };
 

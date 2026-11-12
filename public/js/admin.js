@@ -546,14 +546,63 @@
                 <label>Tồn kho<input type="number" data-variant-stock min="0" step="1" value="${escapeHtml(current?.stock ?? "")}" required inputmode="numeric"></label>
             </div>`;
         }).join("");
+        renderCostEditor(combinations, existingVariants);
     };
 
-    const readVariantEditor = () => $$(".variant-editor__row", $("#variant-editor-rows")).map((row) => ({
-        sku: $("[data-variant-sku]", row).value.trim(),
-        price: $("[data-variant-price]", row).value === "" ? "" : Number($("[data-variant-price]", row).value),
-        stock: $("[data-variant-stock]", row).value === "" ? "" : Number($("[data-variant-stock]", row).value),
-        optionValues: JSON.parse(row.dataset.optionValues || "{}")
-    }));
+    // ----- Giá vốn (slot "cost"): mỗi phiên bản một ô giá vốn, cùng thứ tự với bảng phiên bản phía trên -----
+    const costSlot = $('[data-slot="cost"]');
+    costSlot.dataset.field = "costPrice";
+    costSlot.innerHTML = `<label>Giá vốn theo phiên bản <span>*</span></label>
+        <p class="field-hint">Giá nhập một đơn vị, chỉ quản trị viên nhìn thấy. Phải từ 0 đến giá bán của phiên bản.</p>
+        <div id="cost-editor-rows" class="variant-editor__rows"></div>
+        <small class="field-error" data-error-for="costPrice"></small>`;
+
+    const costValue = (input) => input.value === "" ? "" : Number(input.value);
+    const isValidCost = (cost, price) => Number.isInteger(cost) && cost >= 0 && (!Number.isFinite(price) || price === "" || cost <= price);
+
+    const renderCostEditor = (combinations, existingVariants = []) => {
+        $("#cost-editor-rows").innerHTML = combinations.map((optionValues) => {
+            const current = existingVariants.find((variant) => sameOptionValues(variant.optionValues || {}, optionValues));
+            const label = Object.entries(optionValues).map(([name, value]) => `${name}: ${value}`).join(" · ") || "Phiên bản mặc định";
+            return `<div class="variant-editor__row">
+                <strong class="variant-editor__combination">${escapeHtml(label)}</strong>
+                <label>Giá bán<output data-cost-price>—</output></label>
+                <label>Giá vốn (₫)<input type="number" data-variant-cost min="0" step="1" value="${escapeHtml(current?.costPrice ?? "")}" required inputmode="numeric"></label>
+                <label>Lãi gộp / sản phẩm<output data-cost-margin>—</output></label>
+            </div>`;
+        }).join("");
+        refreshCostSummaries();
+    };
+
+    // Giá bán và lãi gộp hiển thị cạnh ô giá vốn, cập nhật khi admin gõ giá bán hoặc giá vốn.
+    const refreshCostSummaries = () => {
+        const priceInputs = $$("[data-variant-price]", $("#variant-editor-rows"));
+        $$(".variant-editor__row", $("#cost-editor-rows")).forEach((row, index) => {
+            const priceInput = priceInputs[index];
+            const costInput = $("[data-variant-cost]", row);
+            const price = priceInput ? costValue(priceInput) : "";
+            const cost = costValue(costInput);
+            $("[data-cost-price]", row).textContent = price === "" ? "—" : formatPrice(price);
+            const margin = $("[data-cost-margin]", row);
+            if (price === "" || cost === "") margin.textContent = "—";
+            else if (!isValidCost(cost, price)) margin.textContent = "Giá vốn vượt giá bán";
+            else margin.textContent = `${formatPrice(price - cost)} (${Math.round(((price - cost) / price) * 100)}%)`;
+            costInput.classList.toggle("input-error", cost !== "" && !isValidCost(cost, price));
+        });
+    };
+    $("#variant-editor-rows").addEventListener("input", refreshCostSummaries);
+    $("#cost-editor-rows").addEventListener("input", refreshCostSummaries);
+
+    const readVariantEditor = () => {
+        const costInputs = $$("[data-variant-cost]", $("#cost-editor-rows"));
+        return $$(".variant-editor__row", $("#variant-editor-rows")).map((row, index) => ({
+            sku: $("[data-variant-sku]", row).value.trim(),
+            price: $("[data-variant-price]", row).value === "" ? "" : Number($("[data-variant-price]", row).value),
+            costPrice: costInputs[index] ? costValue(costInputs[index]) : "",
+            stock: $("[data-variant-stock]", row).value === "" ? "" : Number($("[data-variant-stock]", row).value),
+            optionValues: JSON.parse(row.dataset.optionValues || "{}")
+        }));
+    };
 
     const validateProductForm = () => {
         const form = $("#product-form");
@@ -599,6 +648,9 @@
             !variant.sku || variant.price === "" || !Number.isInteger(variant.price) || variant.price <= 0 ||
             variant.stock === "" || !Number.isInteger(variant.stock) || variant.stock < 0
         )) errors.variants = "Mỗi phiên bản cần SKU riêng, giá nguyên dương và tồn kho nguyên không âm.";
+        else if (fields.variants.some((variant) => variant.costPrice === "" || !isValidCost(variant.costPrice, variant.price))) {
+            errors.costPrice = "Mỗi phiên bản cần giá vốn là số nguyên từ 0 đến giá bán.";
+        }
         if (!colorsValid) errors.colorImages = "Vui lòng kiểm tra tên và ảnh của từng màu.";
         Object.entries(errors).forEach(([field, message]) => setFormError(form, field, message));
         if (Object.keys(errors).length) {
@@ -611,6 +663,100 @@
             return null;
         }
         return fields;
+    };
+
+    // ----- Thư viện ảnh (slot "gallery"): ảnh phụ có thứ tự; ảnh chính vẫn là ảnh sản phẩm / ảnh của màu đầu tiên -----
+    const GALLERY_MAX_UPLOADS = 10;
+    const GALLERY_MAX_TOTAL = 20;
+    const GALLERY_MAX_BYTES = 5 * 1024 * 1024;
+    const galleryState = { items: [], removedIds: [], dirty: false, seq: 0 };
+    const gallerySlot = $('[data-slot="gallery"]');
+    gallerySlot.dataset.field = "gallery";
+    gallerySlot.innerHTML = `<label for="product-gallery-input">Thư viện ảnh (PNG hoặc WebP, tối đa 5 MiB mỗi ảnh)</label>
+        <input id="product-gallery-input" type="file" accept="image/png,.png,image/webp,.webp" multiple>
+        <small class="field-hint">Mỗi sản phẩm nên có ít nhất 3 ảnh khác nhau (ảnh chính và các ảnh góc khác). Tối đa ${GALLERY_MAX_UPLOADS} ảnh mỗi lần tải lên, ${GALLERY_MAX_TOTAL} ảnh trong thư viện. Ảnh đứng trước hiện trước, ngay sau ảnh chính.</small>
+        <ul class="admin-gallery" id="product-gallery-list" aria-label="Ảnh trong thư viện"></ul>
+        <small class="field-error" data-error-for="gallery"></small>`;
+    // admin.html thuộc agent khác: nạp stylesheet của thư viện ảnh từ đây thay vì thêm thẻ <link>.
+    if (!document.querySelector('link[href="/css/product-gallery.css"]')) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "/css/product-gallery.css";
+        document.head.append(link);
+    }
+
+    const galleryPreviewUrl = (item) => item.file ? item.previewUrl : item.url;
+
+    const renderGallery = () => {
+        const list = $("#product-gallery-list");
+        list.innerHTML = galleryState.items.map((item, index) => `<li class="admin-gallery__item" data-gallery-key="${item.key}">
+            <img src="${escapeHtml(galleryPreviewUrl(item))}" alt="Ảnh thư viện ${index + 1}${item.file ? " (mới)" : ""}" width="72" height="72">
+            <span class="admin-gallery__badge">${index + 1}${item.file ? " · mới" : ""}</span>
+            <span class="admin-gallery__actions">
+                <button type="button" class="ab ab--secondary ab--sm" data-gallery-move="-1" ${index === 0 ? "disabled" : ""} aria-label="Đưa ảnh ${index + 1} lên trước">←</button>
+                <button type="button" class="ab ab--secondary ab--sm" data-gallery-move="1" ${index === galleryState.items.length - 1 ? "disabled" : ""} aria-label="Đưa ảnh ${index + 1} ra sau">→</button>
+                <button type="button" class="ab ab--secondary ab--sm" data-gallery-remove aria-label="Xóa ảnh ${index + 1}">Xóa</button>
+            </span>
+        </li>`).join("");
+    };
+
+    const resetGallery = (existing = []) => {
+        galleryState.items.forEach((item) => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); });
+        galleryState.items = existing.map((image) => ({ key: `i${image.id}`, id: image.id, file: null, url: image.url }));
+        galleryState.removedIds = [];
+        galleryState.dirty = false;
+        $("#product-gallery-input").value = "";
+        renderGallery();
+    };
+
+    $("#product-gallery-input").addEventListener("change", (event) => {
+        const input = event.target;
+        const form = $("#product-form");
+        const files = Array.from(input.files || []);
+        input.value = "";
+        const fail = (message) => setFormError(form, "gallery", message);
+        setFormError(form, "gallery", "");
+        form.querySelector('[data-field="gallery"]').classList.remove("has-error");
+        const newCount = galleryState.items.filter((item) => item.file).length;
+        if (newCount + files.length > GALLERY_MAX_UPLOADS) return fail(`Mỗi lần chỉ tải tối đa ${GALLERY_MAX_UPLOADS} ảnh mới.`);
+        if (galleryState.items.length + files.length > GALLERY_MAX_TOTAL) return fail(`Thư viện chỉ chứa tối đa ${GALLERY_MAX_TOTAL} ảnh.`);
+        const invalid = files.find((file) => !/\.(png|webp)$/i.test(file.name) || !["image/png", "image/webp"].includes(file.type));
+        if (invalid) return fail(`“${invalid.name}” không phải ảnh PNG hoặc WebP.`);
+        const oversize = files.find((file) => file.size > GALLERY_MAX_BYTES);
+        if (oversize) return fail(`“${oversize.name}” vượt quá 5 MiB.`);
+        files.forEach((file) => galleryState.items.push({ key: `n${galleryState.seq++}`, id: null, file, previewUrl: URL.createObjectURL(file) }));
+        galleryState.dirty = galleryState.dirty || files.length > 0;
+        renderGallery();
+    });
+
+    $("#product-gallery-list").addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        const row = event.target.closest("[data-gallery-key]");
+        if (!button || !row) return;
+        const index = galleryState.items.findIndex((item) => item.key === row.dataset.galleryKey);
+        if (index < 0) return;
+        if (button.hasAttribute("data-gallery-remove")) {
+            const [removed] = galleryState.items.splice(index, 1);
+            if (removed.file) URL.revokeObjectURL(removed.previewUrl);
+            else galleryState.removedIds.push(removed.id);
+            galleryState.dirty = true;
+        } else if (button.dataset.galleryMove) {
+            const target = index + Number(button.dataset.galleryMove);
+            if (target < 0 || target >= galleryState.items.length) return;
+            [galleryState.items[index], galleryState.items[target]] = [galleryState.items[target], galleryState.items[index]];
+            galleryState.dirty = true;
+        }
+        renderGallery();
+    });
+
+    // Thêm vào FormData: ảnh mới theo thứ tự hiện tại, thứ tự cuối cùng (id hoặc "new:<n>") và các ảnh cần xóa.
+    const appendGalleryFields = (body) => {
+        const newItems = galleryState.items.filter((item) => item.file);
+        newItems.forEach((item) => body.append("gallery", item.file));
+        if (!galleryState.dirty) return;
+        let newIndex = 0;
+        body.append("galleryOrder", JSON.stringify(galleryState.items.map((item) => item.file ? `new:${newIndex++}` : item.id)));
+        if (galleryState.removedIds.length) body.append("removeImageIds", JSON.stringify(galleryState.removedIds));
     };
 
     const setSubmitBusy = (button, busy, label) => {
@@ -628,6 +774,7 @@
         resetColorRows();
         renderStorageBuilder();
         renderVariantEditor([], []);
+        resetGallery();
         updateCoverImageVisibility();
         $("#product-image-current").textContent = "";
         $("#product-image-current").hidden = true;
@@ -661,6 +808,7 @@
             renderStorageBuilder();
             state.variantSource = product.variants || [];
             renderVariantEditor(buildGridOptions(), state.variantSource);
+            resetGallery(product.gallery || []);
             $("#product-image-current").textContent = product.image ? "Đang giữ ảnh hiện tại nếu bạn không chọn ảnh thay thế." : "";
             $("#product-image-current").hidden = !product.image;
             updateCoverImageVisibility();
@@ -698,6 +846,7 @@
         const hasColorOption = values.options.some((option) => option.name === "Màu sắc");
         if (!hasColorOption && values.image) body.append("image", values.image);
         values.colorFiles.forEach(({ value, file }) => body.append(encodeColorImageField(value), file));
+        appendGalleryFields(body);
         try {
             const endpoint = state.editingId ? `/api/admin/products/${encodeURIComponent(state.editingId)}` : "/api/admin/products";
             await api(endpoint, { method: state.editingId ? "PUT" : "POST", body });

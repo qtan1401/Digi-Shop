@@ -18,4 +18,13 @@ const removeProductImage = async (stored) => {
     await fs.rm(stored.fullPath, { force: true });
 };
 
-module.exports = { storageDirectory, saveProductImage, removeProductImage };
+// Only files this module wrote (random UUID names) may be deleted when a photo is dropped: the sample catalog's
+// photos live in the same directory under descriptive names and must survive an admin removing them from a product.
+const UPLOADED_IMAGE_PATH = /^\/uploads\/products\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|webp))$/;
+
+const uploadedImageFromPublicPath = (publicPath) => {
+    const match = UPLOADED_IMAGE_PATH.exec(String(publicPath));
+    return match ? { name: match[1], publicPath, fullPath: path.join(storageDirectory(), match[1]) } : null;
+};
+
+module.exports = { storageDirectory, saveProductImage, removeProductImage, uploadedImageFromPublicPath };

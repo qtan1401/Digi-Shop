@@ -1,0 +1,113 @@
+/* Thư viện ảnh trang chi tiết sản phẩm: nút trước/sau, bộ đếm ảnh và vùng focus cho bàn phím.
+   Khung ảnh và dãy ảnh nhỏ giữ kiểu ở styles.css (.product-info__media, .product-info__thumb). */
+.product-info__media:focus-visible {
+    outline: 3px solid var(--accent-ring);
+    outline-offset: 2px;
+}
+
+.product-gallery__nav {
+    position: absolute;
+    top: 50%;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0 0 3px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--text-primary);
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    transform: translateY(-50%);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.product-gallery__nav--prev { left: 10px; }
+.product-gallery__nav--next { right: 10px; }
+
+.product-gallery__nav:hover {
+    border-color: var(--border-hover);
+    box-shadow: var(--shadow-md);
+}
+
+.product-gallery__nav:focus-visible {
+    outline: 3px solid var(--accent-ring);
+    outline-offset: 2px;
+}
+
+.product-gallery__counter {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.72);
+    color: #fff;
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.product-gallery__counter:empty { display: none; }
+
+@media (max-width: 600px) {
+    .product-gallery__nav--prev { left: 6px; }
+    .product-gallery__nav--next { right: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .product-gallery__nav { transition: none; }
+}
+
+/* ===== Trình sửa thư viện ảnh trong modal sản phẩm của admin (nạp từ admin.js) ===== */
+.admin-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.admin-gallery:empty { display: none; }
+
+.admin-gallery__item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-surface, #fff);
+}
+
+.admin-gallery__item img {
+    display: block;
+    width: 100%;
+    height: 84px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: var(--bg-primary, #f6f6f4);
+}
+
+.admin-gallery__badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.72);
+    color: #fff;
+    font: 500 11px/18px var(--font-body, inherit);
+}
+
+.admin-gallery__actions {
+    display: flex;
+    gap: 4px;
+}
+
+.admin-gallery__actions .ab { flex: 1 1 0; min-width: 0; padding-inline: 4px; }
+.admin-gallery__actions .ab:last-child { flex: 2 1 0; }

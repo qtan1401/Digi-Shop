@@ -11,7 +11,7 @@ const optionValueText = (entry) =>
 
 const productMutationInput = (req) => {
     const input = { ...(req.body || {}) };
-    for (const field of ["options", "variants"]) {
+    for (const field of ["options", "variants", "galleryOrder", "removeImageIds"]) {
         if (typeof input[field] !== "string") continue;
         try {
             input[field] = JSON.parse(input[field]);
@@ -23,6 +23,38 @@ const productMutationInput = (req) => {
         }
     }
     return input;
+};
+
+const GALLERY_LIST_FIELDS = ["galleryOrder", "removeImageIds"];
+
+const hasGalleryEdits = (input, req) =>
+    Boolean(req.galleryFiles && req.galleryFiles.length) || GALLERY_LIST_FIELDS.some((field) => input[field] !== undefined);
+
+/**
+ * Store the uploaded gallery photos and describe the requested gallery edit for the Product service.
+ * `galleryOrder` and `removeImageIds` are JSON arrays; new uploads are referenced in the order as `new:<index>`.
+ */
+const buildGalleryChanges = async (input, req, savedFiles) => {
+    if (!hasGalleryEdits(input, req)) return null;
+    for (const field of GALLERY_LIST_FIELDS) {
+        if (input[field] !== undefined && !Array.isArray(input[field])) {
+            const error = new Error(`Trường ${field} phải là một danh sách.`);
+            error.statusCode = 400;
+            error.errors = [{ field, message: "Dữ liệu thư viện ảnh không hợp lệ." }];
+            throw error;
+        }
+    }
+    const add = [];
+    for (const file of req.galleryFiles || []) {
+        const stored = await productImageStorage.saveProductImage(file);
+        savedFiles.push(stored);
+        add.push({ url: stored.publicPath });
+    }
+    return {
+        add,
+        removeIds: (input.removeImageIds || []).map((id) => Number(id)),
+        order: input.galleryOrder
+    };
 };
 
 const missingImageError = (hasColorOption) => ({
@@ -159,7 +191,8 @@ const createProduct = async (req, res) => {
         const { variants, coverImage, savedFiles } = await resolveVariantImages(input, req, null);
         try {
             if (!coverImage) throw missingImageError(hasColorOption);
-            const product = await adminService.createProduct({ ...input, variants, image: coverImage }, actor(req));
+            const galleryChanges = await buildGalleryChanges(input, req, savedFiles);
+            const product = await adminService.createProduct({ ...input, variants, image: coverImage, galleryChanges }, actor(req));
             return res.status(201).json({
                 success: true,
                 message: "Thêm sản phẩm thành công",
@@ -177,20 +210,31 @@ const createProduct = async (req, res) => {
 const updateProduct = async (req, res) => {
     try {
         const input = productMutationInput(req);
+        const galleryEdit = hasGalleryEdits(input, req);
         const touchesConfiguration = Object.prototype.hasOwnProperty.call(input, "variants")
             || Object.prototype.hasOwnProperty.call(input, "options")
             || Boolean(req.file)
             || Boolean(req.colorImageFiles && req.colorImageFiles.length);
-        if (!touchesConfiguration) {
+        if (!touchesConfiguration && !galleryEdit) {
             const product = await adminService.updateProduct(req.params.id, input, actor(req));
             return res.json({ success: true, message: "Cập nhật sản phẩm thành công", data: product });
         }
         const previousProduct = await adminService.getProduct(req.params.id);
         const hasColorOption = Array.isArray(input.options) && input.options.some((option) => isColorOption(option?.name));
-        const { variants, coverImage, savedFiles } = await resolveVariantImages(input, req, previousProduct);
+        const { variants, coverImage, savedFiles } = touchesConfiguration
+            ? await resolveVariantImages(input, req, previousProduct)
+            : { variants: input.variants, coverImage: previousProduct.image, savedFiles: [] };
         try {
             if (!coverImage) throw missingImageError(hasColorOption);
-            const product = await adminService.updateProduct(req.params.id, { ...input, variants, image: coverImage }, actor(req));
+            const galleryChanges = await buildGalleryChanges(input, req, savedFiles);
+            const changes = touchesConfiguration ? { ...input, variants, image: coverImage } : { ...input };
+            const product = await adminService.updateProduct(req.params.id, { ...changes, galleryChanges }, actor(req));
+            // Files go only after the transaction committed, so a failed save never loses a photo.
+            const removed = new Set(galleryChanges ? galleryChanges.removeIds : []);
+            for (const image of previousProduct.gallery || []) {
+                const stored = removed.has(image.id) ? productImageStorage.uploadedImageFromPublicPath(image.url) : null;
+                if (stored) await productImageStorage.removeProductImage(stored).catch(() => undefined);
+            }
             return res.json({
                 success: true,
                 message: "Cập nhật sản phẩm thành công",

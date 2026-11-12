@@ -145,14 +145,20 @@ const loadProductInfo = async () => {
         const canPurchase = authState.user?.role !== "admin";
         const { paragraphs, groups } = parseProductDescription(product.description);
         const variantImage = (variant) => variant?.image || product.image || "";
+        // Ảnh trong gallery theo thứ tự: ảnh chính, ảnh theo phiên bản, rồi ảnh thư viện (không gắn phiên bản nào).
         const galleryImages = [];
-        variants.forEach((variant) => {
-            const url = variantImage(variant);
+        const addGalleryImage = (url, variant) => {
             if (!url) return;
-            const entry = galleryImages.find((item) => item.url === url);
-            if (entry) entry.variants.push(variant);
-            else galleryImages.push({ url, variants: [variant] });
-        });
+            let entry = galleryImages.find((item) => item.url === url);
+            if (!entry) {
+                entry = { url, variants: [] };
+                galleryImages.push(entry);
+            }
+            if (variant) entry.variants.push(variant);
+        };
+        addGalleryImage(product.image);
+        variants.forEach((variant) => addGalleryImage(variantImage(variant), variant));
+        (product.images || []).forEach((image) => addGalleryImage(image.url));
         // Tuỳ chọn nào làm đổi ảnh (màu sắc, tản nhiệt…) thì mới đưa vào alt và nhãn ảnh nhỏ.
         const imageOptionNames = (product.options || []).map((option) => option.name).filter((name) => {
             const imagesByValue = new Map();
@@ -169,9 +175,10 @@ const loadProductInfo = async () => {
             .filter(Boolean)
             .join(" · ");
         const galleryThumbs = galleryImages.length >= 2
-            ? `<div class="product-info__thumbs" role="group" aria-label="Ảnh theo phiên bản">${galleryImages.map((item, index) => {
+            ? `<div class="product-info__thumbs" role="group" aria-label="Thư viện ảnh sản phẩm">${galleryImages.map((item, index) => {
                 const label = describeImage(item.variants);
-                return `<button type="button" class="product-info__thumb" data-gallery-index="${index}" aria-pressed="false" aria-label="${escapeHtml(label ? `Xem ảnh ${label}` : `Xem ảnh ${index + 1}`)}" title="${escapeHtml(label)}">
+                const position = `ảnh ${index + 1} trên ${galleryImages.length}`;
+                return `<button type="button" class="product-info__thumb" data-gallery-index="${index}" aria-pressed="false" aria-label="${escapeHtml(label ? `Xem ${position}: ${label}` : `Xem ${position}`)}" title="${escapeHtml(label)}">
                     <img src="${escapeHtml(item.url)}" alt="" width="64" height="64" loading="lazy" decoding="async">
                 </button>`;
             }).join("")}</div>`
@@ -202,8 +209,11 @@ const loadProductInfo = async () => {
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="product-info__card">
                 <div class="product-info__gallery">
-                    <div class="product-info__media" id="product-info-media">
+                    <div class="product-info__media" id="product-info-media" role="group" aria-roledescription="thư viện ảnh" aria-label="Ảnh ${escapeHtml(product.name)}" tabindex="0">
                         <img src="${escapeHtml(variantImage(selectedVariant))}" alt="${escapeHtml(product.name)}" class="product-info__image" id="product-info-image" loading="eager" fetchpriority="high" decoding="async">
+                        ${galleryImages.length >= 2 ? `<button type="button" class="product-gallery__nav product-gallery__nav--prev" data-gallery-step="-1" aria-label="Ảnh trước">‹</button>
+                        <button type="button" class="product-gallery__nav product-gallery__nav--next" data-gallery-step="1" aria-label="Ảnh sau">›</button>
+                        <span class="product-gallery__counter" id="product-gallery-counter" role="status" aria-live="polite"></span>` : ""}
                     </div>
                     ${galleryThumbs}
                 </div>
@@ -237,15 +247,18 @@ const loadProductInfo = async () => {
         let imageToken = 0;
         let lastChoice = null;
 
-        // Ảnh chính luôn theo phiên bản đang chọn (hoặc ảnh sản phẩm); đổi ảnh bằng hiệu ứng mờ dần.
-        const syncGallery = () => {
-            const shown = selectedVariant
-                || (lastChoice && variants.find((variant) => variant.optionValues?.[lastChoice.name] === lastChoice.value))
-                || null;
-            const url = variantImage(shown);
-            const detail = describeImage(shown ? [shown] : []);
-            mainImage.alt = detail ? `${product.name} – ${detail}` : product.name;
+        // Hiện ảnh thứ `index` của gallery bằng hiệu ứng mờ dần; ảnh nhỏ tương ứng được đánh dấu.
+        let activeIndex = -1;
+        const showGalleryImage = (index) => {
+            const item = galleryImages[index];
+            const url = item ? item.url : "";
+            activeIndex = index;
+            const detail = describeImage(item ? item.variants.slice(0, 1) : []);
+            const position = galleryImages.length > 1 ? ` (ảnh ${index + 1} trên ${galleryImages.length})` : "";
+            mainImage.alt = detail ? `${product.name} – ${detail}${position}` : `${product.name}${position}`;
             media.classList.toggle("is-empty", !url);
+            const counter = container.querySelector("#product-gallery-counter");
+            if (counter) counter.textContent = item ? `${index + 1} / ${galleryImages.length}` : "";
             if (url && mainImage.getAttribute("src") !== url) {
                 const token = ++imageToken;
                 const preload = new Image();
@@ -262,7 +275,7 @@ const loadProductInfo = async () => {
                 });
             }
             thumbButtons.forEach((button) => {
-                const active = galleryImages[Number(button.dataset.galleryIndex)].url === url;
+                const active = Number(button.dataset.galleryIndex) === index;
                 button.setAttribute("aria-pressed", String(active));
                 if (active) {
                     const strip = button.parentElement;
@@ -270,6 +283,15 @@ const loadProductInfo = async () => {
                     strip.scrollTo({ left: Math.max(0, offset), behavior: prefersReducedMotion.matches ? "auto" : "smooth" });
                 }
             });
+        };
+
+        // Ảnh chính theo phiên bản đang chọn (hoặc ảnh sản phẩm khi chưa chọn được phiên bản).
+        const syncGallery = () => {
+            const shown = selectedVariant
+                || (lastChoice && variants.find((variant) => variant.optionValues?.[lastChoice.name] === lastChoice.value))
+                || null;
+            const index = galleryImages.findIndex((item) => item.url === variantImage(shown));
+            showGalleryImage(index);
         };
 
         const readSelectedOptions = () => Object.fromEntries(
@@ -303,8 +325,13 @@ const loadProductInfo = async () => {
             syncGallery();
         };
 
-        thumbButtons.forEach((thumb) => thumb.addEventListener("click", () => {
-            const group = galleryImages[Number(thumb.dataset.galleryIndex)].variants;
+        // Chọn ảnh thứ `index`: ảnh gắn với phiên bản thì chọn luôn phiên bản đó, ảnh thư viện chỉ đổi ảnh đang xem.
+        const goToGalleryImage = (index) => {
+            const group = galleryImages[index].variants;
+            if (group.length === 0) {
+                showGalleryImage(index);
+                return;
+            }
             const current = readSelectedOptions();
             const score = (variant) => Object.entries(current).filter(([name, value]) => variant.optionValues?.[name] === value).length;
             const target = group.reduce((best, variant) => {
@@ -317,7 +344,37 @@ const loadProductInfo = async () => {
                 if (value !== undefined) button.setAttribute("aria-pressed", String(button.dataset.optionValue === value));
             });
             updateSelectedVariant();
-        }));
+        };
+
+        thumbButtons.forEach((thumb) => thumb.addEventListener("click", () => goToGalleryImage(Number(thumb.dataset.galleryIndex))));
+
+        // Bàn phím (←/→/Home/End), nút trước/sau và vuốt ngang trên màn cảm ứng đều đi qua cùng một hàm.
+        const stepGallery = (step) => {
+            const count = galleryImages.length;
+            if (count < 2) return;
+            const next = (Math.max(activeIndex, 0) + step + count) % count;
+            goToGalleryImage(next);
+            return next;
+        };
+        container.querySelectorAll("[data-gallery-step]").forEach((button) =>
+            button.addEventListener("click", () => stepGallery(Number(button.dataset.galleryStep))));
+        container.querySelector(".product-info__gallery").addEventListener("keydown", (event) => {
+            const keyStep = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+            if (keyStep === undefined && event.key !== "Home" && event.key !== "End") return;
+            if (galleryImages.length < 2) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? 0 : event.key === "End" ? galleryImages.length - 1 : stepGallery(keyStep);
+            if (event.key === "Home" || event.key === "End") goToGalleryImage(next);
+            if (event.target.classList?.contains("product-info__thumb")) thumbButtons[next]?.focus();
+        });
+        let touchStartX = null;
+        media.addEventListener("touchstart", (event) => { touchStartX = event.touches[0].clientX; }, { passive: true });
+        media.addEventListener("touchend", (event) => {
+            if (touchStartX === null) return;
+            const delta = event.changedTouches[0].clientX - touchStartX;
+            touchStartX = null;
+            if (Math.abs(delta) >= 40) stepGallery(delta < 0 ? 1 : -1);
+        }, { passive: true });
 
         container.querySelectorAll(".product-info__option [data-option-name]").forEach((button) =>
             button.addEventListener("click", () => {
