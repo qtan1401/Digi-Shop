@@ -47,6 +47,7 @@ const SAFE_MESSAGES = new Map([
     ["INTERNAL_ERROR", "Request failed"],
     ["INVALID_CREDENTIALS", "Invalid credentials"],
     ["EMAIL_UNVERIFIED", "Email verification is required"],
+    ["ACCOUNT_BANNED", "Tài khoản của bạn đã bị khóa. Vui lòng liên hệ quản trị viên."],
     ["PASSWORD_LOCKED", "Password login is locked"],
     ["GOOGLE_TOKEN_INVALID", "Google credential is invalid"],
     ["GOOGLE_LINK_REQUIRES_PASSWORD", "Password confirmation is required"],

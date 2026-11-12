@@ -1,13 +1,15 @@
-/* ===== ADMIN: TỔNG QUAN (wireframe tongquan.js, phương án A) =====
- * Nguồn dữ liệu: GET /api/orders, GET /api/admin/products?status=active&pageSize=48 (lặp trang), GET /api/admin/audit-logs.
- * Tải lại mỗi lần mở màn Tổng quan ('admin:view') và khi nhận 'admin:orders-changed'.
+/* ===== ADMIN: TỔNG QUAN (dashboard đơn giản) =====
+ * Nguồn dữ liệu: GET /api/admin/dashboard/summary (tổng user, user mới 7 ngày, số đơn, doanh thu, top 5 sản phẩm bán chạy),
+ * GET /api/orders?status=PENDING&pageSize=50 (đơn chờ xử lý, một trang), GET /api/admin/products?status=active&pageSize=48 (tồn kho, lặp trang).
+ * Không tải toàn bộ đơn về trình duyệt. Tải lại mỗi lần mở màn Tổng quan ('admin:view') và khi nhận 'admin:orders-changed'.
  *
- * Định nghĩa số liệu:
- *  - Đơn chờ xử lý        = orderStatus === PENDING; sắp theo thời gian chờ giảm dần. "Chờ quá 24 giờ" = chờ >= 24 giờ.
- *  - Đã thanh toán, chưa giao = paymentStatus === PAID và orderStatus ∈ {PENDING, PROCESSING}.
- *  - Sắp hết / hết hàng   = tổng tồn của sản phẩm đang bán <= 5 (hết hàng = 0, sắp hết = 1..5).
- *  - Doanh thu hôm nay    = tổng totalPrice đơn tạo trong ngày (giờ địa phương trình duyệt), PAID và không CANCELLED. So với hôm qua cùng cách tính.
- *  - Đơn mỗi ngày         = số đơn (mọi trạng thái) tạo trong từng ngày địa phương, 7 ngày kết thúc hôm nay.
+ * Định nghĩa số liệu (GLOSSARY: Revenue):
+ *  - Số đơn          = đơn không bị hủy (mọi thời gian).
+ *  - Doanh thu       = tổng tiền đơn đã thanh toán hoặc đã giao, không tính đơn hủy.
+ *  - Người dùng mới  = khách hàng đăng ký trong 7 ngày gần nhất.
+ *  - Top 5           = 5 sản phẩm có tổng số lượng bán cao nhất trên các đơn tính doanh thu.
+ *  - Đơn chờ xử lý   = orderStatus === PENDING; sắp theo thời gian chờ giảm dần. "Chờ quá 24 giờ" = chờ >= 24 giờ.
+ *  - Sắp hết / hết hàng = tổng tồn của sản phẩm đang bán <= 5 (hết hàng = 0, sắp hết = 1..5).
  */
 (() => {
     "use strict";
@@ -19,7 +21,6 @@
 
     const esc = UI.escapeHtml;
     const HOUR = 3600e3;
-    const DAY = 86400e3;
 
     /* ---------- Icon (lucide) ---------- */
     const ICONS = {
@@ -34,42 +35,21 @@
     /* ---------- Định dạng ---------- */
     const vnd = (value) => Number(value || 0).toLocaleString("vi-VN") + "₫";
     const mil = (value) => (Number(value || 0) / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-    const two = (value) => String(value).padStart(2, "0");
-    const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const num = (value) => Number(value || 0).toLocaleString("vi-VN");
     const waitText = (hours) => (hours >= 48 ? `Chờ ${Math.floor(hours / 24)} ngày` : hours < 1 ? "Chờ dưới 1 giờ" : `Chờ ${hours} giờ`);
 
-    /* ---------- Tính số liệu ---------- */
-    const compute = ({ orders, products, logs }) => {
-        const now = new Date();
-        const today = startOfDay(now);
-        const yesterday = new Date(today.getTime() - DAY);
-        const withAge = orders.map((order) => {
-            const created = new Date(order.createdAt);
-            return { ...order, _created: created, _age: Math.max(0, Math.floor((now - created) / HOUR)), _total: Number(order.totalPrice) || 0 };
-        });
-        const byAge = (a, b) => b._age - a._age;
-        const pending = withAge.filter((order) => order.orderStatus === "PENDING").sort(byAge);
-        const paidOpen = withAge.filter((order) => order.paymentStatus === "PAID" && (order.orderStatus === "PENDING" || order.orderStatus === "PROCESSING"));
-        const preparing = paidOpen.filter((order) => order.orderStatus === "PROCESSING");
+    /* ---------- Số liệu dẫn xuất ---------- */
+    const compute = ({ summary, pendingOrders, products }) => {
+        const now = Date.now();
+        const pending = pendingOrders
+            .map((order) => ({ ...order, _age: Math.max(0, Math.floor((now - new Date(order.createdAt)) / HOUR)), _total: Number(order.totalPrice) || 0 }))
+            .sort((a, b) => b._age - a._age);
         const low = products.filter((product) => Number(product.stock) <= 5).sort((a, b) => Number(a.stock) - Number(b.stock));
-        const sameDay = (order, day) => startOfDay(order._created).getTime() === day.getTime();
-        const earned = (day) => withAge.filter((order) => sameDay(order, day) && order.paymentStatus === "PAID" && order.orderStatus !== "CANCELLED").reduce((sum, order) => sum + order._total, 0);
-        const revenueToday = earned(today);
-        const revenueYesterday = earned(yesterday);
-        const days = Array.from({ length: 7 }, (_, index) => {
-            const day = new Date(today.getTime() - (6 - index) * DAY);
-            return { label: `${two(day.getDate())}/${two(day.getMonth() + 1)}`, n: withAge.filter((order) => sameDay(order, day)).length };
-        });
         return {
-            now, today, logs: logs.slice(0, 5),
-            orders: withAge, pending, paidOpen, preparing, low,
+            summary, pending, low,
             late: pending.filter((order) => order._age >= 24).length,
             few: low.filter((product) => Number(product.stock) > 0).length,
-            out: low.filter((product) => Number(product.stock) <= 0).length,
-            paidPending: paidOpen.length - preparing.length,
-            revenueToday, revenueYesterday,
-            pct: revenueYesterday > 0 ? Math.round(((revenueToday - revenueYesterday) / revenueYesterday) * 100) : null,
-            ordersToday: days[6].n, ordersYesterday: days[5].n, days
+            out: low.filter((product) => Number(product.stock) <= 0).length
         };
     };
 
@@ -84,6 +64,7 @@
     const stockBadge = (product) => (Number(product.stock) <= 0 ? badge("error", "Hết hàng") : badge("warning", `Còn ${Number(product.stock)}`));
     const sk = (width, height, extra = "") => `<div class="sk ${extra}" style="width:${width};height:${height}"></div>`;
 
+
     /* ---------- Khối ---------- */
     const statCell = ({ label, value, unit = "", sub, title = "" }) => `
         <div class="ov-stat"${title ? ` title="${esc(title)}"` : ""}>
@@ -92,19 +73,17 @@
             <div class="ov-stat__sub">${sub}</div>
         </div>`;
 
-    const revenueSub = (c) => {
-        if (c.pct === null) return `<span class="ov-cmp">${c.revenueToday > 0 ? "Hôm qua chưa có doanh thu" : "Chưa có doanh thu so với hôm qua"}</span>`;
-        const up = c.pct >= 0;
-        return `<span class="ov-cmp">${icon(up ? "trending-up" : "trending-down", `icon--14 ${up ? "ov-cmp__up" : "ov-cmp__down"}`)}<span class="ov-cmp__pct tabular ${up ? "ov-cmp__up" : "ov-cmp__down"}">${Math.abs(c.pct)}%</span> so với hôm qua</span>`;
-    };
-
-    const statsBlock = (c) => `
-        <div class="ov-stats">
-            ${statCell({ label: "Đơn chờ xử lý", value: c.pending.length, sub: `<span class="ov-late">${icon("triangle-alert", "icon--14")}${c.late} chờ quá 24 giờ</span>` })}
-            ${statCell({ label: "Đã thanh toán, chưa giao", value: c.paidOpen.length, sub: `${c.paidPending} chờ xác nhận · ${c.preparing.length} đang chuẩn bị` })}
+    const statsBlock = (c) => {
+        const s = c.summary;
+        return `
+        <div class="ov-stats ov-stats--5">
+            ${statCell({ label: "Tổng người dùng", value: num(s.totalUsers), sub: "Tài khoản khách hàng" })}
+            ${statCell({ label: "Người dùng mới", value: num(s.newUsers), sub: "Trong 7 ngày gần nhất" })}
+            ${statCell({ label: "Số đơn", value: num(s.orders), sub: `<span class="${c.late ? "ov-late" : ""}">${num(s.pendingOrders)} chờ xử lý</span> · không tính đơn hủy` })}
+            ${statCell({ label: "Doanh thu", value: mil(s.revenue), unit: "tr ₫", title: vnd(s.revenue), sub: "Đơn đã thanh toán hoặc đã giao" })}
             ${statCell({ label: "Sắp hết / hết hàng", value: c.low.length, sub: `${c.few} sắp hết · ${c.out} hết hàng` })}
-            ${statCell({ label: "Doanh thu hôm nay", value: mil(c.revenueToday), unit: "tr ₫", title: `Hôm nay ${vnd(c.revenueToday)} · hôm qua ${vnd(c.revenueYesterday)}`, sub: revenueSub(c) })}
         </div>`;
+    };
 
     const orderRow = (order) => `
         <li>
@@ -144,97 +123,36 @@
             <a href="${href}">${linkText}</a>
         </div>`;
 
+    // Top 5 sản phẩm bán chạy: biểu đồ cột một màu, số lượng ghi trên đầu cột, tên dưới cột.
+    const topBlock = (c) => {
+        const top = c.summary.topProducts || [];
+        const peak = Math.max(1, ...top.map((p) => p.quantity));
+        const body = top.length
+            ? `<div class="ov-top" role="img" aria-label="Top ${top.length} sản phẩm bán chạy: ${esc(top.map((p) => `${p.name} ${num(p.quantity)}`).join(", "))}">${top.map((p) => `
+                <div class="ov-top__col" title="${esc(`${p.name}: ${num(p.quantity)} sản phẩm · ${vnd(p.revenue)}`)}">
+                    <div class="ov-top__area"><div class="ov-top__bar" style="height:${p.quantity / peak * 100}%"><span class="ov-top__n tabular">${num(p.quantity)}</span></div></div>
+                    <p class="ov-top__name">${esc(p.name)}</p>
+                </div>`).join("")}</div>`
+            : "<p class=\"ov-top__empty\">Chưa bán sản phẩm nào.</p>";
+        return `
+        <section class="card ov-chart" aria-labelledby="ov-top-title">
+            <header class="ov-card-head">
+                <h2 id="ov-top-title">Top 5 sản phẩm bán chạy</h2>
+                <p class="ov-card-head__sub">Theo số lượng, trên đơn đã thanh toán hoặc đã giao</p>
+            </header>
+            ${body}
+        </section>`;
+    };
+
     const listBlock = (c) => `
         <section class="card ov-list" aria-labelledby="ov-need-title">
             <header class="ov-card-head ov-card-head--list"><h2 id="ov-need-title">Cần xử lý</h2></header>
             <div class="ov-list__body">
-                ${groupHead("Đơn chờ xử lý", c.pending.length, "#/don-hang", "Tất cả đơn")}
-                <ul class="ov-rows">${c.pending.map(orderRow).join("")}</ul>
+                ${groupHead("Đơn chờ xử lý", num(c.summary.pendingOrders), "#/don-hang", "Tất cả đơn")}
+                <ul class="ov-rows">${c.pending.map(orderRow).join("") || "<li class=\"ov-feed__empty\">Không có đơn chờ xử lý.</li>"}</ul>
                 ${groupHead("Sắp hết hàng", c.low.length, "#/san-pham", "Tất cả sản phẩm")}
-                <ul class="ov-rows">${c.low.map(stockRow).join("")}</ul>
+                <ul class="ov-rows">${c.low.map(stockRow).join("") || "<li class=\"ov-feed__empty\">Không có sản phẩm sắp hết.</li>"}</ul>
             </div>
-        </section>`;
-
-    const chartBlock = (c) => {
-        const peak = Math.max(...c.days.map((day) => day.n));
-        const last = c.days.length - 1;
-        const cols = c.days.map((day, index) => `
-            <div class="ov-col">
-                <div class="ov-col__gap" style="flex-grow:${peak - day.n}"></div>
-                <p class="ov-col__n tabular">${day.n}</p>
-                <div class="ov-col__bar${index === last ? " is-today" : ""}" style="flex-grow:${day.n}"></div>
-            </div>`).join("");
-        const axis = c.days.map((day, index) => (index === last
-            ? "<p class=\"ov-axis__today\">Hôm nay</p>"
-            : `<p class="ov-axis__day tabular">${day.label}</p>`)).join("");
-        return `
-        <section class="card ov-chart" aria-labelledby="ov-chart-title">
-            <header class="ov-card-head">
-                <h2 id="ov-chart-title">Đơn mỗi ngày</h2>
-                <p class="ov-card-head__sub">7 ngày gần nhất · hôm nay ${c.ordersToday} đơn, hôm qua ${c.ordersYesterday}</p>
-            </header>
-            <div role="img" aria-label="Đơn mỗi ngày, 7 ngày gần nhất: ${c.days.map((day) => `${day.label} ${day.n}`).join(", ")}" class="ov-cols">${cols}</div>
-            <div class="ov-axis">${axis}</div>
-        </section>`;
-    };
-
-    /* ---------- Hoạt động từ audit log ---------- */
-    const VERB = { CREATE: "đã tạo", UPDATE: "đã sửa", SOFT_DELETE: "đã xoá", DELETE: "đã xoá", RESTORE: "đã khôi phục", DISABLE: "đã tắt", ENABLE: "đã bật", HIDE: "đã ẩn", UNHIDE: "đã hiện lại" };
-    const NOUN = { product: "sản phẩm", variant: "phiên bản", user: "tài khoản", account: "tài khoản", order: "đơn hàng", voucher: "voucher", review: "đánh giá" };
-    const entityTarget = (log) => {
-        const id = String(log.entityId ?? "");
-        return /^\d+$/.test(id) ? `#${id}` : id;
-    };
-    const describe = (log) => {
-        const action = String(log.action || "").toUpperCase();
-        const entity = String(log.entity || "").toLowerCase();
-        let what;
-        let target = entityTarget(log);
-        if (action === "CREATE_ADMIN") {
-            what = "đã tạo tài khoản Admin";
-            const created = log.changes && log.changes.username && log.changes.username.new;
-            if (created) target = String(created);
-        } else {
-            what = `${VERB[action] || `đã ${action.toLowerCase().replace(/_/g, " ")}`} ${NOUN[entity] || entity}`.trim();
-        }
-        const removed = action === "SOFT_DELETE" || action === "DELETE";
-        let href = "";
-        if (!removed && target) {
-            if (entity === "product" || entity === "variant") href = "#/san-pham";
-            else if (entity === "voucher") href = "#/voucher";
-            else if (entity === "review") href = "#/danh-gia";
-            else if (entity === "user" || entity === "account") href = "#/tai-khoan";
-            else if (entity === "order") href = `#/don-hang/${encodeURIComponent(log.entityId)}`;
-        }
-        return { what, target, href };
-    };
-    const timeLabel = (iso, today) => {
-        const date = new Date(iso);
-        if (Number.isNaN(date.getTime())) return "";
-        const diff = Math.round((today - startOfDay(date)) / DAY);
-        if (diff <= 0) return `${two(date.getHours())}:${two(date.getMinutes())}`;
-        if (diff === 1) return "Hôm qua";
-        const base = `${two(date.getDate())}/${two(date.getMonth() + 1)}`;
-        return date.getFullYear() === today.getFullYear() ? base : `${base}/${date.getFullYear()}`;
-    };
-    const activityBlock = (c) => `
-        <section class="card ov-activity" aria-labelledby="ov-activity-title">
-            <header class="ov-card-head"><h2 id="ov-activity-title">Hoạt động gần đây</h2></header>
-            <ul class="ov-feed">
-                ${c.logs.map((log) => {
-                    const who = String(log.actor || "admin");
-                    const { what, target, href } = describe(log);
-                    const targetHtml = !target ? "" : href ? `<a class="ov-feed__target" href="${href}">${esc(target)}</a>` : `<span class="ov-feed__plain">${esc(target)}</span>`;
-                    return `
-                <li class="ov-feed__item">
-                    ${UI.avatarHtml(who)}
-                    <div class="ov-feed__text">
-                        <p class="ov-feed__line"><span class="ov-feed__who">${esc(who)}</span> ${esc(what)} ${targetHtml}</p>
-                        <p class="ov-feed__at">${esc(timeLabel(log.timestamp, c.today))}</p>
-                    </div>
-                </li>`;
-                }).join("") || "<li class=\"ov-feed__empty\">Chưa có hoạt động nào.</li>"}
-            </ul>
         </section>`;
 
     const dataView = (c) => `
@@ -242,14 +160,10 @@
             <div>${statsBlock(c)}</div>
             <div class="ov-grid">
                 ${listBlock(c)}
-                <div class="ov-side">
-                    ${chartBlock(c)}
-                    ${activityBlock(c)}
-                </div>
+                <div class="ov-side">${topBlock(c)}</div>
             </div>
         </div>`;
 
-    /* ---------- Đang tải ---------- */
     const SKEL_W = ["40%", "50%", "40%", "33.333%"];
     const SKEL_W2 = ["25%", "33.333%", "20%", "25%"];
     const SKEL_S = ["50%", "40%", "60%"];
@@ -273,7 +187,7 @@
     const loadingView = () => `
         <div class="ov" aria-busy="true">
             <span class="sr-only" role="status">Đang tải tổng quan</span>
-            <div><div class="ov-stats">${statSkel()}${statSkel()}${statSkel()}${statSkel()}</div></div>
+            <div><div class="ov-stats ov-stats--5">${statSkel()}${statSkel()}${statSkel()}${statSkel()}${statSkel()}</div></div>
             <div class="ov-grid">
                 <section class="card ov-list">
                     <header class="ov-card-head ov-card-head--list"><h2>Cần xử lý</h2></header>
@@ -286,25 +200,13 @@
                 </section>
                 <div class="ov-side">
                     <section class="card ov-chart">
-                        <header class="ov-card-head"><h2>Đơn mỗi ngày</h2></header>
-                        <div class="ov-cols ov-cols--sk">${[40, 85, 55, 100, 25, 55, 70].map((height) => `<div class="ov-col ov-col--sk"><div class="sk ov-col__bar" style="height:${height * 1.5}px;border-radius:6px 6px 0 0"></div></div>`).join("")}</div>
-                        <div class="ov-axis ov-axis--sk">${Array.from({ length: 7 }, () => `<div class="ov-axis__sk">${sk("28px", "12px")}</div>`).join("")}</div>
-                    </section>
-                    <section class="card ov-activity">
-                        <header class="ov-card-head"><h2>Hoạt động gần đây</h2></header>
-                        <ul class="ov-feed">${Array.from({ length: 5 }, (_, i) => `<li class="ov-feed__item">${sk("32px", "32px", "ov-sk-square")}<div class="ov-feed__text ov-feed__text--sk">${sk(["80%", "60%", "66.666%", "75%", "50%"][i], "12px")}${sk("48px", "12px")}</div></li>`).join("")}</ul>
+                        <header class="ov-card-head"><h2>Top 5 sản phẩm bán chạy</h2></header>
+                        <div class="ov-top ov-top--sk">${[85, 70, 55, 40, 30].map((height) => `<div class="ov-top__col"><div class="ov-top__area"><div class="sk ov-top__bar" style="height:${height}%;border-radius:6px 6px 0 0"></div></div></div>`).join("")}</div>
                     </section>
                 </div>
             </div>
         </div>`;
 
-    /* ---------- Rỗng / lỗi: một khối thay cả lưới ---------- */
-    const emptyView = () => `
-        <section class="card ov-empty" aria-labelledby="ov-empty-title">
-            <h2 id="ov-empty-title">Chưa có đơn hàng nào</h2>
-            <p>Số liệu, đơn chờ xử lý và hoạt động sẽ hiện ở đây sau đơn đầu tiên. Trong lúc chờ, kiểm tra sản phẩm đã đủ hàng để bán.</p>
-            <a class="ab ab--primary" href="#/san-pham">Xem sản phẩm</a>
-        </section>`;
     const errorView = () => `
         <section class="card ov-error" role="alert">
             <div class="ov-error__body">
@@ -330,6 +232,7 @@
         return rows;
     };
 
+
     let hasData = false;
     let token = 0;
 
@@ -339,16 +242,15 @@
         const mine = ++token;
         if (!hasData) render(loadingView());
         try {
-            const [ordersPayload, products, logsPayload] = await Promise.all([
-                UI.api("/api/orders"),
-                fetchProducts(),
-                UI.api("/api/admin/audit-logs")
+            const [summaryPayload, pendingPayload, products] = await Promise.all([
+                UI.api("/api/admin/dashboard/summary"),
+                UI.api("/api/orders?status=PENDING&pageSize=50"),
+                fetchProducts()
             ]);
             if (mine !== token) return;
-            const orders = unwrap(ordersPayload);
-            if (window.AdminShell) window.AdminShell.setPendingCount(window.AdminShell.countPending(orders));
+            if (window.AdminShell) window.AdminShell.setPendingCount(summaryPayload.data.pendingOrders);
             hasData = true;
-            render(orders.length ? dataView(compute({ orders, products, logs: unwrap(logsPayload) })) : emptyView());
+            render(dataView(compute({ summary: summaryPayload.data, pendingOrders: unwrap(pendingPayload), products })));
         } catch (error) {
             if (mine !== token) return;
             if (hasData) return;

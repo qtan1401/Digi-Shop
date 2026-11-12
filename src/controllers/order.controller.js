@@ -57,8 +57,8 @@ const getOrderDetail = async (req, res) => {
 /** [GET] /api/orders — Danh sách tất cả đơn hàng */
 const getAllOrders = async (req, res) => {
     try {
-        const orders = await orderService.getAllOrders();
-        return res.status(200).json({ success: true, data: orders, total: orders.length });
+        const { data, meta } = await orderService.getAllOrders(req.query);
+        return res.status(200).json({ success: true, data, meta });
     } catch (error) {
         return sendOrderError(res, error);
     }

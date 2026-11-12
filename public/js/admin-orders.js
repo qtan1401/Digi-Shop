@@ -3,13 +3,15 @@
  *   AdminOrders.mount(rootEl, { api, toast, initialOrderId })  gọi một lần, vẽ cả màn vào rootEl
  *   AdminOrders.select(orderId)                                 chọn đơn khi hash đổi
  * api(url, options) = DigiAuth.api (ném Error có .code/.status); toast(message, 'success'|'error'|'info').
- * Mọi thay đổi đơn bắn 'admin:orders-changed' { detail: { orders } } trên document.
- * Dữ liệu: GET /api/orders (lọc, sắp xếp, phân trang làm phía client), PATCH /api/orders/:id/status|payment-status.
+ * Mọi thay đổi đơn bắn 'admin:orders-changed' { detail: { orders, counts } } trên document (counts = số đơn theo trạng thái, theo bộ lọc hiện tại).
+ * Dữ liệu: GET /api/orders?page&pageSize&status&paymentStatus&range&from&to&q (phân trang, lọc, tìm kiếm ở máy chủ, mới nhất trước),
+ * GET /api/orders/:id (đơn ngoài trang hiện tại khi mở bằng liên kết), PATCH /api/orders/:id/status|payment-status.
  */
 (() => {
     "use strict";
 
-    const PAGE_SIZE = 10;
+    const PAGE_SIZE = 20;
+    const SEARCH_DELAY = 300;
     const XL = "(min-width: 1280px)";
     const ORDER_STATUS = { PENDING: "Chờ xử lý", PROCESSING: "Đang chuẩn bị", SHIPPED: "Đang giao", DELIVERED: "Đã giao", CANCELLED: "Đã huỷ" };
     const PAY_STATUS = { UNPAID: "Chưa thanh toán", PAID: "Đã thanh toán", REFUNDED: "Đã hoàn tiền" };
@@ -21,7 +23,7 @@
     const TABS = ["ALL", "PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
     const TONE = { PENDING: ["w", "circle-ellipsis"], PROCESSING: ["n", "circle-dot"], SHIPPED: ["n", "circle-arrow-right"], DELIVERED: ["s", "circle-check"], CANCELLED: ["e", "circle-x"] };
     const PAY_TONE = { UNPAID: ["n", "circle"], PAID: ["s", "circle-check"], REFUNDED: ["n", "undo-2"] };
-    const SORTS = [["newest", "Mới nhất"], ["oldest", "Cũ nhất"], ["total-desc", "Tổng tiền cao nhất"], ["total-asc", "Tổng tiền thấp nhất"]];
+    const RANGES = [["all", "Tất cả"], ["today", "Hôm nay"], ["yesterday", "Hôm qua"], ["week", "Tuần này"], ["month", "Tháng này"], ["custom", "Chọn ngày…"]];
     const tabLabel = (k) => (k === "ALL" ? "Tất cả" : ORDER_STATUS[k]);
     const canCancel = (s) => s === "PENDING" || s === "PROCESSING";
 
@@ -31,7 +33,6 @@
     const { esc, vnd, ic, createSelect } = Kit;
     const pad = (n) => String(n).padStart(2, "0");
 
-    const fold = (s) => String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
     const hoursAgo = (h) => (h < 1 ? "vừa xong" : h < 24 ? `${h} giờ trước` : `${Math.floor(h / 24)} ngày ${h % 24} giờ trước`);
     const stamp = (d) => {
         const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -59,10 +60,10 @@
             items, total: Number(raw.totalPrice) || 0, qty: items.reduce((s, it) => s + it.qty, 0),
             subtotal: raw.subtotal === undefined || raw.subtotal === null ? sum : Number(raw.subtotal) || 0,
             shipping: Number(raw.shippingFee) || 0, discount: Number(raw.discount) || 0, vouchers,
+            pointsRedeemed: Number(raw.pointsRedeemed) || 0, pointsDiscount: Number(raw.pointsDiscount) || 0, pointsEarned: Number(raw.pointsEarned) || 0,
             method: METHOD[raw.paymentMethod] || raw.paymentMethod || "",
             status: raw.orderStatus, pay: raw.paymentStatus, created,
             age: Math.max(0, Math.floor((now - created.getTime()) / 36e5)),
-            hay: fold(`${raw.id} ${c.name || ""}`), digits: String(c.phone || "").replace(/\D/g, ""),
         };
     };
 
@@ -89,8 +90,9 @@
         const apiCall = options.api || ((url, opts) => window.DigiAuth.api(url, opts));
         const toast = typeof options.toast === "function" ? options.toast : () => {};
         const state = {
-            phase: "loading", error: null, orders: [], now: Date.now(),
-            tab: "ALL", pay: "ALL", sort: "newest", q: "", page: 1,
+            phase: "loading", error: null, orders: [], pinned: null, now: Date.now(),
+            meta: { total: 0, totalPages: 1, counts: null },
+            tab: "ALL", pay: "ALL", range: "all", from: "", to: "", q: "", page: 1, token: 0,
             selectedId: null, panelOpen: false, busy: new Map(), pendingSelect: options.initialOrderId || null,
         };
         let confirmState = null;
@@ -106,6 +108,10 @@
                             <label class="ao-search"><span class="ao-sr">Tìm đơn hàng</span><input type="search" class="ao-input" placeholder="Tìm theo mã đơn, tên khách, SĐT" autocomplete="off" data-role="search"></label>
                             <div class="ao-filters" data-slot="filters"></div>
                         </div>
+                        <div class="ao-dates" data-slot="dates" hidden>
+                            <label class="ao-date"><span>Từ ngày</span><input type="date" class="ao-input" data-role="from"></label>
+                            <label class="ao-date"><span>Đến ngày</span><input type="date" class="ao-input" data-role="to"></label>
+                        </div>
                         <div data-slot="list"></div>
                         <div data-slot="foot"></div>
                     </section>
@@ -120,55 +126,49 @@
                 <p class="ao-sr" role="status" aria-live="polite" data-slot="live"></p>
             </div>`;
         const $ = (sel) => rootEl.querySelector(`[data-slot="${sel}"]`);
-        const slots = { chips: $("chips"), filters: $("filters"), list: $("list"), foot: $("foot"), detail: $("detail"), aside: $("aside"), ph: $("ph"), live: $("live") };
+        const slots = { chips: $("chips"), filters: $("filters"), dates: $("dates"), list: $("list"), foot: $("foot"), detail: $("detail"), aside: $("aside"), ph: $("ph"), live: $("live") };
         const searchInput = rootEl.querySelector('[data-role="search"]');
         const listSection = rootEl.querySelector(".ao-list");
 
         // ---- bộ lọc có select tự vẽ ----
-        const countAll = (fn) => state.orders.filter(fn).length;
-        const known = () => state.phase === "ready";
         const paySelect = createSelect({
             label: "Lọc theo thanh toán", size: "filter", wrap: "",
             getValueHtml: (v) => (v === "ALL"
                 ? '<span class="ao-muted">Thanh toán<span class="ao-sm-only">:</span></span><span class="ao-sm-only"> Tất cả</span>'
                 : `<span class="ao-muted">Thanh toán:</span> ${esc(PAY_STATUS[v])}`),
-            getGroups: (v) => [[{ value: "ALL", html: "Tất cả", hint: known() ? state.orders.length : "" }, ...Object.keys(PAY_STATUS).map((k) => ({ value: k, html: PAY_STATUS[k], hint: known() ? countAll((o) => o.paymentStatus === k) : "" }))]],
+            getGroups: () => [[{ value: "ALL", html: "Tất cả" }, ...Object.keys(PAY_STATUS).map((k) => ({ value: k, html: PAY_STATUS[k] }))]],
             onSelect: (v) => { state.pay = v; paySelect.setValue(v); onFilterChange(); },
         });
-        const sortSelect = createSelect({
-            label: "Sắp xếp", size: "filter", edge: "right",
-            getValueHtml: (v) => `<span class="ao-sort-val">${ic("arrow-down-wide-narrow", "ao-i4 ao-muted")}${esc(SORTS.find((s) => s[0] === v)[1])}</span>`,
-            getGroups: () => [SORTS.map(([value, html]) => ({ value, html }))],
-            onSelect: (v) => { state.sort = v; sortSelect.setValue(v); onFilterChange(); },
+        const rangeLabel = (v) => RANGES.find((r) => r[0] === v)[1];
+        const rangeSelect = createSelect({
+            label: "Lọc theo thời gian", size: "filter", edge: "right",
+            getValueHtml: (v) => `<span class="ao-sort-val">${ic("calendar-clock", "ao-i4 ao-muted")}${v === "all" ? '<span class="ao-muted">Thời gian<span class="ao-sm-only">:</span></span><span class="ao-sm-only"> Tất cả</span>' : esc(rangeLabel(v))}</span>`,
+            getGroups: () => [RANGES.map(([value, html]) => ({ value, html }))],
+            onSelect: (v) => {
+                state.range = v;
+                rangeSelect.setValue(v);
+                slots.dates.hidden = v !== "custom";
+                // Ngày chưa đủ thì chưa lọc: giữ nguyên danh sách cho tới khi có ít nhất một ngày hợp lệ.
+                if (v !== "custom" || state.from || state.to) onFilterChange();
+            },
         });
-        slots.filters.append(paySelect.el, sortSelect.el);
+        slots.filters.append(paySelect.el, rangeSelect.el);
         paySelect.setValue("ALL");
-        sortSelect.setValue("newest");
+        rangeSelect.setValue("all");
 
         // ---- dữ liệu dẫn xuất ----
-        const views = () => state.orders.map((o) => toView(o, state.now));
-        const filtered = () => {
-            const q = fold(state.q.trim());
-            const qd = state.q.replace(/\D/g, "");
-            let list = views().filter((v) => (state.tab === "ALL" || v.status === state.tab) && (state.pay === "ALL" || v.pay === state.pay)
-                && (!q || v.hay.includes(q) || (qd.length >= 3 && v.digits.includes(qd))));
-            const by = { newest: (a, b) => b.created - a.created, oldest: (a, b) => a.created - b.created, "total-desc": (a, b) => b.total - a.total, "total-asc": (a, b) => a.total - b.total }[state.sort];
-            list = list.sort(by);
-            return list;
-        };
-        const pageOf = (list) => {
-            const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-            state.page = Math.min(Math.max(1, state.page), pages);
-            return { pages, rows: list.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE), total: list.length };
-        };
-        const byId = (id) => state.orders.find((o) => o.id === id);
+        // Chỉ một trang đơn nằm trong bộ nhớ; thêm đơn "ghim" khi mở bằng liên kết tới đơn ở trang khác.
+        const views = () => [...state.orders, ...(state.pinned && !state.orders.some((o) => o.id === state.pinned.id) ? [state.pinned] : [])].map((o) => toView(o, state.now));
+        const rowsOnPage = () => state.orders.map((o) => toView(o, state.now));
+        const byId = (id) => state.orders.find((o) => o.id === id) || (state.pinned && state.pinned.id === id ? state.pinned : undefined);
         const live = (msg) => { slots.live.textContent = ""; if (msg) setTimeout(() => { slots.live.textContent = msg; }, 20); };
+        const customRangeIncomplete = () => state.range === "custom" && !state.from && !state.to;
 
         // ---- vẽ: chip trạng thái ----
         const renderChips = () => {
             slots.chips.innerHTML = TABS.map((k) => {
                 const on = k === state.tab;
-                const n = k === "ALL" ? state.orders.length : countAll((o) => o.orderStatus === k);
+                const n = state.meta.counts ? state.meta.counts[k === "ALL" ? "all" : k] : 0;
                 const count = state.phase === "ready" ? `<span class="ao-chip-n">${n}</span>`
                     : state.phase === "loading" ? '<span class="ao-chip-sk"></span>' : "";
                 return `<button type="button" role="radio" aria-checked="${on}" tabindex="${on ? 0 : -1}" data-tab="${k}" class="ao-chip">${tabLabel(k)}${count}</button>`;
@@ -180,10 +180,12 @@
             <div class="ao-sk-row">${bar(["8rem", "7rem", "9rem"][k % 3], "12px")}${bar("5rem", "12px")}</div>
             <div class="ao-sk-row" style="margin-top:10px">${bar("7rem", "12px")}${bar("4rem", "12px")}</div>
             <div class="ao-sk-row" style="margin-top:12px;justify-content:flex-start;gap:6px">${bar("6rem", "24px")}${bar("7rem", "24px")}</div></div></li>`;
+        const hasFilter = () => state.tab !== "ALL" || state.pay !== "ALL" || state.range !== "all" || state.q.trim() !== "";
         const emptyText = () => {
             const parts = [];
             if (state.tab !== "ALL") parts.push(tabLabel(state.tab).toLowerCase());
             if (state.pay !== "ALL") parts.push(PAY_STATUS[state.pay].toLowerCase());
+            if (state.range !== "all") parts.push(state.range === "custom" ? "trong khoảng ngày đã chọn" : rangeLabel(state.range).toLowerCase());
             if (state.q.trim()) parts.push(`khớp “${esc(state.q.trim())}”`);
             return `Không có đơn nào ${parts.join(" ")}`.trim();
         };
@@ -209,37 +211,28 @@
                     <button type="button" class="ao-btn ao-btn-outline" data-role="retry">${ic("rotate-cw", "ao-i4 ao-shrink")}Thử lại</button></div></div>`;
                 return;
             }
-            if (!state.orders.length) {
-                slots.list.innerHTML = '<div class="ao-block-top"><p class="ao-empty">Chưa có đơn hàng nào.</p></div>';
-                return;
-            }
-            const { rows } = pageOf(filtered());
+            const rows = rowsOnPage();
             if (!rows.length) {
-                slots.list.innerHTML = `<div class="ao-block-top"><p class="ao-empty">${emptyText()}. <button type="button" class="ao-linkbtn" data-role="clear-filter">Xoá lọc</button></p></div>`;
+                slots.list.innerHTML = hasFilter()
+                    ? `<div class="ao-block-top"><p class="ao-empty">${emptyText()}. <button type="button" class="ao-linkbtn" data-role="clear-filter">Xoá lọc</button></p></div>`
+                    : '<div class="ao-block-top"><p class="ao-empty">Chưa có đơn hàng nào.</p></div>';
                 return;
             }
             slots.list.innerHTML = `<ul class="ao-items">${rows.map(itemHtml).join("")}</ul>`;
         };
 
         // ---- vẽ: chân danh sách ----
-        const pagerHtml = (page, pages) => {
-            const arrow = (dir, dis) => `<button type="button" class="ao-pg-arrow" data-page="${dir === "left" ? page - 1 : page + 1}" aria-label="Trang ${dir === "left" ? "trước" : "sau"}" ${dis ? "disabled" : ""}>${ic(`chevron-${dir}`, "ao-i4")}</button>`;
-            const mid = pages <= 5
-                ? Array.from({ length: pages }, (_, k) => k + 1).map((n) => `<button type="button" data-page="${n}" ${n === page ? 'aria-current="page"' : ""} class="ao-pg-num ${n === page ? "is-on" : ""}">${n}</button>`).join("")
-                : `<span class="ao-pg-of">${page} / ${pages}</span>`;
-            return `<nav aria-label="Phân trang" class="ao-pager">${arrow("left", page === 1)}${mid}${arrow("right", page === pages)}</nav>`;
-        };
         const renderFoot = () => {
             if (state.phase === "loading") {
                 slots.foot.innerHTML = `<div class="ao-foot ao-foot-sk">${bar("8rem", "12px")}${bar("5rem", "12px")}</div>`;
                 return;
             }
-            if (state.phase !== "ready" || !state.orders.length) { slots.foot.innerHTML = ""; return; }
-            const { pages, total } = pageOf(filtered());
-            if (!total) { slots.foot.innerHTML = ""; return; }
+            const { total, totalPages } = state.meta;
+            if (state.phase !== "ready" || !total) { slots.foot.innerHTML = ""; return; }
             const from = (state.page - 1) * PAGE_SIZE + 1;
             const to = Math.min(total, state.page * PAGE_SIZE);
-            slots.foot.innerHTML = `<div class="ao-foot"><p class="ao-count">${from} tới ${to} trong ${total} đơn</p><div class="ao-foot-nav">${pagerHtml(state.page, pages)}</div></div>`;
+            // Luôn hiện số trang, kể cả khi chỉ có một trang.
+            slots.foot.innerHTML = `<div class="ao-foot"><p class="ao-count">${from} tới ${to} trong ${total} đơn</p><div class="ao-foot-nav">${Kit.pagerHtml(state.page, totalPages)}</div></div>`;
         };
 
         // ---- vẽ: chi tiết ----
@@ -276,10 +269,14 @@
             } else {
                 discountRows = bkRow("Voucher", "Không dùng", true);
             }
+            const pointsRow = v.pointsRedeemed > 0
+                ? bkRow(`Điểm thưởng đã dùng&nbsp;· ${v.pointsRedeemed.toLocaleString("vi-VN")}&nbsp;điểm`, `−${vnd(v.pointsDiscount)}`)
+                : bkRow("Điểm thưởng", "Không dùng", true);
             return `<dl class="ao-bk" aria-label="Chi tiết giá">
                 ${bkRow(`Tạm tính&nbsp;· ${v.qty}&nbsp;sản&nbsp;phẩm`, vnd(v.subtotal))}
                 ${bkRow("Phí vận chuyển", vnd(v.shipping))}
-                ${discountRows}</dl>
+                ${discountRows}
+                ${pointsRow}</dl>
                 <div class="ao-totalrow"><p class="ao-totalrow-l">Tổng cộng</p><p class="ao-totalrow-v">${vnd(v.total)}</p></div>`;
         };
         const detailHtml = (v) => {
@@ -307,6 +304,7 @@
                     <section class="ao-sec"><h3 class="ao-h3">Thanh toán</h3>${priceHtml(v)}
                         <dl class="ao-dl ao-dl-pay">
                         ${dlRow("Phương thức", esc(v.method))}
+                        ${dlRow("Điểm tích lũy", v.pointsEarned > 0 ? `+${v.pointsEarned.toLocaleString("vi-VN")} điểm` : '<span class="ao-muted ao-normal">—</span>')}
                         <div class="ao-dl-row is-center"><dt>Trạng thái</dt><dd class="ao-dd-plain" data-slot="pay-select"></dd></div></dl></section>
                 </div>${foot}`;
         };
@@ -408,72 +406,91 @@
             if (open) openPanel(trigger);
             return true;
         };
-        // Từ 1280 luôn có một đơn đang xem khi danh sách không rỗng (như wireframe); dưới 1280 để panel đóng.
+        // Từ 1280 luôn có một đơn đang xem khi trang không rỗng (như wireframe); dưới 1280 để panel đóng.
         const ensureSelection = () => {
             if (state.phase !== "ready") return;
-            const { rows } = pageOf(filtered());
+            const rows = state.orders;
             if (!mediaXl.matches) {
-                if (state.selectedId && !rows.some((v) => v.id === state.selectedId) && !state.panelOpen) state.selectedId = null;
+                if (state.selectedId && !byId(state.selectedId) && !state.panelOpen) state.selectedId = null;
                 return;
             }
+            if (state.pinned && state.selectedId === state.pinned.id) return;
             if (!rows.length) { state.selectedId = null; return; }
-            if (!rows.some((v) => v.id === state.selectedId)) state.selectedId = rows[0].id;
+            if (!rows.some((o) => o.id === state.selectedId)) state.selectedId = rows[0].id;
         };
         const onFilterChange = () => {
             state.page = 1;
-            ensureSelection();
-            renderChips();
-            renderList();
-            renderFoot();
-            renderDetail();
-        };
-        const revealSelected = () => {
-            const v = views().find((x) => x.id === state.selectedId);
-            if (!v) return;
-            const list = filtered();
-            const idx = list.findIndex((x) => x.id === v.id);
-            if (idx < 0) {
-                state.tab = "ALL"; state.pay = "ALL"; state.q = ""; searchInput.value = "";
-                paySelect.setValue("ALL");
-                const all = filtered();
-                state.page = Math.floor(all.findIndex((x) => x.id === v.id) / PAGE_SIZE) + 1;
-            } else state.page = Math.floor(idx / PAGE_SIZE) + 1;
-        };
-        const applyPendingSelect = () => {
-            const id = state.pendingSelect;
-            state.pendingSelect = null;
-            if (id && byId(id)) {
-                state.selectedId = id;
-                revealSelected();
-                state.panelOpen = !mediaXl.matches;
-            }
+            load({ quiet: true });
         };
 
         // ---- gọi API ----
-        const emitChanged = () => document.dispatchEvent(new CustomEvent("admin:orders-changed", { detail: { orders: state.orders } }));
-        const load = async () => {
-            state.phase = "loading";
+        const listUrl = () => {
+            const params = new URLSearchParams({ page: String(state.page), pageSize: String(PAGE_SIZE) });
+            if (state.tab !== "ALL") params.set("status", state.tab);
+            if (state.pay !== "ALL") params.set("paymentStatus", state.pay);
+            if (state.range !== "all" && !customRangeIncomplete()) {
+                params.set("range", state.range);
+                if (state.range === "custom") {
+                    if (state.from) params.set("from", state.from);
+                    if (state.to) params.set("to", state.to);
+                }
+            }
+            if (state.q.trim()) params.set("q", state.q.trim());
+            return `/api/orders?${params}`;
+        };
+        const emitChanged = () => document.dispatchEvent(new CustomEvent("admin:orders-changed", { detail: { orders: state.orders, counts: state.meta.counts } }));
+        // quiet: giữ danh sách cũ trên màn trong lúc tải (đổi lọc, đổi trang); không quiet: hiện khung chờ.
+        const load = async ({ quiet = false } = {}) => {
+            const mine = ++state.token;
             state.error = null;
-            renderAll();
+            if (!quiet || state.phase !== "ready") { state.phase = "loading"; renderAll(); }
+            else slots.list.setAttribute("aria-busy", "true");
             syncPanel();
             try {
-                const payload = await apiCall(loadUrl, { method: "GET" });
-                const list = Array.isArray(payload?.data) ? payload.data : [];
-                state.orders = list;
+                const payload = await apiCall(listUrl(), { method: "GET" });
+                if (mine !== state.token) return;
+                state.orders = Array.isArray(payload?.data) ? payload.data : [];
+                const meta = payload?.meta || {};
+                state.meta = { total: Number(meta.total) || 0, totalPages: Math.max(1, Number(meta.totalPages) || 1), counts: meta.counts || null };
+                state.page = Number(meta.page) || state.page;
                 state.now = Date.now();
                 state.phase = "ready";
-                applyPendingSelect();
-                if (!state.pendingSelect) ensureSelection();
+                ensureSelection();
                 renderAll();
                 syncPanel();
                 if (state.panelOpen) requestAnimationFrame(() => slots.aside.focus({ preventScroll: true }));
+                slots.list.removeAttribute("aria-busy");
                 emitChanged();
+                if (state.pendingSelect) {
+                    const id = state.pendingSelect;
+                    state.pendingSelect = null;
+                    openById(id);
+                }
             } catch (error) {
+                if (mine !== state.token) return;
+                slots.list.removeAttribute("aria-busy");
                 state.phase = "error";
                 state.error = error;
                 renderAll();
                 syncPanel();
             }
+        };
+        // Mở một đơn không nằm trên trang hiện tại (liên kết từ Tổng quan): tải riêng chi tiết đơn rồi ghim.
+        const openById = async (id) => {
+            if (!id) return;
+            if (!byId(id)) {
+                try {
+                    const payload = await apiCall(`/api/orders/${encodeURIComponent(id)}`, { method: "GET" });
+                    if (!payload?.data?.id) return;
+                    state.pinned = payload.data;
+                } catch (_) {
+                    toast("Không tìm thấy đơn hàng này.", "error");
+                    return;
+                }
+            }
+            state.selectedId = id;
+            renderList(); renderDetail();
+            openPanel(null);
         };
         const failMessage = (error, what) => {
             if (error?.code === "INVALID_ORDER_TRANSITION") return "Đơn không thể chuyển sang bước này vì trạng thái hiện tại đã thay đổi. Danh sách đã được tải lại.";
@@ -483,12 +500,21 @@
         };
         const replaceOrder = (next) => {
             const i = state.orders.findIndex((o) => o.id === next.id);
-            if (i >= 0) state.orders[i] = next; else state.orders.unshift(next);
+            if (i >= 0) state.orders[i] = next;
+            // Đơn đang xem có thể rời khỏi trang sau khi đổi trạng thái (đang lọc theo trạng thái): giữ lại để panel không trống.
+            if (state.selectedId === next.id) state.pinned = next;
         };
+        // Trạng thái đổi thì số đếm theo trạng thái và danh sách lọc cũng đổi: tải lại trang hiện tại, giữ dữ liệu cũ nếu lỗi.
         const silentReload = async () => {
             try {
-                const payload = await apiCall(loadUrl, { method: "GET" });
-                if (Array.isArray(payload?.data)) { state.orders = payload.data; state.now = Date.now(); }
+                const payload = await apiCall(listUrl(), { method: "GET" });
+                if (Array.isArray(payload?.data)) {
+                    state.orders = payload.data;
+                    const meta = payload.meta || {};
+                    state.meta = { total: Number(meta.total) || 0, totalPages: Math.max(1, Number(meta.totalPages) || 1), counts: meta.counts || state.meta.counts };
+                    state.page = Number(meta.page) || state.page;
+                    state.now = Date.now();
+                }
             } catch (_) { /* giữ dữ liệu cũ */ }
         };
         const patch = async (id, kind, status) => {
@@ -501,7 +527,8 @@
             if (confirmState) confirmState.setBusy(true);
             try {
                 const payload = await apiCall(url, { method: "PATCH", body: { status } });
-                if (payload?.data?.id) replaceOrder(payload.data); else await silentReload();
+                if (payload?.data?.id) replaceOrder(payload.data);
+                await silentReload();
                 state.now = Date.now();
                 state.busy.delete(id);
                 renderChips(); renderList(); renderFoot(); renderDetail();
@@ -597,7 +624,19 @@
         };
 
         // ---- sự kiện ----
-        searchInput.addEventListener("input", () => { state.q = searchInput.value; onFilterChange(); });
+        let searchTimer = null;
+        searchInput.addEventListener("input", () => {
+            state.q = searchInput.value;
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(onFilterChange, SEARCH_DELAY);
+        });
+        slots.dates.addEventListener("change", (e) => {
+            const input = e.target.closest("[data-role]");
+            if (!input) return;
+            state[input.dataset.role] = input.value;
+            if (state.from && state.to && state.from > state.to) { toast("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.", "error"); return; }
+            onFilterChange();
+        });
         slots.chips.addEventListener("click", (e) => {
             const b = e.target.closest("[data-tab]");
             if (!b || b.dataset.tab === state.tab) return;
@@ -620,8 +659,11 @@
             if (item) { selectOrder(item.dataset.id, { trigger: item }); return; }
             if (e.target.closest('[data-role="retry"]')) { load(); return; }
             if (e.target.closest('[data-role="clear-filter"]')) {
-                state.tab = "ALL"; state.pay = "ALL"; state.q = ""; searchInput.value = "";
+                state.tab = "ALL"; state.pay = "ALL"; state.range = "all"; state.from = ""; state.to = ""; state.q = ""; searchInput.value = "";
+                slots.dates.hidden = true;
+                slots.dates.querySelectorAll("input").forEach((input) => { input.value = ""; });
                 paySelect.setValue("ALL");
+                rangeSelect.setValue("all");
                 onFilterChange();
             }
         });
@@ -629,8 +671,8 @@
             const b = e.target.closest("[data-page]");
             if (!b || b.disabled) return;
             state.page = Number(b.dataset.page);
-            ensureSelection();
-            renderList(); renderFoot(); renderDetail();
+            load({ quiet: true });
+            window.scrollTo({ top: 0 });
         });
         slots.detail.addEventListener("click", (e) => {
             const t = e.target.closest("[data-role]");
@@ -675,15 +717,10 @@
             renderDetail();
         });
 
-        const loadUrl = "/api/orders";
-
         instance.select = (id) => {
+            if (!id) return;
             if (state.phase !== "ready") { state.pendingSelect = id; return; }
-            if (!byId(id)) return;
-            state.selectedId = id;
-            revealSelected();
-            renderChips(); renderList(); renderFoot(); renderDetail();
-            openPanel(null);
+            openById(id);
         };
         load();
     };

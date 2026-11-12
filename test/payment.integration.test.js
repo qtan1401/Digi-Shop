@@ -467,9 +467,18 @@ test("VNPay signed success after expiry releases stock once and stays in reconci
     assert.equal((await duplicate.json()).RspCode, "00");
     assert.equal(state.productVariants.get(1).stock, 1);
 
-    const reconciliation = await fetch(`${baseUrl}/api/payments/reconciliation`, {
+    // Reconciliation is an admin extra: hidden (404) unless ADMIN_EXTRAS is on.
+    const reconciliationRequest = () => fetch(`${baseUrl}/api/payments/reconciliation`, {
         headers: headersFor("admin-test-01", "admin")
     });
+    assert.equal((await reconciliationRequest()).status, 404);
+    process.env.ADMIN_EXTRAS = "1";
+    let reconciliation;
+    try {
+        reconciliation = await reconciliationRequest();
+    } finally {
+        delete process.env.ADMIN_EXTRAS;
+    }
     assert.equal(reconciliation.status, 200);
     const entries = (await reconciliation.json()).data;
     assert.equal(entries.length, 1);

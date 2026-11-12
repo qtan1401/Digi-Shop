@@ -5,6 +5,7 @@ const orderRepository = require("../repositories/order.repository");
 const reviewRepository = require("../repositories/review.repository");
 const { NodemailerSmtpMailer } = require("../auth/mailer");
 const { tokenMatches } = require("./guest-access");
+const adminPeriod = require("./admin-period");
 
 const VALID_ORDER_STATUSES = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
 const VALID_PAYMENT_STATUSES = ["UNPAID", "PAID", "REFUNDED"];
@@ -107,10 +108,62 @@ const listMyOrders = async (actor, query = {}) => {
     return { data, meta: { page, pageSize, total, totalPages, counts } };
 };
 
+const ADMIN_PAGE_SIZE = 20;
+const ADMIN_RANGES = ["today", "yesterday", "week", "month", "custom"];
+const invalidFilter = () => domainError("INVALID_FILTER", 400, "Bộ lọc không hợp lệ");
+
+/** Validates the admin list's date filter and returns { from, to } instants (to exclusive), both optional. */
+const adminDateRange = (query, now) => {
+    const { range, from, to } = query;
+    for (const value of [range, from, to]) {
+        if (value !== undefined && typeof value !== "string") throw invalidFilter();
+    }
+    const custom = range === "custom" || (range === undefined && (from !== undefined || to !== undefined));
+    if (!custom && (from !== undefined || to !== undefined)) throw invalidFilter();
+    if (range !== undefined && !ADMIN_RANGES.includes(range)) throw invalidFilter();
+    if (!custom) return range === undefined ? {} : adminPeriod.namedRange(range, now);
+
+    const fromDate = from === undefined ? undefined : adminPeriod.parseIsoDate(from);
+    const toDate = to === undefined ? undefined : adminPeriod.parseIsoDate(to);
+    if ((from !== undefined && !fromDate) || (to !== undefined && !toDate)) throw invalidFilter();
+    if (!fromDate && !toDate) throw invalidFilter();
+    if (fromDate && toDate && fromDate > toDate) throw invalidFilter();
+    return adminPeriod.namedRange("custom", now, { fromDate, toDate });
+};
+
 /**
- * Lấy toàn bộ danh sách đơn hàng (Admin route).
+ * Every customer's orders for administrators (Admin route): paged server side, newest first, filtered by status,
+ * payment status, created-at range (shop-local days, see admin-period) and a text search on order id, customer name or phone.
+ * Counts per status cover the same range and search, whatever the status filter.
  */
-const getAllOrders = async () => await orderRepository.getAllOrders();
+const getAllOrders = async (query = {}, now = new Date()) => {
+    const status = query.status === undefined ? "all" : query.status;
+    if (status !== "all" && !VALID_ORDER_STATUSES.includes(status)) throw invalidFilter();
+    const paymentStatus = query.paymentStatus;
+    if (paymentStatus !== undefined && !VALID_PAYMENT_STATUSES.includes(paymentStatus)) throw invalidFilter();
+    if (query.q !== undefined && (typeof query.q !== "string" || query.q.length > 100)) throw invalidFilter();
+    const search = query.q === undefined ? undefined : query.q.trim() || undefined;
+    const requestedPage = parsePositive(query.page, 1, MAX_PAGE);
+    const pageSize = parsePositive(query.pageSize, ADMIN_PAGE_SIZE, MAX_PAGE_SIZE);
+    const { from, to } = adminDateRange(query, now);
+
+    const counts = await orderRepository.countAllByStatus({ paymentStatus, from, to, search });
+    const total = counts[status];
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, totalPages);
+    const data = total === 0
+        ? []
+        : await orderRepository.listAllOrders({
+            status: status === "all" ? undefined : status,
+            paymentStatus,
+            from,
+            to,
+            search,
+            skip: (page - 1) * pageSize,
+            take: pageSize
+        });
+    return { data, meta: { page, pageSize, total, totalPages, counts } };
+};
 
 /**
  * Cập nhật trạng thái đơn hàng (orderStatus).

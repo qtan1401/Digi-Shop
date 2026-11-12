@@ -120,8 +120,17 @@ function readMailerConfig(environment = process.env) {
     return Object.freeze({ ...auth, smtp: Object.freeze({ host, port, secure, user, password }), mailFrom: from });
 }
 
+/**
+ * Admin features outside the course brief (review moderation, audit log view, admin account creation, payment
+ * reconciliation) are off unless ADMIN_EXTRAS is "1" or "true". Read on every call so it can be toggled in tests.
+ */
+function adminExtrasEnabled(environment = process.env) {
+    return ["1", "true"].includes(String(environment.ADMIN_EXTRAS || "").trim().toLowerCase());
+}
+
 module.exports = {
     AuthConfigError,
+    adminExtrasEnabled,
     DEFAULT_ACCESS_TTL_SECONDS,
     DEFAULT_REFRESH_TTL_SECONDS,
     REMEMBER_REFRESH_TTL_SECONDS,

@@ -43,7 +43,9 @@ const RATE_LIMITS = Object.freeze({
     refresh: Object.freeze({ windowMs: 60 * 1000, ipMax: 60, identifierMax: 60 }),
     // Guest checkout creates accounts and sends mail; the quote only prices a cart, so it may be asked far more often.
     guestCheckout: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 30, identifierMax: 10 }),
-    guestQuote: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 300, identifierMax: 120 })
+    guestQuote: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 300, identifierMax: 120 }),
+    // Comments without an account (Guest comment): 5 per IP per 15 minutes. Signed-in reviewers are not counted.
+    guestReview: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 5, identifierMax: 5 })
 });
 
 const normalizeRateIdentifier = (value) =>

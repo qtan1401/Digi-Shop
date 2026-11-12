@@ -91,6 +91,9 @@ const consumeEmailVerificationToken = async ({ tokenHash, now }, client = getPri
             data: { usedAt: now }
         });
         if (consumed.count !== 1) return { state: "INVALID" };
+        // A banned account is never reactivated by an old verification link.
+        const owner = await tx.user.findUnique({ where: { id: token.userId }, select: { status: true } });
+        if (owner && owner.status === "BANNED") return { state: "INVALID" };
         const updated = await tx.user.update({
             where: { id: token.userId },
             data: { status: "ACTIVE", emailVerifiedAt: now },
@@ -274,6 +277,22 @@ const revokeUserSessionsAndIncrementVersion = async (userId, client = getPrismaC
         }));
     });
 
+/**
+ * Admin ban / unban. Banning bumps authVersion and revokes every refresh session in the same transaction, so a
+ * session the customer already holds stops working at once. Unbanning only changes the status.
+ */
+const setUserStatus = async ({ userId, status }, client = getPrismaClient()) =>
+    client.$transaction(async (tx) => {
+        if (status === "BANNED") {
+            await tx.refreshSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+        }
+        return mapUser(await tx.user.update({
+            where: { id: userId },
+            data: status === "BANNED" ? { status, authVersion: { increment: 1 } } : { status },
+            select: USER_SELECT
+        }));
+    });
+
 module.exports = {
     USER_SELECT,
     mapUser,
@@ -301,5 +320,6 @@ module.exports = {
     findRefreshSession,
     rotateRefreshSession,
     revokeFamily,
-    revokeUserSessionsAndIncrementVersion
+    revokeUserSessionsAndIncrementVersion,
+    setUserStatus
 };

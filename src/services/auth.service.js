@@ -76,6 +76,7 @@ const usernameInvalidError = (value, statusCode) => new AuthError(
     statusCode,
     { username: true }
 );
+const bannedError = () => new AuthError("ACCOUNT_BANNED", "Account is banned", 403);
 const usernameTakenError = () => new AuthError("USERNAME_TAKEN", "Username đã được sử dụng", 409, { username: true });
 
 const hashPassword = async (password) => {
@@ -250,6 +251,7 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
             }
             throw new AuthError("INVALID_CREDENTIALS", "Invalid credentials", 401);
         }
+        if (user.role === "user" && user.status === "BANNED") throw bannedError();
         if (user.role === "user" && user.status !== "ACTIVE") {
             throw new AuthError("EMAIL_UNVERIFIED", "Email verification is required", 403);
         }
@@ -273,6 +275,7 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
         }
         const linked = await authRepository.findOAuthIdentity("google", identity.subject);
         let user = linked && linked.user;
+        if (user && user.status === "BANNED") throw bannedError();
         if (!user) {
             const existing = await authRepository.findUserByEmail(identity.email);
             if (existing) {
@@ -281,6 +284,7 @@ function createAuthService({ authRepository = repository, mailer, googleVerifier
                         throw new AuthError("GOOGLE_LINK_REQUIRES_PASSWORD", "Password confirmation is required", 409);
                     }
                 }
+                if (existing.status === "BANNED") throw bannedError();
                 try {
                     await authRepository.createOAuthIdentity({
                         userId: existing.id,

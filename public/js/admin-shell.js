@@ -1,6 +1,8 @@
 /* ===== ADMIN SHELL: khung (sidebar, thanh đầu trang, ☰) + router hash =====
- * Chạy sau admin.js (AdminUI), admin-orders.js (AdminOrders), admin-overview.js (AdminOverview).
- * Router: #/tong-quan (mặc định) · #/san-pham · #/don-hang[/<orderId>] · #/voucher · #/danh-gia · #/tai-khoan
+ * Chạy sau admin.js (AdminUI), admin-orders.js (AdminOrders), admin-overview.js (AdminOverview),
+ * admin-users.js (AdminUsers), admin-dashboard.js (AdminDashboard).
+ * Router: #/tong-quan (mặc định) · #/thong-ke · #/san-pham · #/don-hang[/<orderId>] · #/nguoi-dung · #/voucher · #/danh-gia · #/tai-khoan
+ * #/danh-gia và #/tai-khoan (cùng audit log) là tính năng ngoài đề: chỉ hiện khi máy chủ báo extras (ADMIN_EXTRAS=1), còn lại ẩn và quay về Tổng quan.
  * Mỗi màn là <section data-view="...">; đổi màn chỉ ẩn/hiện, bắn 'admin:view' trên document.
  */
 (() => {
@@ -10,12 +12,16 @@
 
     const VIEWS = {
         "tong-quan": { title: "Tổng quan" },
+        "thong-ke": { title: "Thống kê" },
         "san-pham": { title: "Sản phẩm" },
         "don-hang": { title: "Đơn hàng" },
+        "nguoi-dung": { title: "Người dùng" },
         "voucher": { title: "Voucher" },
-        "danh-gia": { title: "Đánh giá" },
-        "tai-khoan": { title: "Tài khoản" }
+        "danh-gia": { title: "Đánh giá", extra: true },
+        "tai-khoan": { title: "Tài khoản", extra: true }
     };
+    let extras = false;
+    const available = (key) => Boolean(VIEWS[key]) && (!VIEWS[key].extra || extras);
     const DEFAULT_VIEW = "tong-quan";
     const SITE = "NodeShop Admin";
 
@@ -33,7 +39,7 @@
     let ordersMounted = false;
     let lastFocus = null;
 
-    /* ---------- Số đếm đơn chờ xử lý trên sidebar ---------- */
+    /* ---------- Số đếm đơn chờ xử lý trên sidebar (đếm toàn cửa hàng, không theo bộ lọc của màn Đơn hàng) ---------- */
     const setPendingCount = (value) => {
         const count = Number(value);
         if (!countBadge) return;
@@ -41,12 +47,10 @@
         countBadge.textContent = count > 99 ? "99+" : String(count);
         countBadge.hidden = false;
     };
-    const countPending = (orders) => (Array.isArray(orders) ? orders.filter((order) => order && order.orderStatus === "PENDING").length : 0);
-
-    document.addEventListener("admin:orders-changed", (event) => {
-        const orders = event.detail && event.detail.orders;
-        if (Array.isArray(orders)) setPendingCount(countPending(orders));
-    });
+    const refreshPending = () => UI.api("/api/orders?status=PENDING&pageSize=1")
+        .then((payload) => setPendingCount(payload && payload.meta && payload.meta.total))
+        .catch(() => {});
+    document.addEventListener("admin:orders-changed", refreshPending);
 
     /* ---------- Panel trượt dưới lg ---------- */
     const isMenuOpen = () => app.classList.contains("is-menu-open");
@@ -119,6 +123,8 @@
 
     /* ---------- Màn Voucher và Đánh giá (module riêng, mount một lần khi mở lần đầu) ---------- */
     const MODULES = {
+        "thong-ke": { global: "AdminDashboard", root: "dashboard-root", mounted: false, label: "Thống kê" },
+        "nguoi-dung": { global: "AdminUsers", root: "users-root", mounted: false, label: "Người dùng" },
         "voucher": { global: "AdminVouchers", root: "vouchers-root", mounted: false, label: "Voucher" },
         "danh-gia": { global: "AdminReviews", root: "reviews-root", mounted: false, label: "Đánh giá" }
     };
@@ -143,7 +149,7 @@
     /* ---------- Router ---------- */
     const parseHash = () => {
         const match = /^#\/([a-z-]+)(?:\/([^?#]+))?/.exec(window.location.hash);
-        if (!match || !VIEWS[match[1]]) return { key: null, param: null };
+        if (!match || !available(match[1])) return { key: null, param: null };
         let param = null;
         if (match[2]) { try { param = decodeURIComponent(match[2]); } catch (_) { param = match[2]; } }
         return { key: match[1], param: match[1] === "don-hang" ? param : null };
@@ -194,7 +200,15 @@
         document.querySelectorAll("[data-admin-name]").forEach((element) => { element.textContent = name; element.title = name; });
     };
 
-    const start = (session) => {
+    // Ẩn hẳn phần ngoài đề: mục menu và màn (hidden), để Tab và trình đọc màn hình không chạm tới.
+    const applyExtras = () => {
+        navLinks.forEach((link) => { if (VIEWS[link.dataset.nav] && VIEWS[link.dataset.nav].extra) link.hidden = !extras; });
+    };
+    const loadFeatures = () => UI.api("/api/admin/features")
+        .then((payload) => { extras = Boolean(payload && payload.data && payload.data.extras); })
+        .catch(() => { extras = false; });
+
+    const begin = (session) => {
         fillAccount(session);
         syncInert();
         app.hidden = false;
@@ -202,12 +216,10 @@
         window.addEventListener("hashchange", () => route());
         window.addEventListener("popstate", () => route());
         route({ initial: true });
-        // Số đếm đơn chờ: Tổng quan và Đơn hàng tự cấp qua dữ liệu của chúng; các màn còn lại thì tải một lần.
-        if (current !== "tong-quan" && current !== "don-hang") {
-            UI.api("/api/orders").then((payload) => setPendingCount(countPending(payload && payload.data))).catch(() => {});
-        }
+        refreshPending();
     };
+    const start = (session) => loadFeatures().then(() => { applyExtras(); begin(session); });
 
-    window.AdminShell = { setPendingCount, countPending, go: (hash) => { window.location.hash = hash; } };
+    window.AdminShell = { setPendingCount, go: (hash) => { window.location.hash = hash; }, extras: () => extras };
     UI.ready.then(start);
 })();

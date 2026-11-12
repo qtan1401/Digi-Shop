@@ -94,6 +94,11 @@
 .ao .ao-input::-webkit-search-cancel-button, .ao .ao-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
 @media (min-width: 768px) { .ao .ao-input { height: 40px; font-size: 14px; line-height: 20px; } }
 .ao .ao-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* Khoảng ngày tuỳ chọn: hai ô ngày dưới bộ lọc, chỉ hiện khi chọn "Chọn ngày…". */
+.ao .ao-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 12px 12px; }
+.ao .ao-dates[hidden] { display: none; }
+.ao .ao-date { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.ao .ao-date .ao-input { padding: 0 12px; }
 
 /* ===== Select tự vẽ (choice-controls.md) + lớp nổi (overlay.md) ===== */
 .ao .ao-sel { position: relative; min-width: 0; }

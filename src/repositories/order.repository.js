@@ -196,15 +196,51 @@ const createOrder = async (orderData) => {
     return mapOrder(row);
 };
 
-const getAllOrders = async () => {
-    const rows = await getPrismaClient().order.findMany({
-        include: itemsInclude,
-        orderBy: [
-            { createdAt: "desc" },
-            { id: "desc" }
-        ]
+const adminOrderWhere = ({ status, paymentStatus, from, to, search } = {}) => {
+    const where = {};
+    if (status) where.orderStatus = status;
+    if (paymentStatus) where.paymentStatus = paymentStatus;
+    if (from || to) {
+        where.createdAt = {};
+        if (from) where.createdAt.gte = from;
+        if (to) where.createdAt.lt = to;
+    }
+    if (search) {
+        where.OR = [
+            { id: { contains: search } },
+            { customerName: { contains: search } },
+            { customerPhone: { contains: search } }
+        ];
+    }
+    return where;
+};
+
+/** Order counts per status for the admin list, inside the payment filter, date range and search but whatever the status filter. */
+const countAllByStatus = async ({ paymentStatus, from, to, search } = {}) => {
+    const rows = await getPrismaClient().order.groupBy({
+        by: ["orderStatus"],
+        where: adminOrderWhere({ paymentStatus, from, to, search }),
+        _count: { _all: true }
     });
-    return rows.map(mapOrder);
+    const counts = Object.fromEntries(ORDER_STATUSES.map((status) => [status, 0]));
+    let all = 0;
+    for (const row of rows) {
+        counts[row.orderStatus] = row._count._all;
+        all += row._count._all;
+    }
+    return { all, ...counts };
+};
+
+/** One page of every customer's orders for administrators, newest first, with items and vouchers. */
+const listAllOrders = async ({ status, paymentStatus, from, to, search, skip, take }) => {
+    const rows = await getPrismaClient().order.findMany({
+        where: adminOrderWhere({ status, paymentStatus, from, to, search }),
+        include: itemsInclude,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take
+    });
+    return rows.map((row) => mapOrder(row));
 };
 
 const getOrderById = async (id, options = {}) => {
@@ -386,7 +422,8 @@ const updatePaymentStatus = async (id, status) =>
 
 module.exports = {
     createOrder,
-    getAllOrders,
+    countAllByStatus,
+    listAllOrders,
     getOrderById,
     countByStatus,
     getOwnerEmail,

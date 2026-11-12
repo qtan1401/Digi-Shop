@@ -1,0 +1,37 @@
+/* NodeShop admin: màn Người dùng. Dùng chung phần còn lại với admin-orders.css (gốc `.ao`); riêng màn này là `.au-*`.
+   Chỉ dùng token của :root trong styles.css. Breakpoint: sm 640. */
+
+.ao.au { min-width: 0; }
+.ao .au-card { overflow: hidden; }
+.ao.au .is-fetching { opacity: 0.6; transition: opacity 150ms; }
+@media (min-width: 640px) { .ao.au .ao-toolbar .ao-search { width: 22rem; } }
+
+/* ----- bảng ----- */
+.ao .au-th-email { min-width: 14rem; }
+.ao .au-th-name { min-width: 9rem; }
+.ao .au-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ao .au-nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ao .au-email { max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; }
+.ao .au-sub { margin-top: 2px; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.ao .au-row.is-banned > .ao-td, .ao .au-card-item.is-banned { background: var(--bg-primary); }
+.ao .au-row.is-banned:hover > .ao-td { background: var(--bg-primary); }
+.ao .au-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ao .ao-btn-sm.au-danger { color: var(--danger); }
+.ao .au-sk-sq { border-radius: 8px; }
+
+/* ----- card mobile ----- */
+.ao .au-card-item { display: flex; flex-direction: column; gap: 12px; padding: 12px 16px; }
+.ao .au-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ao .au-card-who { min-width: 0; flex: 1; }
+.ao .au-card-item .au-email, .ao .au-card-item .au-sub { max-width: 100%; }
+.ao .au-card-meta { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 12px; line-height: 16px; }
+.ao .au-card-meta dt { color: var(--text-secondary); }
+.ao .au-card-meta dd { margin: 2px 0 0; font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.ao .au-card-item .au-actions { justify-content: stretch; }
+.ao .au-card-item .au-actions .ao-btn-sm { flex: 1; }
+
+/* ----- hộp thoại ----- */
+.ao .au-icon-neutral { background: var(--secondary); }
+.ao .au-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 20px; color: var(--text-primary); }
+.ao .au-dlg-error { margin-top: 12px; font-size: 14px; line-height: 20px; color: var(--error-text); }
+.ao .au-dlg-error[hidden] { display: none; }

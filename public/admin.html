@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="/css/admin-orders.css">
     <link rel="stylesheet" href="/css/admin-vouchers.css">
     <link rel="stylesheet" href="/css/admin-reviews.css">
+    <link rel="stylesheet" href="/css/admin-users.css">
+    <link rel="stylesheet" href="/css/admin-dashboard.css">
     <link rel="stylesheet" href="/css/auth.css">
 </head>
 <body class="admin-page">
@@ -21,6 +23,9 @@
                 <a class="admin-navlink" href="#/tong-quan" data-nav="tong-quan">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>Tổng quan
                 </a>
+                <a class="admin-navlink" href="#/thong-ke" data-nav="thong-ke">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>Thống kê
+                </a>
                 <a class="admin-navlink" href="#/san-pham" data-nav="san-pham">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/></svg>Sản phẩm
                 </a>
@@ -28,13 +33,16 @@
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Đơn hàng
                     <span class="admin-navlink__count tabular" data-orders-count hidden></span>
                 </a>
+                <a class="admin-navlink" href="#/nguoi-dung" data-nav="nguoi-dung">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Người dùng
+                </a>
                 <a class="admin-navlink" href="#/voucher" data-nav="voucher">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/></svg>Voucher
                 </a>
-                <a class="admin-navlink" href="#/danh-gia" data-nav="danh-gia">
+                <a class="admin-navlink" href="#/danh-gia" data-nav="danh-gia" hidden>
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg>Đánh giá
                 </a>
-                <a class="admin-navlink" href="#/tai-khoan" data-nav="tai-khoan">
+                <a class="admin-navlink" href="#/tai-khoan" data-nav="tai-khoan" hidden>
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 21a8 8 0 0 0-16 0"/><circle cx="10" cy="8" r="5"/><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3"/></svg>Tài khoản
                 </a>
             </nav>
@@ -68,6 +76,10 @@
             <main class="admin-main" id="admin-main">
                 <section data-view="tong-quan" id="view-tong-quan" aria-label="Tổng quan" hidden>
                     <div id="overview-root"></div>
+                </section>
+
+                <section data-view="thong-ke" id="view-thong-ke" aria-label="Thống kê" hidden>
+                    <div id="dashboard-root"></div>
                 </section>
 
                 <section data-view="san-pham" id="view-san-pham" aria-label="Sản phẩm" hidden>
@@ -108,6 +120,10 @@
 
                 <section data-view="don-hang" id="view-don-hang" aria-label="Đơn hàng" hidden>
                     <div id="orders-root"></div>
+                </section>
+
+                <section data-view="nguoi-dung" id="view-nguoi-dung" aria-label="Người dùng" hidden>
+                    <div id="users-root"></div>
                 </section>
 
                 <section data-view="voucher" id="view-voucher" aria-label="Voucher" hidden>
@@ -265,6 +281,8 @@
     <script src="/js/admin-vouchers.js"></script>
     <script src="/js/admin-reviews.js"></script>
     <script src="/js/admin-overview.js"></script>
+    <script src="/js/admin-users.js"></script>
+    <script src="/js/admin-dashboard.js"></script>
     <script src="/js/admin-shell.js"></script>
 </body>
 </html>
