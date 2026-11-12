@@ -49,6 +49,7 @@ const mapLockedVariant = (row, configuration) => row ? {
     sku: row.sku,
     stock: toNumber(row.stock),
     price: toNumber(row.price),
+    costPrice: toNumber(row.costPrice ?? 0),
     isActive: Boolean(row.isActive),
     name: row.name,
     image: row.image,
@@ -126,7 +127,7 @@ const lockVariant = async (transaction, variantId) => {
     const rows = await transaction.$queryRaw`
         SELECT
             variant.[id], variant.[product_id] AS [productId], variant.[sku],
-            variant.[stock], variant.[price], variant.[is_active] AS [isActive],
+            variant.[stock], variant.[price], variant.[cost_price] AS [costPrice], variant.[is_active] AS [isActive],
             product.[name], product.[image], product.[description],
             product.[is_deleted] AS [isDeleted], product.[deleted_at] AS [deletedAt]
         FROM [dbo].[product_variants] AS variant WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
@@ -175,6 +176,7 @@ const createOrder = async (transaction, orderData) => {
                 skuSnapshot: item.sku,
                 optionsSnapshot: JSON.stringify(item.options || {}),
                 unitPrice: item.unitPrice,
+                unitCost: item.unitCost ?? 0,
                 quantity: item.quantity,
                 lineTotal: item.lineTotal
             }))
@@ -268,6 +270,10 @@ const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [],
             }
             remainingStockByVariantId[variantId] = variant.stock - quantity;
         }
+
+        // Snapshot each variant's cost price on the order line (read under the variant lock) so profit survives later cost edits.
+        const costByVariantId = new Map(lockedItems.map(({ variantId, variant }) => [variantId, variant?.costPrice ?? 0]));
+        orderData.items = (orderData.items || []).map((item) => ({ ...item, unitCost: costByVariantId.get(Number(item.variantId)) ?? 0 }));
 
         const row = await createOrder(transaction, orderData);
         await voucherRepository.insertOrderVouchers(transaction, row.id, redemption.vouchers, redemption.lines);

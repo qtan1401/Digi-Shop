@@ -136,3 +136,25 @@ _Avoid_: Buyer
 
 **Username**:
 A customer's unique public name, chosen once, shown with their Product reviews.
+
+### Admin analytics and catalog media
+
+**Cost price**:
+What the shop pays for one unit of a Product variant. Entered by the admin, never shown to customers. Each Order line snapshots it as `unit_cost` at purchase time.
+_Avoid_: Purchase price, import price
+
+**Profit**:
+For one Order that is not CANCELLED, the sum over its lines of (line total − unit cost × quantity), minus the voucher discount and the points discount. Overall profit adds this up over a period.
+_Avoid_: Margin, earnings
+
+**Product image**:
+An extra gallery photo of a Product, kept in order by position. The main photo stays on the Product itself; every Product shows at least three photos in total.
+_Avoid_: Picture, thumbnail
+
+**Guest comment**:
+A Product review written without signing in, carrying a typed display name and labelled "Khách". It has no Rating and cannot be edited or deleted by its author.
+_Avoid_: Anonymous review
+
+**Banned account**:
+A customer account with status BANNED. It cannot sign in and any existing session is revoked; an admin can unban it. Admin accounts cannot be banned.
+_Avoid_: Blocked, suspended

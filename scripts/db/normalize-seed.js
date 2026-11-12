@@ -161,6 +161,11 @@ function normalizeMoney(value, field, identity, changes, { positive = false } = 
     return normalized;
 }
 
+/** Seed cost price: 80% of the selling price, rounded half-up to whole cents. Same rule the p2_foundation migration applies to existing rows. */
+function seedCostPrice(price) {
+    return centsToDecimal((decimalToCents(price, "price", "costPrice") * 8n + 5n) / 10n);
+}
+
 function normalizeBoolean(value, field, identity) {
     if (typeof value !== "boolean") {
         throw new SeedDataError(identity, `${field} must be a boolean`);
@@ -297,6 +302,9 @@ function normalizeProduct(record, index, changes) {
         return {
             sku: normalizeCode(variant.sku, "sku", variantIdentity, changes, 100),
             price: normalizeMoney(variant.price, "price", variantIdentity, changes, { positive: true }),
+            costPrice: variant.costPrice === undefined
+                ? seedCostPrice(normalizeMoney(variant.price, "price", variantIdentity, [], { positive: true }))
+                : normalizeMoney(variant.costPrice, "costPrice", variantIdentity, changes),
             stock: normalizeInteger(variant.stock, "stock", variantIdentity, changes, { minimum: 0, maximum: 2147483647 }),
             image: optionalText(variant.image, "image", variantIdentity, changes, 500),
             optionValues

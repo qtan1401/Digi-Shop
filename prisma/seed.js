@@ -224,7 +224,7 @@ async function loadProductConfigurations(transaction, products, candidates) {
     const variantRequest = transaction.request();
     const variantIds = bindList(variantRequest, "variantProduct", sql.Int, ids);
     const variantRows = (await variantRequest.query(`
-        SELECT v.[product_id] AS [productId], v.[sku], v.[price], v.[stock], v.[image], v.[is_active] AS [isActive],
+        SELECT v.[product_id] AS [productId], v.[sku], v.[price], v.[cost_price] AS [costPrice], v.[stock], v.[image], v.[is_active] AS [isActive],
                o.[name] AS [optionName], ov.[value] AS [optionValue]
         FROM [dbo].[product_variants] v
         LEFT JOIN [dbo].[product_variant_option_values] l ON l.[variant_id] = v.[id]
@@ -254,6 +254,7 @@ async function loadProductConfigurations(transaction, products, candidates) {
             variant = {
                 sku: row.sku,
                 price: canonicalMoney(row.price, "price", `product:${row.productId}`),
+                costPrice: canonicalMoney(row.costPrice, "costPrice", `product:${row.productId}`),
                 stock: row.stock,
                 image: row.image || null,
                 isActive: Boolean(row.isActive),
@@ -393,7 +394,8 @@ function classifyProducts(seedRecords, existingRecords, existingVariants, existi
             options: seed.options,
             variants: seed.variants.map((variant) => ({
                 ...variant,
-                price: canonicalMoney(variant.price, "price", `product:${seed.id}`)
+                price: canonicalMoney(variant.price, "price", `product:${seed.id}`),
+                costPrice: canonicalMoney(variant.costPrice, "costPrice", `product:${seed.id}`)
             })).sort((left, right) => left.sku.localeCompare(right.sku))
         };
         const normalizedActual = {
@@ -427,6 +429,7 @@ function resolveSeedOrderItems(products, orders) {
                 ...item,
                 name: product.name,
                 image: product.image,
+                unitCost: variant.costPrice,
                 optionsSnapshot: stableJson(variant.optionValues, `order:${order.id}/item:${index}`)
             };
         })
@@ -660,11 +663,12 @@ async function insertProducts(transaction, records) {
             variantRequest.input("sku", sql.NVarChar(100), variant.sku);
             variantRequest.input("combinationKey", sql.Char(64), combinationKey);
             variantRequest.input("price", sql.Decimal(18, 2), variant.price);
+            variantRequest.input("costPrice", sql.Decimal(18, 2), variant.costPrice);
             variantRequest.input("stock", sql.Int, variant.stock);
             variantRequest.input("image", sql.NVarChar(500), variant.image || null);
             const result = await variantRequest.query(`
-                INSERT INTO [dbo].[product_variants] ([product_id], [sku], [combination_key], [price], [stock], [image], [is_active])
-                OUTPUT INSERTED.[id] AS [id] VALUES (@productId, @sku, @combinationKey, @price, @stock, @image, 1);
+                INSERT INTO [dbo].[product_variants] ([product_id], [sku], [combination_key], [price], [cost_price], [stock], [image], [is_active])
+                OUTPUT INSERTED.[id] AS [id] VALUES (@productId, @sku, @combinationKey, @price, @costPrice, @stock, @image, 1);
             `);
             for (const optionValueId of valueIds) {
                 const linkRequest = transaction.request();
@@ -727,13 +731,14 @@ async function insertOrders(transaction, records) {
             itemRequest.input("skuSnapshot", sql.NVarChar(100), item.variantSku);
             itemRequest.input("optionsSnapshot", sql.NVarChar(sql.MAX), item.optionsSnapshot);
             itemRequest.input("unitPrice", sql.Decimal(18, 2), item.unitPrice);
+            itemRequest.input("unitCost", sql.Decimal(18, 2), item.unitCost);
             itemRequest.input("quantity", sql.Int, item.quantity);
             itemRequest.input("lineTotal", sql.Decimal(18, 2), item.lineTotal);
             await itemRequest.query(`
                 INSERT INTO [dbo].[order_items]
                     ([order_id], [variant_id], [name_snapshot], [image_snapshot], [sku_snapshot], [options_snapshot],
-                     [unit_price], [quantity], [line_total])
-                VALUES (@orderId, @variantId, @name, @image, @skuSnapshot, @optionsSnapshot, @unitPrice, @quantity, @lineTotal);
+                     [unit_price], [unit_cost], [quantity], [line_total])
+                VALUES (@orderId, @variantId, @name, @image, @skuSnapshot, @optionsSnapshot, @unitPrice, @unitCost, @quantity, @lineTotal);
             `);
         }
         await insertOrderVouchers(transaction, record.id, record.vouchers);

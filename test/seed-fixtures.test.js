@@ -387,3 +387,19 @@ test("backfill records the points of an order that is not credited yet without t
     assert.ok(double.writes.some((write) => /^UPDATE \[dbo\]\.\[orders\]/.test(write.statement) && write.values.pointsCreditedAt === null));
     assert.equal(double.writes.some((write) => /loyalty_points/.test(write.statement)), false);
 });
+
+test("every normalized seed variant and order line has a cost below the selling price", () => {
+    const normalized = normalizeSeedData({ products, users, vouchers, orders, reviews, audits: seedData.commerce.audits });
+    const resolved = resolveSeedOrderItems(normalized.products, normalized.orders);
+    for (const order of resolved) {
+        for (const item of order.items) {
+            assert.ok(Number(item.unitCost) > 0 && Number(item.unitCost) < Number(item.unitPrice), `${item.variantSku} unitCost`);
+        }
+    }
+    for (const product of normalized.products) {
+        for (const variant of product.variants) {
+            const cost = Number(variant.costPrice);
+            assert.ok(cost > 0 && cost < Number(variant.price), `${variant.sku} costPrice must be between 0 and price`);
+        }
+    }
+});

@@ -15,6 +15,7 @@ const voucherRoutes = require("./routes/voucher.routes");
 const addressRoutes = require("./routes/address.routes");
 const profileRoutes = require("./routes/profile.routes");
 const guestRoutes = require("./routes/guest.routes");
+const landingRoutes = require("./routes/landing.routes");
 const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/auth");
 
 const app = express();
@@ -46,6 +47,7 @@ app.use("/api/orders", orderRoutes);      // Order domain — tra cứu + quản
 app.use("/api/admin", adminRoutes);
 app.use("/api/vouchers", voucherRoutes); // Voucher quote for cart/checkout
 app.use("/api/guest", guestRoutes);       // Checkout and voucher quote without signing in
+app.use("/api/landing", landingRoutes);   // Landing page highlights (new, best sellers, per category)
 app.use("/api/payments", paymentRoutes); // Provider callbacks and customer payment attempts
 
 app.get("/", (req, res) => {
