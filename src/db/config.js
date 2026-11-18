@@ -5,18 +5,6 @@ class DatabaseConfigError extends Error {
     }
 }
 
-const REQUIRED_KEYS = [
-    "DATABASE_URL",
-    "DB_SERVER",
-    "DB_PORT",
-    "DB_NAME",
-    "DB_USER",
-    "DB_PASSWORD",
-    "DB_ENCRYPT",
-    "DB_TRUST_SERVER_CERTIFICATE",
-    "DB_CONNECT_TIMEOUT_MS",
-    "DB_POOL_MAX"
-];
 
 function parseInteger(value, key, minimum, maximum, problems) {
     if (!/^\d+$/.test(value)) {
@@ -47,58 +35,33 @@ function parseBoolean(value, key, problems) {
 
 function readDatabaseConfig(environment = process.env) {
     const problems = [];
-    const values = {};
-
-    for (const key of REQUIRED_KEYS) {
-        const value = environment[key];
-        if (typeof value !== "string" || value.trim() === "") {
-            problems.push(`missing ${key}`);
-        } else {
-            values[key] = value;
+    const connectionString = environment.DATABASE_URL;
+    if (typeof connectionString !== "string" || connectionString.trim() === "") {
+        problems.push("missing DATABASE_URL");
+    } else if (!/^postgres(?:ql)?:\/\//.test(connectionString)) {
+        problems.push("DATABASE_URL must start with postgresql:// or postgres://");
+    } else {
+        try {
+            const url = new URL(connectionString);
+            if (!url.hostname || url.pathname.length <= 1) {
+                problems.push("DATABASE_URL must include a host and database name");
+            }
+        } catch {
+            problems.push("DATABASE_URL must be a valid PostgreSQL URL");
         }
     }
 
-    if (problems.length > 0) {
-        throw new DatabaseConfigError(problems);
-    }
-
-    const port = parseInteger(values.DB_PORT, "DB_PORT", 1, 65535, problems);
-    const connectionTimeout = parseInteger(
-        values.DB_CONNECT_TIMEOUT_MS,
-        "DB_CONNECT_TIMEOUT_MS",
-        1,
-        2147483647,
-        problems
-    );
-    const poolMax = parseInteger(values.DB_POOL_MAX, "DB_POOL_MAX", 1, 1000, problems);
-    const encrypt = parseBoolean(values.DB_ENCRYPT, "DB_ENCRYPT", problems);
-    const trustServerCertificate = parseBoolean(
-        values.DB_TRUST_SERVER_CERTIFICATE,
-        "DB_TRUST_SERVER_CERTIFICATE",
-        problems
-    );
+    const poolMax = environment.DB_POOL_MAX === undefined || environment.DB_POOL_MAX === ""
+        ? 10 : parseInteger(environment.DB_POOL_MAX, "DB_POOL_MAX", 1, 1000, problems);
+    const ssl = environment.DB_SSL === undefined || environment.DB_SSL === ""
+        ? false : parseBoolean(environment.DB_SSL, "DB_SSL", problems);
+    const connectionTimeout = environment.DB_CONNECT_TIMEOUT_MS === undefined || environment.DB_CONNECT_TIMEOUT_MS === ""
+        ? undefined : parseInteger(environment.DB_CONNECT_TIMEOUT_MS, "DB_CONNECT_TIMEOUT_MS", 1, 2147483647, problems);
 
     if (problems.length > 0) {
         throw new DatabaseConfigError(problems);
     }
-
-    return Object.freeze({
-        connectionString: values.DATABASE_URL,
-        databaseName: values.DB_NAME,
-        mssql: Object.freeze({
-            server: values.DB_SERVER,
-            port,
-            database: values.DB_NAME,
-            user: values.DB_USER,
-            password: values.DB_PASSWORD,
-            connectionTimeout,
-            pool: Object.freeze({ max: poolMax }),
-            options: Object.freeze({
-                encrypt,
-                trustServerCertificate
-            })
-        })
-    });
+    return Object.freeze({ connectionString, poolMax, ssl, connectionTimeout });
 }
 
 module.exports = {

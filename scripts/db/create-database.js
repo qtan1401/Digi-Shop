@@ -1,64 +1,54 @@
 require("dotenv").config();
 
-const sql = require("mssql");
+const { Pool } = require("pg");
 const { DatabaseConfigError, readDatabaseConfig } = require("../../src/db/config");
 
 function validateDatabaseName(databaseName) {
-    if (
-        databaseName.length > 128 ||
-        databaseName !== databaseName.trim() ||
-        /[\u0000-\u001F\u007F]/.test(databaseName)
-    ) {
-        throw new DatabaseConfigError(["DB_NAME must be a valid SQL Server identifier of at most 128 characters"]);
+    if (typeof databaseName !== "string" || !/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(databaseName)) {
+        throw new DatabaseConfigError(["DATABASE_URL must name a valid PostgreSQL database"]);
     }
-
     return databaseName;
 }
 
 function classifyConnectionError(error) {
     const code = typeof error.code === "string" ? error.code : "UNKNOWN";
-    const number = Number(error.number);
-
-    if (code === "ELOGIN" || number === 18456) {
-        return { category: "authentication", code };
-    }
-    if ([229, 262, 916, 15247].includes(number)) {
-        return { category: "permission", code };
-    }
-    if (["ETIMEOUT", "ESOCKET", "ECONNCLOSED", "ENOTOPEN"].includes(code)) {
+    if (code === "28P01") return { category: "authentication", code };
+    if (code === "42501") return { category: "permission", code };
+    if (["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "57P03"].includes(code)) {
         return { category: "network", code };
     }
-
     return { category: "database", code };
 }
 
 async function createDatabase() {
-    const { databaseName: configuredName, mssql } = readDatabaseConfig();
-    const databaseName = validateDatabaseName(configuredName);
-    const pool = new sql.ConnectionPool({ ...mssql, database: "master" });
+    const { connectionString, ssl, connectionTimeout, poolMax } = readDatabaseConfig();
+    let url;
+    try {
+        url = new URL(connectionString);
+    } catch {
+        throw new DatabaseConfigError(["DATABASE_URL must be a valid PostgreSQL URL"]);
+    }
+    const databaseName = validateDatabaseName(decodeURIComponent(url.pathname.slice(1)));
+    url.pathname = "/postgres";
+    const pool = new Pool({
+        connectionString: url.toString(),
+        max: poolMax,
+        ssl,
+        ...(connectionTimeout === undefined ? {} : { connectionTimeoutMillis: connectionTimeout })
+    });
 
     try {
-        await pool.connect();
-        const result = await pool.request()
-            .input("databaseName", sql.NVarChar(128), databaseName)
-            .query(`
-                DECLARE @created BIT = 0;
-
-                IF DB_ID(@databaseName) IS NULL
-                BEGIN
-                    DECLARE @statement NVARCHAR(300) = N'CREATE DATABASE ' + QUOTENAME(@databaseName);
-                    EXEC sys.sp_executesql @statement;
-                    SET @created = 1;
-                END;
-
-                SELECT @created AS [created];
-            `);
-
-        return result.recordset[0].created === true;
-    } finally {
-        if (pool.connected || pool.connecting) {
-            await pool.close();
+        const existing = await pool.query("SELECT 1 FROM pg_database WHERE datname = $1", [databaseName]);
+        if (existing.rowCount) return false;
+        try {
+            await pool.query(`CREATE DATABASE "${databaseName}"`);
+        } catch (error) {
+            if (error.code === "42P04") return false;
+            throw error;
         }
+        return true;
+    } finally {
+        await pool.end();
     }
 }
 

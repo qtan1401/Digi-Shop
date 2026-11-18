@@ -20,7 +20,7 @@ const REQUIRED_TABLES = [
     "cart_merge_operations",
     "payment_attempts"
 ];
-const REQUIRED_MIGRATION = "20261002000000_product_variants";
+const REQUIRED_MIGRATION = "20261120000000_postgresql_baseline";
 
 class DatabaseSchemaError extends Error {
     constructor() {
@@ -33,16 +33,19 @@ class DatabaseSchemaError extends Error {
 let prismaClient;
 
 function createPrismaClient() {
-    const { PrismaMssql } = require("@prisma/adapter-mssql");
+    const { PrismaPg } = require("@prisma/adapter-pg");
     const { PrismaClient } = require("@prisma/client");
-    const { mssql } = readDatabaseConfig();
-    const adapter = new PrismaMssql({
-        ...mssql,
-        pool: { ...mssql.pool },
-        options: { ...mssql.options }
+    const { Pool } = require("pg");
+    const { connectionString, poolMax, ssl, connectionTimeout } = readDatabaseConfig();
+    const pool = new Pool({
+        connectionString,
+        max: poolMax,
+        ssl,
+        // PrismaPg sends DateTime arguments without an offset; UTC avoids shifts on non-UTC PostgreSQL hosts.
+        options: "-c timezone=UTC",
+        ...(connectionTimeout === undefined ? {} : { connectionTimeoutMillis: connectionTimeout })
     });
-
-    return new PrismaClient({ adapter });
+    return new PrismaClient({ adapter: new PrismaPg(pool, { disposeExternalPool: true }) });
 }
 
 function getPrismaClient() {
@@ -55,33 +58,32 @@ function getPrismaClient() {
 
 async function verifyDatabaseSchema(client) {
     const rows = await client.$queryRawUnsafe(`
-        SELECT [TABLE_NAME] AS [tableName]
-        FROM [INFORMATION_SCHEMA].[TABLES]
-        WHERE [TABLE_SCHEMA] = N'dbo'
-          AND [TABLE_TYPE] = N'BASE TABLE'
-          AND [TABLE_NAME] IN (
-              N'_prisma_migrations', N'products', N'product_options', N'product_option_values',
-              N'product_variants', N'product_variant_option_values', N'orders', N'order_items',
-              N'audit_logs', N'users', N'oauth_identities', N'refresh_sessions',
-              N'email_verification_tokens', N'carts', N'cart_items',
-              N'cart_merge_operations', N'payment_attempts'
+        SELECT table_name AS "tableName"
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_type = 'BASE TABLE'
+          AND table_name IN (
+              '_prisma_migrations', 'products', 'product_options', 'product_option_values',
+              'product_variants', 'product_variant_option_values', 'orders', 'order_items',
+              'audit_logs', 'users', 'oauth_identities', 'refresh_sessions',
+              'email_verification_tokens', 'carts', 'cart_items',
+              'cart_merge_operations', 'payment_attempts'
           );
     `);
     const existingTables = new Set(rows.map(({ tableName }) => tableName));
     const missingTables = REQUIRED_TABLES.filter((tableName) => !existingTables.has(tableName));
-
     if (missingTables.length > 0) {
         throw new DatabaseSchemaError();
     }
 
     const migrations = await client.$queryRawUnsafe(`
-        SELECT TOP (1) [migration_name] AS [migrationName]
-        FROM [dbo].[_prisma_migrations]
-        WHERE [migration_name] = N'20261002000000_product_variants'
-          AND [finished_at] IS NOT NULL
-          AND [rolled_back_at] IS NULL;
+        SELECT migration_name AS "migrationName"
+        FROM public._prisma_migrations
+        WHERE migration_name = '${REQUIRED_MIGRATION}'
+          AND finished_at IS NOT NULL
+          AND rolled_back_at IS NULL
+        LIMIT 1;
     `);
-
     if (migrations[0]?.migrationName !== REQUIRED_MIGRATION) {
         throw new DatabaseSchemaError();
     }

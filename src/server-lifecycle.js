@@ -26,32 +26,23 @@ function errorCode(error) {
     return "UNKNOWN";
 }
 
-function errorNumber(error) {
-    const candidates = [
-        error && error.number,
-        error && error.cause && error.cause.number,
-        error && error.originalError && error.originalError.info && error.originalError.info.number
-    ];
-    return candidates.map(Number).find(Number.isFinite);
-}
 
 function classifyStartupError(error) {
     const code = errorCode(error);
-    const number = errorNumber(error);
 
     if (error instanceof DatabaseConfigError) {
         return { category: "configuration", code };
     }
-    if (error instanceof DatabaseSchemaError || ["P2021", "P2022"].includes(code) || [207, 208].includes(number)) {
+    if (error instanceof DatabaseSchemaError || ["P2021", "P2022", "42P01", "42703"].includes(code)) {
         return { category: "schema", code };
     }
-    if (code === "P1000" || code === "ELOGIN" || number === 18456) {
+    if (["P1000", "28P01"].includes(code)) {
         return { category: "authentication", code };
     }
-    if (code === "P1010" || [229, 262, 916, 15247].includes(number)) {
+    if (["P1010", "42501"].includes(code)) {
         return { category: "permission", code };
     }
-    if (["P1001", "P1002", "ETIMEOUT", "ESOCKET", "ECONNCLOSED", "ENOTOPEN"].includes(code)) {
+    if (["P1001", "P1002", "ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "57P03"].includes(code)) {
         return { category: "network", code };
     }
     if (["EACCES", "EADDRINUSE"].includes(code)) {
