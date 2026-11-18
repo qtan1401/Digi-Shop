@@ -1,5 +1,5 @@
 // ===== REVIEW SERVICE =====
-// Business rules for Product reviews: Verified reviewer eligibility, Rating/comment
+// Business rules for Product reviews: signed-in customer Ratings, comment
 // validation, one review per customer per Product, Guest comments, moderation, rating aggregates,
 // and the realtime broadcast of every change that is visible to the public.
 
@@ -236,11 +236,8 @@ const listProductReviews = async (productIdParam, query = {}) => {
 const getMyReview = async (productIdParam, user) => {
     const productId = await requireVisibleProduct(productIdParam);
     if (!isCustomer(user)) return { eligible: false, hasUsername: false, review: null };
-    const [eligible, review] = await Promise.all([
-        reviewRepository.hasDeliveredOrderForProduct(user.id, productId),
-        reviewRepository.findOwnReview(productId, user.id)
-    ]);
-    return { eligible, hasUsername: Boolean(user.username), review };
+    const review = await reviewRepository.findOwnReview(productId, user.id);
+    return { eligible: true, hasUsername: Boolean(user.username), review };
 };
 
 /**
@@ -263,12 +260,6 @@ const createReview = async (productIdParam, user, body) => {
     assertCustomer(user);
     const productId = await requireVisibleProduct(productIdParam);
     const input = validateReviewInput(body);
-    if (!await reviewRepository.hasDeliveredOrderForProduct(user.id, productId)) {
-        throw new ReviewError(
-            "REVIEW_NOT_ELIGIBLE", 403,
-            "Bạn chỉ có thể đánh giá sản phẩm sau khi đơn hàng chứa sản phẩm này đã được giao"
-        );
-    }
     if (!user.username) {
         throw new ReviewError("USERNAME_REQUIRED", 409, "Bạn cần đặt tên người dùng trước khi đánh giá");
     }

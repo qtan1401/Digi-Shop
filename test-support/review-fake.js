@@ -52,18 +52,6 @@ const createReviewFake = () => {
                 return row ? { id: row.id, isDeleted: row.isDeleted } : null;
             }
         },
-        orderItem: {
-            findFirst: async ({ where }) => {
-                const item = state.orderItems.find((candidate) => {
-                    const variant = state.variants.find((row) => row.id === candidate.variantId);
-                    const order = state.orders.find((row) => row.id === candidate.orderId);
-                    return variant?.productId === where.variant.productId &&
-                        order?.userId === where.order.userId &&
-                        order?.orderStatus === where.order.orderStatus;
-                });
-                return item ? { id: item.id } : null;
-            }
-        },
         productReview: {
             findUnique: async ({ where }) => {
                 const row = state.reviews.find((review) => review.id === where.id);

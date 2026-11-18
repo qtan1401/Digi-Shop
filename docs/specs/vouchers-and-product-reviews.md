@@ -33,12 +33,12 @@ Terms are defined in `GLOSSARY.md`; this document does not redefine them.
 
 ### Product reviews
 
-- Only a **Verified reviewer** (has a `DELIVERED` Order containing the Product) may write one. One review per customer per Product. A review has a Rating (1-5), a comment (max 1,000 characters) or both. Customers are never forced to review.
+- Any signed-in customer may write one Product review per Product, without making a purchase. A review has a Rating (1-5), a comment (max 1,000 characters) or both. Customers are never forced to review.
 - Customers can edit and delete their own review. Administrators can **hide** and unhide any review (flag, row kept). Hidden or deleted reviews are excluded from every number.
 - The average uses Ratings only; a comment-only review is shown but not counted in the average.
 - The reviewer name shown is the customer's **Username**.
 - **Username** is required when registering with email. Existing customers and first-time Google users have none: they are asked for one only when they first try to write a review. Once set it cannot be changed in this release.
-- Shown on the product card (average and count, hidden when there are no Ratings) and on the detail page (summary, 5-1 star distribution, newest-first list, 5 per page, write/edit form, or a hint when not eligible). No catalog filter or sort by rating.
+- Shown on the product card (average and count, hidden when there are no Ratings) and on the detail page (summary, 5-1 star distribution, newest-first list, 5 per page, write/edit form, or a sign-in hint for guests). No catalog filter or sort by rating.
 
 ## Data model
 
@@ -62,7 +62,7 @@ Each slice is separately runnable and verifiable. Slices 2-4 can run in parallel
    - `POST /api/vouchers/quote` for the cart/checkout screens (same function, no reservation).
    - Give back on payment attempt release (`releaseAttempt`) and on administrator cancel; re-reserve in `createRetryAttempt`.
    - Verify: concurrent last-quantity checkout (one wins), cancel gives back exactly once, retry blocked when out of quantity.
-3. **Review backend.** Eligibility query (`OrderItem -> ProductVariant -> productId`, Order `DELIVERED`), create/update/delete own, list with paging, administrator hide/unhide, `ratingAverage` and `ratingCount` added to product list and detail responses (also used by the server-rendered `/danh-muc/*` and `/the/*` pages through `renderProductCard`). Verify: ineligible customer rejected, one review per Product, hidden review leaves the average.
+3. **Review backend.** Signed-in customers may create a Rating without an Order; create/update/delete own, list with paging, administrator hide/unhide, `ratingAverage` and `ratingCount` added to product list and detail responses (also used by the server-rendered `/danh-muc/*` and `/the/*` pages through `renderProductCard`). Verify: customer without Orders may rate, one review per Product, hidden review leaves the average.
 4. **Username.** Required at email registration with uniqueness and character rules; set-once endpoint for accounts without one; the login form already accepts a username.
 5. **Administrator screens** (ui-ux skill, branch U): Voucher list and create/edit modal, review moderation list, Order detail shows subtotal, shipping, Discount with each code, total. Sidebar grows to six items.
 6. **Customer screens** (ui-ux skill, branch U): Voucher picker plus code field at checkout (cart and buy-now), stars on cards, review block on the detail page, username field on registration and the inline username prompt before a first review.

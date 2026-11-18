@@ -131,7 +131,7 @@ The one-to-five star score in a Product review.
 _Avoid_: Score, stars
 
 **Verified reviewer**:
-A customer who has a delivered Order containing the Product, and is therefore allowed to review it.
+A signed-in customer who may give a Product a Rating, whether or not they have purchased it.
 _Avoid_: Buyer
 
 **Username**:

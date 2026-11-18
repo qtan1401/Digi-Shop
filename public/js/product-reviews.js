@@ -151,7 +151,7 @@
         else if (m.kind === "guest") html = `<p class="reviews__hint">Bình luận không cần đăng nhập. Muốn chấm sao thì đăng nhập.</p><div class="reviews__cta-actions"><button type="button" class="btn btn--primary" data-rv-action="write-guest" aria-haspopup="dialog">${icon("pencil")}Viết bình luận</button><a href="${escapeHtml(window.DigiAuth?.loginUrl?.(`/product_info.html?id=${encodeURIComponent(s.productId)}#danh-gia`) || "/auth.html?tab=login")}" class="btn btn--secondary">Đăng nhập để chấm sao</a></div>`;
         else if (m.kind === "admin") html = `<p class="reviews__hint">Tài khoản Admin chỉ xem đánh giá.</p>`;
         else if (m.review) html = `<p class="reviews__hint">Bạn đã đánh giá sản phẩm này, xem ở đầu danh sách.</p>`;
-        else if (!m.eligible) html = `<p class="reviews__hint">${icon("package-check")}<span>Đánh giá mở sau khi bạn nhận đơn có ${escapeHtml(s.productName)}.</span></p>`;
+        else if (!m.eligible) html = `<p class="reviews__hint">${icon("circle-alert")}<span>Chưa thể mở đánh giá lúc này. Vui lòng thử lại.</span></p>`;
         else html = `<button type="button" class="btn btn--primary" data-rv-action="write" aria-haspopup="dialog">${icon("pencil")}Viết đánh giá</button>`;
         box.innerHTML = html;
     };
@@ -415,7 +415,7 @@
             const e = apiError(error);
             d.busy = false;
             if (e.code === "USERNAME_REQUIRED") { s.mine.hasUsername = false; d.step = "username"; d.alert = ""; return renderDialog("#rv-user"); }
-            if (e.code === "REVIEW_NOT_ELIGIBLE") { closeDialog(); s.mine.eligible = false; renderCta(); toast(e.message || "Bạn chưa thể đánh giá sản phẩm này.", "error"); return; }
+            if (e.code === "REVIEW_NOT_ELIGIBLE") { closeDialog(); s.mine.eligible = false; renderCta(); toast("Chưa thể đánh giá lúc này. Vui lòng thử lại.", "error"); return; }
             if (e.code === "REVIEW_EXISTS") { closeDialog(); toast(e.message || "Bạn đã đánh giá sản phẩm này rồi.", "info"); return reloadAll(1); }
             if (e.status === 422) { d.fieldError = e.errors[0]?.message || e.message || "Đánh giá không hợp lệ."; return renderDialog("#rv-text"); }
             if (e.status === 401) d.alert = "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.";

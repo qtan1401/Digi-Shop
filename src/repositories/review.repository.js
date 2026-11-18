@@ -1,5 +1,5 @@
 // ===== REVIEW REPOSITORY =====
-// Prisma persistence for Product reviews and the Verified reviewer lookup.
+// Prisma persistence for Product reviews.
 
 const { getPrismaClient } = require("../db/prisma");
 
@@ -28,18 +28,6 @@ const findProduct = async (productId) => getPrismaClient().product.findUnique({
     where: { id: productId },
     select: { id: true, isDeleted: true }
 });
-
-/** A Verified reviewer has a DELIVERED Order containing any variant of the Product. */
-const hasDeliveredOrderForProduct = async (userId, productId) => {
-    const row = await getPrismaClient().orderItem.findFirst({
-        where: {
-            variant: { productId },
-            order: { userId, orderStatus: "DELIVERED" }
-        },
-        select: { id: true }
-    });
-    return Boolean(row);
-};
 
 // One review per signed-in user per Product is a filtered unique index (user_id IS NOT NULL), which Prisma
 // cannot model as a compound unique, so the own review is looked up with findFirst.
@@ -249,7 +237,6 @@ const setHidden = async (id, isHidden) => {
 
 module.exports = {
     findProduct,
-    hasDeliveredOrderForProduct,
     findOwnReview,
     createReview,
     createGuestComment,

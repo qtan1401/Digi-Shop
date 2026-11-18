@@ -11,9 +11,6 @@ process.env.TRUST_PROXY = "1";
 // ===== In-memory Prisma fake (only what the review/product code paths use) =====
 let users;
 let products;
-let variants;
-let orders;
-let orderItems;
 let reviews;
 let audits;
 let nextReviewId;
@@ -65,18 +62,6 @@ const fakePrisma = {
         findUnique: async ({ where }) => {
             const row = products.find((product) => product.id === where.id);
             return row ? { id: row.id, isDeleted: row.isDeleted } : null;
-        }
-    },
-    orderItem: {
-        findFirst: async ({ where }) => {
-            const item = orderItems.find((candidate) => {
-                const variant = variants.find((row) => row.id === candidate.variantId);
-                const order = orders.find((row) => row.id === candidate.orderId);
-                return variant?.productId === where.variant.productId &&
-                    order?.userId === where.order.userId &&
-                    order?.orderStatus === where.order.orderStatus;
-            });
-            return item ? { id: item.id } : null;
         }
     },
     productReview: {
@@ -187,12 +172,6 @@ const BOB = { id: "bob", role: "user" };
 const NONAME = { id: "noname", role: "user" };
 const ADMIN = { id: "admin-1", role: "admin" };
 
-const deliver = (userId, variantId, status = "DELIVERED") => {
-    const id = `order-${orders.length + 1}`;
-    orders.push({ id, userId, orderStatus: status });
-    orderItems.push({ id: orderItems.length + 1, orderId: id, variantId });
-};
-
 const seedReview = (productId, userId, fields = {}) => {
     const row = { id: nextReviewId++, productId, userId, rating: 5, comment: null, isHidden: false, createdAt: ++clock, updatedAt: clock, ...fields };
     reviews.push(row);
@@ -221,14 +200,6 @@ beforeEach(() => {
         { id: 2, name: "Laptop Two", isDeleted: false },
         { id: 3, name: "Gone", isDeleted: true }
     ];
-    variants = [
-        { id: 11, productId: 1 },
-        { id: 12, productId: 1 },
-        { id: 21, productId: 2 },
-        { id: 31, productId: 3 }
-    ];
-    orders = [];
-    orderItems = [];
     reviews = [];
     audits = [];
     nextReviewId = 1;
@@ -238,37 +209,23 @@ beforeEach(() => {
 
 // ===== Eligibility =====
 
-test("customers without a DELIVERED order for the product cannot review it", async () => {
-    const noOrder = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 } });
-    assert.equal(noOrder.status, 403);
-    assert.equal((await noOrder.json()).error.code, "REVIEW_NOT_ELIGIBLE");
-
-    deliver("alice", 11, "PENDING");
-    deliver("alice", 11, "SHIPPED");
-    deliver("alice", 21, "DELIVERED"); // delivered, but a different product
-    const stillNot = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 } });
-    assert.equal(stillNot.status, 403);
-    assert.equal(reviews.length, 0);
-
-    const mine = await (await call("GET", "/api/products/1/reviews/mine", { as: ALICE })).json();
-    assert.deepEqual(mine.data, { eligible: false, hasUsername: true, review: null });
-});
-
-test("a delivered order of one variant makes the whole product reviewable", async () => {
-    deliver("alice", 11);
-    const response = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 4 } });
+test("signed-in customers can rate a product without any orders", async () => {
+    const response = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 } });
     assert.equal(response.status, 201);
     const mine = await (await call("GET", "/api/products/1/reviews/mine", { as: ALICE })).json();
     assert.equal(mine.data.eligible, true);
-    assert.equal(mine.data.review.rating, 4);
-    assert.equal(mine.data.review.isHidden, false);
-    // another customer's delivered order does not grant eligibility
-    const bob = await call("POST", "/api/products/1/reviews", { as: BOB, body: { rating: 4 } });
-    assert.equal(bob.status, 403);
+    assert.equal(mine.data.review.rating, 5);
 });
 
-test("a customer without a username gets USERNAME_REQUIRED once eligible", async () => {
-    deliver("noname", 11);
+test("customers independently rate the same product without orders", async () => {
+    const alice = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 4 } });
+    assert.equal(alice.status, 201);
+    const bob = await call("POST", "/api/products/1/reviews", { as: BOB, body: { rating: 4 } });
+    assert.equal(bob.status, 201);
+    assert.equal(reviews.length, 2);
+});
+
+test("a customer without a username gets USERNAME_REQUIRED without an order", async () => {
     const response = await call("POST", "/api/products/1/reviews", { as: NONAME, body: { rating: 5 } });
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error.code, "USERNAME_REQUIRED");
@@ -279,7 +236,6 @@ test("a customer without a username gets USERNAME_REQUIRED once eligible", async
 });
 
 test("administrators and anonymous callers cannot write reviews", async () => {
-    deliver("admin-1", 11);
     const admin = await call("POST", "/api/products/1/reviews", { as: ADMIN, body: { rating: 5 } });
     assert.equal(admin.status, 403);
     const anonymous = await call("POST", "/api/products/1/reviews", { body: { rating: 5 } });
@@ -292,14 +248,12 @@ test("administrators and anonymous callers cannot write reviews", async () => {
 });
 
 test("review mutations require CSRF", async () => {
-    deliver("alice", 11);
     const response = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 }, csrf: false });
     assert.equal(response.status, 403);
     assert.equal(reviews.length, 0);
 });
 
 test("soft-deleted and unknown products are 404 for every review endpoint", async () => {
-    deliver("alice", 31);
     for (const [method, path, body] of [
         ["GET", "/api/products/3/reviews"],
         ["GET", "/api/products/3/reviews/mine"],
@@ -316,7 +270,6 @@ test("soft-deleted and unknown products are 404 for every review endpoint", asyn
 // ===== Creation rules =====
 
 test("one review per product per user, even when raced or hidden", async () => {
-    deliver("alice", 11);
     const [first, second] = await Promise.all([
         call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 } }),
         call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 1 } })
@@ -333,8 +286,6 @@ test("one review per product per user, even when raced or hidden", async () => {
 });
 
 test("rating-only and comment-only reviews are accepted; empty ones are rejected", async () => {
-    deliver("alice", 11);
-    deliver("bob", 11);
     const ratingOnly = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 3 } });
     assert.equal(ratingOnly.status, 201);
     const commentOnly = await call("POST", "/api/products/1/reviews", { as: BOB, body: { comment: "  Tốt  " } });
@@ -343,7 +294,6 @@ test("rating-only and comment-only reviews are accepted; empty ones are rejected
     assert.equal(reviews.find((row) => row.userId === "bob").rating, null);
 
     users.push({ id: "carol", email: "c@x.test", username: "carol", role: "user", status: "ACTIVE", authVersion: 1, forcePasswordChange: false });
-    deliver("carol", 11);
     for (const body of [{}, { comment: "" }, { comment: "   " }, { rating: null, comment: null }]) {
         const response = await call("POST", "/api/products/1/reviews", { as: { id: "carol", role: "user" }, body });
         assert.equal(response.status, 422, JSON.stringify(body));
@@ -353,7 +303,6 @@ test("rating-only and comment-only reviews are accepted; empty ones are rejected
 });
 
 test("comment limit is 1000 characters and rating must be an integer 1-5", async () => {
-    deliver("alice", 11);
     const tooLong = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { comment: "a".repeat(1001) } });
     assert.equal(tooLong.status, 422);
     assert.equal((await tooLong.json()).error.errors[0].field, "comment");
@@ -373,7 +322,6 @@ test("comment limit is 1000 characters and rating must be an integer 1-5", async
 // ===== Own review: edit and delete =====
 
 test("editing keeps a hidden review hidden; delete removes the row", async () => {
-    deliver("alice", 11);
     seedReview(1, "alice", { rating: 2, isHidden: true });
     const edit = await call("PUT", "/api/products/1/reviews/mine", { as: ALICE, body: { rating: 4, comment: "Cập nhật" } });
     assert.equal(edit.status, 200);
@@ -653,13 +601,11 @@ test("guest comments are limited to 5 per IP per 15 minutes, and signed-in custo
     assert.equal((await guestComment({ guestName: "Lan", comment: "ok" }, { ip: "203.0.113.51" })).status, 201);
 
     // a Verified reviewer on the exhausted address still reviews normally
-    deliver("alice", 11);
     const signedIn = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5 }, ip });
     assert.equal(signedIn.status, 201);
 });
 
 test("a signed-in customer keeps one review per product even if the body carries a guestName", async () => {
-    deliver("alice", 11);
     const first = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { rating: 5, guestName: "Someone Else" } });
     assert.equal(first.status, 201);
     assert.equal(reviews[0].userId, "alice");
@@ -667,9 +613,10 @@ test("a signed-in customer keeps one review per product even if the body carries
     const second = await call("POST", "/api/products/1/reviews", { as: ALICE, body: { guestName: "Someone Else", comment: "again" } });
     assert.equal(second.status, 409);
     assert.equal(reviews.length, 1);
-    // a signed-in customer without a delivered order cannot sneak in a guest comment
+    // A signed-in customer without an order still writes under their account, not as a guest.
     const bobTry = await call("POST", "/api/products/1/reviews", { as: BOB, body: { guestName: "Bob", comment: "hi" } });
-    assert.equal(bobTry.status, 403);
+    assert.equal(bobTry.status, 201);
+    assert.equal(reviews.find((row) => row.userId === "bob").guestName ?? null, null);
 });
 
 test("admins can search guest comments by name and see them flagged as guests", async () => {

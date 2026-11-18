@@ -147,7 +147,7 @@
         const filtered = () => state.tab !== "ALL" || state.pid !== "ALL" || state.q.trim() !== "";
         const emptyHtml = () => {
             if (!filtered()) {
-                return `<div class="ao-empty-block"><div><p class="ao-empty-title">Chưa có đánh giá nào</p><p class="ao-empty-desc">Khách chỉ đánh giá được sản phẩm sau khi đơn đã giao. Đánh giá đầu tiên sẽ hiện ở đây để bạn xem và kiểm duyệt.</p></div></div>`;
+                return `<div class="ao-empty-block"><div><p class="ao-empty-title">Chưa có đánh giá nào</p><p class="ao-empty-desc">Khách hàng đã đăng nhập có thể chấm sao mà không cần mua sản phẩm. Đánh giá đầu tiên sẽ hiện ở đây để bạn xem và kiểm duyệt.</p></div></div>`;
             }
             const p = state.pid !== "ALL" ? productOf(state.pid) : null;
             const q = state.q.trim();
@@ -186,7 +186,7 @@
             const { page, pageSize, total, totalPages } = state.meta;
             const from = (page - 1) * pageSize + 1;
             const to = Math.min(total, page * pageSize);
-            slots.foot.innerHTML = `<div class="ao-foot ao-foot-flat"><p class="ao-count"><span class="ao-sm-only">${num(from)} tới ${num(to)} trong </span>${num(total)} đánh giá</p>${totalPages > 1 ? `<div class="ao-foot-nav">${pagerHtml(page, totalPages)}</div>` : ""}</div>`;
+            slots.foot.innerHTML = `<div class="ao-foot ao-foot-flat"><p class="ao-count"><span class="ao-sm-only">${num(from)} tới ${num(to)} trong </span>${num(total)} đánh giá</p><div class="ao-foot-nav">${pagerHtml(page, totalPages)}</div></div>`;
         };
         const renderAll = () => { renderTabs(); renderBody(); renderFoot(); };
 
