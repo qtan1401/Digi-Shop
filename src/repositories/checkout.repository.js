@@ -122,18 +122,19 @@ const normalizeRequestedItems = (requestedItems) => {
 };
 
 const lockVariant = async (transaction, variantId) => {
-    // SQL Server retains UPDLOCK/HOLDLOCK through commit. Deterministic ID order
+    // PostgreSQL holds both existing rows through commit. Deterministic ID order
     // avoids opposing lock order for multi-variant carts.
     const rows = await transaction.$queryRaw`
         SELECT
-            variant.[id], variant.[product_id] AS [productId], variant.[sku],
-            variant.[stock], variant.[price], variant.[cost_price] AS [costPrice], variant.[is_active] AS [isActive],
-            product.[name], product.[image], product.[description],
-            product.[is_deleted] AS [isDeleted], product.[deleted_at] AS [deletedAt]
-        FROM [dbo].[product_variants] AS variant WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        INNER JOIN [dbo].[products] AS product WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-            ON product.[id] = variant.[product_id]
-        WHERE variant.[id] = ${variantId}
+            variant.id, variant.product_id AS "productId", variant.sku,
+            variant.stock, variant.price, variant.cost_price AS "costPrice", variant.is_active AS "isActive",
+            product.name, product.image, product.description,
+            product.is_deleted AS "isDeleted", product.deleted_at AS "deletedAt"
+        FROM product_variants AS variant
+        INNER JOIN products AS product
+            ON product.id = variant.product_id
+        WHERE variant.id = ${variantId}
+        FOR UPDATE OF variant, product
     `;
     if (!rows[0]) return undefined;
     const configuration = await transaction.productVariant.findUnique({
@@ -236,7 +237,7 @@ const checkout = async (requestedItems, userId, buildOrder, { voucherCodes = [],
         };
 
         // Optionally called after redeemVouchers with the amount still payable. Locks the user's balance row
-        // (UPDLOCK, after the variant and voucher locks, always in that order), validates, deducts and prices the
+        // (FOR UPDATE, after the variant and voucher locks, always in that order), validates, deducts and prices the
         // points in the same transaction. Not called, or nothing requested: no lock, no change.
         const redeemPoints = async ({ payable }) => {
             if (pointsToUse === 0 || unowned) return { used: 0, discount: 0, totalPrice: payable };

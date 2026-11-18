@@ -1,6 +1,6 @@
 // ===== LOYALTY REPOSITORY =====
 // Transaction-level helpers for Loyalty points (the caller owns the transaction). The user's balance row is locked
-// with UPDLOCK exactly like variants and vouchers, and the Order's two timestamps make every reversal idempotent
+// with FOR UPDATE, after variants and vouchers, and the Order's two timestamps make every reversal idempotent
 // (the same claim-first pattern as voucher.repository releaseForOrder): points_released_at for redeemed points given back,
 // points_credited_at for earned points credited (never at checkout: on delivery, on first online success, or admin PAID). Callers that reverse an Order hold the order lock first.
 
@@ -16,9 +16,9 @@ const getBalance = async (userId) => {
 /** Lock the user's row and return its balance, or undefined when the user does not exist. */
 const lockBalance = async (transaction, userId) => {
     const rows = await transaction.$queryRaw`
-        SELECT [loyalty_points] AS [loyaltyPoints]
-        FROM [dbo].[users] WITH (UPDLOCK, ROWLOCK)
-        WHERE [id] = ${userId};
+        SELECT loyalty_points AS "loyaltyPoints"
+        FROM users
+        WHERE id = ${userId} FOR UPDATE;
     `;
     return rows[0] ? Number(rows[0].loyaltyPoints) : undefined;
 };

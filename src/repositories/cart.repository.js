@@ -1,5 +1,5 @@
 // ===== CART REPOSITORY =====
-// Owns account-cart persistence and the SQL Server transaction used by Guest merge.
+// Owns account-cart persistence and the PostgreSQL transaction used by Guest merge.
 // Cart mutations never reserve stock; checkout revalidates stock independently.
 
 const crypto = require("crypto");
@@ -131,11 +131,12 @@ const mapCart = (cart) => ({
 
 const newCartId = () => crypto.randomUUID();
 
-const ensureCart = async (client, userId) => client.cart.upsert({
-    where: { userId },
-    create: { id: newCartId(), userId },
-    update: {}
-});
+// The user_id unique key arbitrates simultaneous first-cart inserts before either
+// transaction takes the cart lock; DO NOTHING leaves existing cart timestamps intact.
+const ensureCart = async (client, userId) => client.$executeRaw`
+    INSERT INTO carts (id, user_id) VALUES (${newCartId()}, ${userId})
+    ON CONFLICT (user_id) DO NOTHING
+`;
 
 const readCart = async (client, userId) => {
     await ensureCart(client, userId);
@@ -146,12 +147,14 @@ const readCart = async (client, userId) => {
     return mapCart(cart);
 };
 
-// SQL Server keeps UPDLOCK/HOLDLOCK until transaction completion.
+// The unique user_id insert creates a missing cart before its row lock; that lock
+// serializes inserts of missing cart items under the cart_id/variant_id unique key.
 const lockCart = async (transaction, userId) => {
     const rows = await transaction.$queryRaw`
-        SELECT [id], [user_id] AS [userId], [created_at] AS [createdAt], [updated_at] AS [updatedAt]
-        FROM [dbo].[carts] WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        WHERE [user_id] = ${userId}
+        SELECT id, user_id AS "userId", created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM carts
+        WHERE user_id = ${userId}
+        FOR UPDATE
     `;
     return rows[0];
 };
@@ -159,14 +162,15 @@ const lockCart = async (transaction, userId) => {
 const lockVariant = async (transaction, variantId) => {
     const rows = await transaction.$queryRaw`
         SELECT
-            variant.[id], variant.[product_id] AS [productId], variant.[sku],
-            variant.[price], variant.[stock], variant.[is_active] AS [isActive],
-            product.[name], product.[image], product.[description],
-            product.[is_deleted] AS [isDeleted], product.[deleted_at] AS [deletedAt]
-        FROM [dbo].[product_variants] AS variant WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        INNER JOIN [dbo].[products] AS product WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-            ON product.[id] = variant.[product_id]
-        WHERE variant.[id] = ${variantId}
+            variant.id, variant.product_id AS "productId", variant.sku,
+            variant.price, variant.stock, variant.is_active AS "isActive",
+            product.name, product.image, product.description,
+            product.is_deleted AS "isDeleted", product.deleted_at AS "deletedAt"
+        FROM product_variants AS variant
+        INNER JOIN products AS product
+            ON product.id = variant.product_id
+        WHERE variant.id = ${variantId}
+        FOR UPDATE OF variant, product
     `;
     return rows[0] || null;
 };

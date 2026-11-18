@@ -73,7 +73,7 @@ const makeClient = () => {
     const client = {
         $queryRaw: async (strings, key) => {
             const query = strings.join("");
-            if (query.includes("[dbo].[product_variants]")) {
+            if (query.includes("FROM product_variants AS variant")) {
                 const variant = state.productVariants.get(key);
                 if (!variant) return [];
                 const product = state.products.get(variant.productId);
@@ -88,7 +88,7 @@ const makeClient = () => {
                     isActive: variant.isActive
                 }] : [];
             }
-            if (query.includes("[dbo].[users]")) return lockUserRows(state, key);
+            if (query.includes("FROM users")) return lockUserRows(state, key);
             return state.orders.has(key) ? [{ id: key }] : [];
         },
         user: {

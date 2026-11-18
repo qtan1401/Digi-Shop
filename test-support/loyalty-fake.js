@@ -17,7 +17,7 @@ const userPointsMethods = (getState) => ({
     }
 });
 
-/** Result of the `SELECT ... FROM [dbo].[users] WITH (UPDLOCK ...)` balance lock; also records that the lock was taken. */
+/** Result of the `SELECT ... FROM users ... FOR UPDATE` balance lock; records that the lock was taken. */
 const lockUserRows = (state, userId) => {
     state.userLocks = [...(state.userLocks || []), userId];
     const row = state.users.get(userId);

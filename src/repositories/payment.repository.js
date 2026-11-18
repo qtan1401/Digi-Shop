@@ -30,9 +30,9 @@ const mapAttempt = (row) => row && ({
 
 const lockOrder = async (transaction, orderId) => {
     const rows = await transaction.$queryRaw`
-        SELECT [id]
-        FROM [dbo].[orders] WITH (UPDLOCK, ROWLOCK)
-        WHERE [id] = ${orderId};
+        SELECT id
+        FROM orders
+        WHERE id = ${orderId} FOR UPDATE;
     `;
     if (rows.length === 0) throw new PaymentError("ORDER_NOT_FOUND", "Không tìm thấy đơn hàng", 404);
 };

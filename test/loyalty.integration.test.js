@@ -64,18 +64,18 @@ const makeClient = () => ({
     $queryRaw: async (first, ...rest) => {
         const text = Array.isArray(first) ? first.join("?") : first.strings.join("?");
         const values = Array.isArray(first) ? rest : first.values;
-        if (text.includes("[dbo].[vouchers]")) {
+        if (text.includes("FROM vouchers AS v")) {
             const voucher = state.vouchers.get(values[0]);
             return voucher ? [{ ...clone(voucher), dbNow: dbNow() }] : [];
         }
-        if (text.includes("[dbo].[product_variants]")) {
+        if (text.includes("FROM product_variants AS variant")) {
             const variant = state.productVariants.get(values[0]);
             const product = variant && state.products.get(variant.productId);
             return product ? [{ ...clone(product), ...clone(variant), id: variant.id }] : [];
         }
-        if (text.includes("[dbo].[users]")) return lockUserRows(state, values[0]);
-        if (text.includes("[dbo].[orders]")) return state.orders.has(values[0]) ? [{ id: values[0] }] : [];
-        if (text.includes("SYSUTCDATETIME()")) return [{ dbNow: dbNow() }];
+        if (text.includes("FROM users")) return lockUserRows(state, values[0]);
+        if (text.includes("FROM orders")) return state.orders.has(values[0]) ? [{ id: values[0] }] : [];
+        if (text.includes("SELECT now()")) return [{ dbNow: dbNow() }];
         throw new Error(`Unexpected raw query: ${text}`);
     },
     user: { findUnique: async ({ where }) => clone(state.users.get(where.id) || null), ...userPointsMethods(() => state) },
@@ -647,7 +647,7 @@ test("the balance row is locked in the checkout transaction, and concurrent chec
     ]);
     assert.equal(results.filter((entry) => entry.status === "fulfilled").length, 1);
     assert.equal(results.find((entry) => entry.status === "rejected").reason.code, "POINTS_INSUFFICIENT");
-    assert.ok(state.userLocks.includes("user-1"), "the UPDLOCK query on users ran");
+    assert.ok(state.userLocks.includes("user-1"), "the balance row was locked");
     assert.equal(balance(), 0);
     assert.equal(state.orders.size, 1);
 });

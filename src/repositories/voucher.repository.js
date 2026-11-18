@@ -1,6 +1,6 @@
 // ===== VOUCHER REPOSITORY =====
 // Prisma/SQL persistence for Vouchers and their per-Order redemption rows.
-// Every validity decision uses the database clock (SYSUTCDATETIME()), never the app server's.
+// Every validity decision uses the database clock (now()), never the app server's.
 
 const { Prisma } = require("@prisma/client");
 const { getPrismaClient } = require("../db/prisma");
@@ -20,12 +20,12 @@ class VoucherUnavailableError extends Error {
 
 const LOCK_SELECT = Prisma.sql`
     SELECT
-        v.[id], v.[code], v.[description], v.[type], v.[percent],
-        v.[max_discount] AS [maxDiscount], v.[starts_at] AS [startsAt], v.[ends_at] AS [endsAt],
-        v.[quantity], v.[redeemed_count] AS [redeemedCount],
-        v.[is_enabled] AS [isEnabled], v.[is_listed] AS [isListed],
-        SYSUTCDATETIME() AS [dbNow]
-    FROM [dbo].[vouchers] AS v WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+        v.id, v.code, v.description, v.type, v.percent,
+        v.max_discount AS "maxDiscount", v.starts_at AS "startsAt", v.ends_at AS "endsAt",
+        v.quantity, v.redeemed_count AS "redeemedCount",
+        v.is_enabled AS "isEnabled", v.is_listed AS "isListed",
+        now() AS "dbNow"
+    FROM vouchers AS v
 `;
 
 // Voucher shape used by the calculator and availability checks (dates stay Date).
@@ -78,14 +78,14 @@ const toAdminVoucher = (voucher, now) => ({
 });
 
 const databaseNow = async (client = getPrismaClient()) => {
-    const rows = await client.$queryRaw`SELECT SYSUTCDATETIME() AS [dbNow]`;
+    const rows = await client.$queryRaw`SELECT now() AS "dbNow"`;
     return new Date(rows[0].dbNow);
 };
 
 // ── Transaction-level helpers (caller owns the transaction) ─────────────────
 
 const lockVoucher = async (transaction, id) => {
-    const rows = await transaction.$queryRaw(Prisma.sql`${LOCK_SELECT} WHERE v.[id] = ${id}`);
+    const rows = await transaction.$queryRaw(Prisma.sql`${LOCK_SELECT} WHERE v.id = ${id} FOR UPDATE OF v`);
     return rows[0] ? { voucher: mapRaw(rows[0]), now: new Date(rows[0].dbNow) } : undefined;
 };
 
@@ -209,11 +209,11 @@ const findListedInWindow = async (now) => {
 // ── Administrator CRUD ──────────────────────────────────────────────────────
 
 // Same precedence as statusOf: disabled, then legacy (listed under "all" only), then exhausted / active.
-const LEGACY_CONDITION = Prisma.sql`(LEN(v.[code]) <> 5 OR v.[code] LIKE '%[^A-Za-z0-9]%' OR v.[ends_at] < SYSUTCDATETIME())`;
+const LEGACY_CONDITION = Prisma.sql`(char_length(v.code) <> 5 OR v.code !~ '^[A-Za-z0-9]+$' OR v.ends_at < now())`;
 const STATUS_PREDICATES = Object.freeze({
-    disabled: () => Prisma.sql`v.[is_enabled] = 0`,
-    exhausted: () => Prisma.sql`v.[is_enabled] = 1 AND NOT ${LEGACY_CONDITION} AND v.[redeemed_count] >= v.[quantity]`,
-    active: () => Prisma.sql`v.[is_enabled] = 1 AND NOT ${LEGACY_CONDITION} AND v.[redeemed_count] < v.[quantity]`
+    disabled: () => Prisma.sql`v.is_enabled = false`,
+    exhausted: () => Prisma.sql`v.is_enabled = true AND NOT ${LEGACY_CONDITION} AND v.redeemed_count >= v.quantity`,
+    active: () => Prisma.sql`v.is_enabled = true AND NOT ${LEGACY_CONDITION} AND v.redeemed_count < v.quantity`
 });
 
 const listAdmin = async ({ q, status = "all", page = 1, pageSize = 20 }) => {
@@ -221,18 +221,18 @@ const listAdmin = async ({ q, status = "all", page = 1, pageSize = 20 }) => {
     const predicates = [Prisma.sql`1 = 1`];
     const term = typeof q === "string" ? q.trim() : "";
     if (term) {
-        const like = `%${term.replace(/[[%_]/g, "[$&]")}%`;
-        predicates.push(Prisma.sql`(v.[code] LIKE ${like} OR v.[description] LIKE ${like})`);
+        const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+        predicates.push(Prisma.sql`(v.code ILIKE ${like} OR v.description ILIKE ${like})`);
     }
     if (STATUS_PREDICATES[status]) predicates.push(STATUS_PREDICATES[status]());
     const where = Prisma.join(predicates, " AND ");
     const offset = (page - 1) * pageSize;
 
     const [countRows, ids, now] = await Promise.all([
-        client.$queryRaw(Prisma.sql`SELECT COUNT(*) AS [total] FROM [dbo].[vouchers] AS v WHERE ${where}`),
+        client.$queryRaw(Prisma.sql`SELECT COUNT(*)::int AS total FROM vouchers AS v WHERE ${where}`),
         client.$queryRaw(Prisma.sql`
-            SELECT v.[id] FROM [dbo].[vouchers] AS v WHERE ${where}
-            ORDER BY v.[id] DESC OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY`),
+            SELECT v.id FROM vouchers AS v WHERE ${where}
+            ORDER BY v.id DESC LIMIT ${pageSize} OFFSET ${offset}`),
         databaseNow(client)
     ]);
     const order = new Map(ids.map((row, index) => [Number(row.id), index]));
