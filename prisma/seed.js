@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const crypto = require("crypto");
 const argon2 = require("argon2");
-const sql = require("mssql");
+const pg = require("pg");
 const seedData = require("./seed-data");
 const { readDatabaseConfig } = require("../src/db/config");
 
@@ -17,30 +17,18 @@ const requiredDefaultAdminPassword = () => {
 };
 
 async function ensureDefaultAdmin(transaction, password = requiredDefaultAdminPassword()) {
-    const lookup = transaction.request();
-    lookup.input("username", sql.NVarChar(64), DEFAULT_ADMIN_USERNAME);
-    const result = await lookup.query(`
-        SELECT TOP (1)
-            [id],
-            [role],
-            [password_hash] AS [passwordHash]
-        FROM [dbo].[users] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [username] = @username;
-    `);
-    const existing = result.recordset[0];
+    const result = await transaction.query(`
+        SELECT id, role, password_hash AS "passwordHash"
+        FROM users WHERE username = $1 FOR UPDATE;
+    `, [DEFAULT_ADMIN_USERNAME]);
+    const existing = result.rows[0];
 
     if (!existing) {
         const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
-        const insert = transaction.request();
-        insert.input("id", sql.NVarChar(36), crypto.randomUUID());
-        insert.input("username", sql.NVarChar(64), DEFAULT_ADMIN_USERNAME);
-        insert.input("passwordHash", sql.NVarChar(255), passwordHash);
-        await insert.query(`
-            INSERT INTO [dbo].[users]
-                ([id], [username], [password_hash], [role], [status], [force_password_change])
-            VALUES
-                (@id, @username, @passwordHash, N'admin', N'ACTIVE', 1);
-        `);
+        await transaction.query(`
+            INSERT INTO users (id, username, password_hash, role, status, force_password_change)
+            VALUES ($1, $2, $3, 'admin', 'ACTIVE', true);
+        `, [crypto.randomUUID(), DEFAULT_ADMIN_USERNAME, passwordHash]);
         return;
     }
 
@@ -50,16 +38,21 @@ async function ensureDefaultAdmin(transaction, password = requiredDefaultAdminPa
 
     if (existing.passwordHash === null) {
         const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
-        const update = transaction.request();
-        update.input("id", sql.NVarChar(36), existing.id);
-        update.input("passwordHash", sql.NVarChar(255), passwordHash);
-        await update.query(`
-            UPDATE [dbo].[users]
-            SET [password_hash] = @passwordHash
-            WHERE [id] = @id
-              AND [password_hash] IS NULL;
-        `);
+        await transaction.query(`
+            UPDATE users SET password_hash = $2
+            WHERE id = $1 AND password_hash IS NULL;
+        `, [existing.id, passwordHash]);
     }
+}
+
+function createPool(config) {
+    return new pg.Pool({
+        connectionString: config.connectionString,
+        max: config.poolMax,
+        ssl: config.ssl,
+        options: "-c timezone=UTC",
+        ...(config.connectionTimeout === undefined ? {} : { connectionTimeoutMillis: config.connectionTimeout })
+    });
 }
 
 // Deletion order matters. order_status_history and user_addresses are listed explicitly (before their parents) so the
@@ -86,7 +79,6 @@ const CLEAR_TABLES = [
     ["product_options", "ProductOption"],
     ["products", "Product"],
     ["users", "User"],
-    ["categories", "Category"],
     ["audit_logs", "AuditLog"]
 ];
 const {
@@ -173,69 +165,61 @@ function compareFields(conflicts, entity, id, expected, actual, fields) {
     }
 }
 
-function bindList(request, prefix, type, values) {
-    return values.map((value, index) => {
-        const name = `${prefix}${index}`;
-        request.input(name, type, value);
-        return `@${name}`;
+function bindList(values, parameters) {
+    return values.map((value) => {
+        parameters.push(value);
+        return `$${parameters.length}`;
     }).join(", ");
 }
 
-
 async function loadProductCandidates(transaction, products) {
     if (products.length === 0) return [];
-    const request = transaction.request();
-    const ids = bindList(request, "productId", sql.Int, products.map(({ id }) => id));
-    const slugs = bindList(request, "productSlug", sql.NVarChar(240), products.map(({ slug }) => slug));
-    const result = await request.query(`
-        SELECT [id], [brand], [device_type] AS [deviceType], [name], [slug], [image],
-               [description], [is_deleted] AS [isDeleted], [deleted_at] AS [deletedAt],
-               [created_at] AS [createdAt], [updated_at] AS [updatedAt]
-        FROM [dbo].[products] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [id] IN (${ids}) OR [slug] IN (${slugs});
-    `);
-    return result.recordset;
+    const parameters = [];
+    const ids = bindList(products.map(({ id }) => id), parameters);
+    const slugs = bindList(products.map(({ slug }) => slug), parameters);
+    const result = await transaction.query(`
+        SELECT id, brand, device_type AS "deviceType", name, slug, image,
+               description, is_deleted AS "isDeleted", deleted_at AS "deletedAt",
+               created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM products
+        WHERE id IN (${ids}) OR slug IN (${slugs}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 async function loadVariantSkuCandidates(transaction, products) {
     const skus = products.flatMap(({ variants }) => variants.map(({ sku }) => sku));
     if (skus.length === 0) return [];
-    const request = transaction.request();
-    const parameters = bindList(request, "variantSku", sql.NVarChar(100), skus);
-    const result = await request.query(`
-        SELECT [id], [product_id] AS [productId], [sku]
-        FROM [dbo].[product_variants] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [sku] IN (${parameters});
-    `);
-    return result.recordset;
+    const parameters = [];
+    const placeholders = bindList(skus, parameters);
+    const result = await transaction.query(`
+        SELECT id, product_id AS "productId", sku
+        FROM product_variants WHERE sku IN (${placeholders}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 async function loadProductConfigurations(transaction, products, candidates) {
     const ids = candidates.map(({ id }) => id);
     if (ids.length === 0) return new Map();
-    const request = transaction.request();
-    const parameters = bindList(request, "configurationProduct", sql.Int, ids);
-    const optionRows = (await request.query(`
-        SELECT o.[product_id] AS [productId], o.[id] AS [optionId], o.[name], o.[position],
-               v.[value], v.[color_hex] AS [colorHex], v.[position] AS [valuePosition]
-        FROM [dbo].[product_options] o
-        LEFT JOIN [dbo].[product_option_values] v
-            ON v.[option_id] = o.[id] AND v.[is_active] = 1
-        WHERE o.[product_id] IN (${parameters}) AND o.[is_active] = 1
-        ORDER BY o.[position], v.[position];
-    `)).recordset;
-    const variantRequest = transaction.request();
-    const variantIds = bindList(variantRequest, "variantProduct", sql.Int, ids);
-    const variantRows = (await variantRequest.query(`
-        SELECT v.[product_id] AS [productId], v.[sku], v.[price], v.[cost_price] AS [costPrice], v.[stock], v.[image], v.[is_active] AS [isActive],
-               o.[name] AS [optionName], ov.[value] AS [optionValue]
-        FROM [dbo].[product_variants] v
-        LEFT JOIN [dbo].[product_variant_option_values] l ON l.[variant_id] = v.[id]
-        LEFT JOIN [dbo].[product_option_values] ov
-            ON ov.[id] = l.[option_value_id] AND ov.[is_active] = 1
-        LEFT JOIN [dbo].[product_options] o
-            ON o.[id] = ov.[option_id] AND o.[is_active] = 1
-        WHERE v.[product_id] IN (${variantIds}) AND v.[is_active] = 1
-        ORDER BY v.[id], o.[position];
-    `)).recordset;
+    const parameters = [];
+    const placeholders = bindList(ids, parameters);
+    const optionRows = (await transaction.query(`
+        SELECT o.product_id AS "productId", o.id AS "optionId", o.name, o.position,
+               v.value, v.color_hex AS "colorHex", v.position AS "valuePosition"
+        FROM product_options o
+        LEFT JOIN product_option_values v ON v.option_id = o.id AND v.is_active = true
+        WHERE o.product_id IN (${placeholders}) AND o.is_active = true
+        ORDER BY o.position, v.position;
+    `, parameters)).rows;
+    const variantRows = (await transaction.query(`
+        SELECT v.product_id AS "productId", v.sku, v.price, v.cost_price AS "costPrice", v.stock, v.image, v.is_active AS "isActive",
+               o.name AS "optionName", ov.value AS "optionValue"
+        FROM product_variants v
+        LEFT JOIN product_variant_option_values l ON l.variant_id = v.id
+        LEFT JOIN product_option_values ov ON ov.id = l.option_value_id AND ov.is_active = true
+        LEFT JOIN product_options o ON o.id = ov.option_id AND o.is_active = true
+        WHERE v.product_id IN (${placeholders}) AND v.is_active = true
+        ORDER BY v.id, o.position;
+    `, parameters)).rows;
     const configurations = new Map(ids.map((id) => [id, { options: [], variants: new Map() }]));
     for (const row of optionRows) {
         const config = configurations.get(row.productId);
@@ -273,100 +257,78 @@ async function loadProductConfigurations(transaction, products, candidates) {
 }
 
 async function loadOrderCandidates(transaction, orders) {
-    if (orders.length === 0) {
-        return { orders: [], items: [], vouchers: [] };
-    }
-    const orderRequest = transaction.request();
-    const ids = bindList(orderRequest, "orderId", sql.NVarChar(64), orders.map(({ id }) => id));
-    const orderResult = await orderRequest.query(`
-        SELECT [id], [user_id] AS [userId], [subtotal], [shipping_fee] AS [shippingFee], [discount], [total_price] AS [totalPrice],
-               [customer_name] AS [customerName], [customer_phone] AS [customerPhone],
-               [customer_address] AS [customerAddress], [customer_note] AS [customerNote],
-               [payment_method] AS [paymentMethod], [order_status] AS [orderStatus],
-               [payment_status] AS [paymentStatus], [created_at] AS [createdAt], [updated_at] AS [updatedAt]
-        FROM [dbo].[orders] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [id] IN (${ids});
-    `);
-
-    const itemRequest = transaction.request();
-    const itemIds = bindList(itemRequest, "itemOrderId", sql.NVarChar(64), orders.map(({ id }) => id));
-    const itemResult = await itemRequest.query(`
-        SELECT [id], [order_id] AS [orderId], [variant_id] AS [variantId],
-               [name_snapshot] AS [name], [image_snapshot] AS [image], [sku_snapshot] AS [skuSnapshot],
-               [options_snapshot] AS [optionsSnapshot], [unit_price] AS [unitPrice],
-               [quantity], [line_total] AS [lineTotal]
-        FROM [dbo].[order_items] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [order_id] IN (${itemIds});
-    `);
-    const voucherRequest = transaction.request();
-    const voucherOrderIds = bindList(voucherRequest, "voucherOrderId", sql.NVarChar(64), orders.map(({ id }) => id));
-    const voucherResult = await voucherRequest.query(`
-        SELECT [order_id] AS [orderId], [code_snapshot] AS [codeSnapshot], [type_snapshot] AS [typeSnapshot],
-               [percent_snapshot] AS [percentSnapshot], [discount_amount] AS [discountAmount]
-        FROM [dbo].[order_vouchers] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [order_id] IN (${voucherOrderIds});
-    `);
-    return { orders: orderResult.recordset, items: itemResult.recordset, vouchers: voucherResult.recordset };
+    if (orders.length === 0) return { orders: [], items: [], vouchers: [] };
+    const parameters = [];
+    const ids = bindList(orders.map(({ id }) => id), parameters);
+    const orderResult = await transaction.query(`
+        SELECT id, user_id AS "userId", subtotal, shipping_fee AS "shippingFee", discount, total_price AS "totalPrice",
+               customer_name AS "customerName", customer_phone AS "customerPhone",
+               customer_address AS "customerAddress", customer_note AS "customerNote",
+               payment_method AS "paymentMethod", order_status AS "orderStatus",
+               payment_status AS "paymentStatus", created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM orders WHERE id IN (${ids}) FOR UPDATE;
+    `, parameters);
+    const itemResult = await transaction.query(`
+        SELECT id, order_id AS "orderId", variant_id AS "variantId",
+               name_snapshot AS name, image_snapshot AS image, sku_snapshot AS "skuSnapshot",
+               options_snapshot AS "optionsSnapshot", unit_price AS "unitPrice",
+               quantity, line_total AS "lineTotal"
+        FROM order_items WHERE order_id IN (${ids}) FOR UPDATE;
+    `, parameters);
+    const voucherResult = await transaction.query(`
+        SELECT order_id AS "orderId", code_snapshot AS "codeSnapshot", type_snapshot AS "typeSnapshot",
+               percent_snapshot AS "percentSnapshot", discount_amount AS "discountAmount"
+        FROM order_vouchers WHERE order_id IN (${ids}) FOR UPDATE;
+    `, parameters);
+    return { orders: orderResult.rows, items: itemResult.rows, vouchers: voucherResult.rows };
 }
 
 async function loadUserCandidates(transaction, users) {
-    if (users.length === 0) {
-        return [];
-    }
-    const request = transaction.request();
-    const ids = bindList(request, "userId", sql.NVarChar(36), users.map(({ id }) => id));
-    const emails = bindList(request, "userEmail", sql.NVarChar(320), users.map(({ email }) => email));
-    const usernames = bindList(request, "userUsername", sql.NVarChar(64), users.map(({ username }) => username));
-    const result = await request.query(`
-        SELECT [id], [email], [username], [role], [status]
-        FROM [dbo].[users] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [id] IN (${ids}) OR [email] IN (${emails}) OR [username] IN (${usernames});
-    `);
-    return result.recordset;
+    if (users.length === 0) return [];
+    const parameters = [];
+    const ids = bindList(users.map(({ id }) => id), parameters);
+    const emails = bindList(users.map(({ email }) => email), parameters);
+    const usernames = bindList(users.map(({ username }) => username), parameters);
+    const result = await transaction.query(`
+        SELECT id, email, username, role, status
+        FROM users WHERE id IN (${ids}) OR email IN (${emails}) OR username IN (${usernames}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 
 async function loadVoucherCandidates(transaction, vouchers) {
-    if (vouchers.length === 0) {
-        return [];
-    }
-    const request = transaction.request();
-    const codes = bindList(request, "voucherCode", sql.NVarChar(20), vouchers.map(({ code }) => code));
-    const result = await request.query(`
-        SELECT [id], [code], [description], [type], [percent], [max_discount] AS [maxDiscount]
-        FROM [dbo].[vouchers] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [code] IN (${codes});
-    `);
-    return result.recordset;
+    if (vouchers.length === 0) return [];
+    const parameters = [];
+    const codes = bindList(vouchers.map(({ code }) => code), parameters);
+    const result = await transaction.query(`
+        SELECT id, code, description, type, percent, max_discount AS "maxDiscount"
+        FROM vouchers WHERE code IN (${codes}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 
 async function loadReviewCandidates(transaction, reviews) {
-    if (reviews.length === 0) {
-        return [];
-    }
-    const request = transaction.request();
-    const productIds = bindList(request, "reviewProduct", sql.Int, [...new Set(reviews.map(({ productId }) => productId))]);
-    const userIds = bindList(request, "reviewUser", sql.NVarChar(36), [...new Set(reviews.map(({ userId }) => userId))]);
-    const result = await request.query(`
-        SELECT [product_id] AS [productId], [user_id] AS [userId], [rating], [comment]
-        FROM [dbo].[product_reviews] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [product_id] IN (${productIds}) AND [user_id] IN (${userIds});
-    `);
-    return result.recordset;
+    if (reviews.length === 0) return [];
+    const parameters = [];
+    const productIds = bindList([...new Set(reviews.map(({ productId }) => productId))], parameters);
+    const userIds = bindList([...new Set(reviews.map(({ userId }) => userId))], parameters);
+    const result = await transaction.query(`
+        SELECT product_id AS "productId", user_id AS "userId", rating, comment
+        FROM product_reviews WHERE product_id IN (${productIds}) AND user_id IN (${userIds}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 
 async function loadAuditCandidates(transaction, audits) {
-    if (audits.length === 0) {
-        return [];
-    }
-    const request = transaction.request();
-    const ids = bindList(request, "auditId", sql.NVarChar(80), audits.map(({ id }) => id));
-    const result = await request.query(`
-        SELECT [id], [actor], [action], [entity], [entity_id] AS [entityId],
-               [changes_json] AS [changesJson], [timestamp]
-        FROM [dbo].[audit_logs] WITH (UPDLOCK, HOLDLOCK)
-        WHERE [id] IN (${ids});
-    `);
-    return result.recordset;
+    if (audits.length === 0) return [];
+    const parameters = [];
+    const ids = bindList(audits.map(({ id }) => id), parameters);
+    const result = await transaction.query(`
+        SELECT id, actor, action, entity, entity_id AS "entityId",
+               changes_json AS "changesJson", timestamp
+        FROM audit_logs WHERE id IN (${ids}) FOR UPDATE;
+    `, parameters);
+    return result.rows;
 }
 
 function classifyProducts(seedRecords, existingRecords, existingVariants, existingConfigurations, conflicts, summary) {
@@ -602,55 +564,29 @@ function classifyAudits(seedRecords, existingRecords, conflicts, summary) {
 
 async function insertProducts(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("id", sql.Int, record.id);
-        request.input("brand", sql.NVarChar(16), record.brand);
-        request.input("deviceType", sql.NVarChar(16), record.deviceType);
-        request.input("name", sql.NVarChar(200), record.name);
-        request.input("slug", sql.NVarChar(240), record.slug);
-        request.input("image", sql.NVarChar(500), record.image);
-        request.input("description", sql.NVarChar(sql.MAX), record.description);
-        request.input("isDeleted", sql.Bit, record.isDeleted);
-        request.input("deletedAt", sql.DateTime2(3), record.deletedAt ? new Date(record.deletedAt) : null);
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
-        await request.query(`
-            SET IDENTITY_INSERT [dbo].[products] ON;
-            BEGIN TRY
-                INSERT INTO [dbo].[products]
-                    ([id], [brand], [device_type], [name], [slug], [image], [description], [is_deleted], [deleted_at], [created_at], [updated_at])
-                VALUES
-                    (@id, @brand, @deviceType, @name, @slug, @image, @description, @isDeleted, @deletedAt, @createdAt, @updatedAt);
-                SET IDENTITY_INSERT [dbo].[products] OFF;
-            END TRY
-            BEGIN CATCH
-                SET IDENTITY_INSERT [dbo].[products] OFF;
-                THROW;
-            END CATCH;
-        `);
+        await transaction.query(`
+            INSERT INTO products
+                (id, brand, device_type, name, slug, image, description, is_deleted, deleted_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+        `, [
+            record.id, record.brand, record.deviceType, record.name, record.slug, record.image,
+            record.description, record.isDeleted, record.deletedAt && new Date(record.deletedAt),
+            new Date(record.createdAt), new Date(record.updatedAt)
+        ]);
         const valueIdsByOption = new Map();
         for (const [optionPosition, option] of record.options.entries()) {
-            const optionRequest = transaction.request();
-            optionRequest.input("productId", sql.Int, record.id);
-            optionRequest.input("name", sql.NVarChar(100), option.name);
-            optionRequest.input("position", sql.Int, optionPosition);
-            const optionResult = await optionRequest.query(`
-                INSERT INTO [dbo].[product_options] ([product_id], [name], [position], [is_active])
-                OUTPUT INSERTED.[id] AS [id] VALUES (@productId, @name, @position, 1);
-            `);
-            const optionId = optionResult.recordset[0].id;
+            const optionResult = await transaction.query(`
+                INSERT INTO product_options (product_id, name, position, is_active)
+                VALUES ($1, $2, $3, true) RETURNING id;
+            `, [record.id, option.name, optionPosition]);
+            const optionId = optionResult.rows[0].id;
             const valueIds = new Map();
             for (const [position, entry] of option.values.entries()) {
-                const valueRequest = transaction.request();
-                valueRequest.input("optionId", sql.Int, optionId);
-                valueRequest.input("value", sql.NVarChar(100), entry.value);
-                valueRequest.input("colorHex", sql.NVarChar(7), entry.colorHex || null);
-                valueRequest.input("position", sql.Int, position);
-                const valueResult = await valueRequest.query(`
-                    INSERT INTO [dbo].[product_option_values] ([option_id], [value], [color_hex], [position], [is_active])
-                    OUTPUT INSERTED.[id] AS [id] VALUES (@optionId, @value, @colorHex, @position, 1);
-                `);
-                valueIds.set(comparisonKey(entry.value), valueResult.recordset[0].id);
+                const valueResult = await transaction.query(`
+                    INSERT INTO product_option_values (option_id, value, color_hex, position, is_active)
+                    VALUES ($1, $2, $3, $4, true) RETURNING id;
+                `, [optionId, entry.value, entry.colorHex || null, position]);
+                valueIds.set(comparisonKey(entry.value), valueResult.rows[0].id);
             }
             valueIdsByOption.set(comparisonKey(option.name), valueIds);
         }
@@ -659,26 +595,15 @@ async function insertProducts(transaction, records) {
                 valueIdsByOption.get(comparisonKey(name)).get(comparisonKey(value)));
             const combinationKey = crypto.createHash("sha256")
                 .update(JSON.stringify([...valueIds].sort((left, right) => left - right))).digest("hex").toUpperCase();
-            const variantRequest = transaction.request();
-            variantRequest.input("productId", sql.Int, record.id);
-            variantRequest.input("sku", sql.NVarChar(100), variant.sku);
-            variantRequest.input("combinationKey", sql.Char(64), combinationKey);
-            variantRequest.input("price", sql.Decimal(18, 2), variant.price);
-            variantRequest.input("costPrice", sql.Decimal(18, 2), variant.costPrice);
-            variantRequest.input("stock", sql.Int, variant.stock);
-            variantRequest.input("image", sql.NVarChar(500), variant.image || null);
-            const result = await variantRequest.query(`
-                INSERT INTO [dbo].[product_variants] ([product_id], [sku], [combination_key], [price], [cost_price], [stock], [image], [is_active])
-                OUTPUT INSERTED.[id] AS [id] VALUES (@productId, @sku, @combinationKey, @price, @costPrice, @stock, @image, 1);
-            `);
+            const result = await transaction.query(`
+                INSERT INTO product_variants (product_id, sku, combination_key, price, cost_price, stock, image, is_active)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id;
+            `, [record.id, variant.sku, combinationKey, variant.price, variant.costPrice, variant.stock, variant.image || null]);
             for (const optionValueId of valueIds) {
-                const linkRequest = transaction.request();
-                linkRequest.input("variantId", sql.Int, result.recordset[0].id);
-                linkRequest.input("optionValueId", sql.Int, optionValueId);
-                await linkRequest.query(`
-                    INSERT INTO [dbo].[product_variant_option_values] ([variant_id], [option_value_id])
-                    VALUES (@variantId, @optionValueId);
-                `);
+                await transaction.query(`
+                    INSERT INTO product_variant_option_values (variant_id, option_value_id)
+                    VALUES ($1, $2);
+                `, [result.rows[0].id, optionValueId]);
             }
         }
         await insertProductImages(transaction, record.id, record.images);
@@ -687,14 +612,9 @@ async function insertProducts(transaction, records) {
 
 async function insertProductImages(transaction, productId, images) {
     for (const image of images) {
-        const request = transaction.request();
-        request.input("productId", sql.Int, productId);
-        request.input("url", sql.NVarChar(500), image.url);
-        request.input("position", sql.Int, image.position);
-        await request.query(`
-            INSERT INTO [dbo].[product_images] ([product_id], [url], [position])
-            VALUES (@productId, @url, @position);
-        `);
+        await transaction.query(`
+            INSERT INTO product_images (product_id, url, position) VALUES ($1, $2, $3);
+        `, [productId, image.url, image.position]);
     }
 }
 
@@ -706,10 +626,8 @@ async function backfillProductImages(transaction, products) {
     let filled = 0;
     for (const product of products) {
         if (product.images.length === 0) continue;
-        const count = transaction.request();
-        count.input("productId", sql.Int, product.id);
-        const existing = await count.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[product_images] WHERE [product_id] = @productId;`);
-        if (Number(existing.recordset[0].count) > 0) continue;
+        const existing = await transaction.query("SELECT COUNT(*) AS count FROM product_images WHERE product_id = $1", [product.id]);
+        if (Number(existing.rows[0].count) > 0) continue;
         await insertProductImages(transaction, product.id, product.images);
         filled += product.images.length;
     }
@@ -718,61 +636,36 @@ async function backfillProductImages(transaction, products) {
 
 async function insertOrders(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("id", sql.NVarChar(64), record.id);
-        request.input("subtotal", sql.Decimal(18, 2), record.subtotal);
-        request.input("shippingFee", sql.Decimal(18, 2), record.shippingFee);
-        request.input("discount", sql.Decimal(18, 2), record.discount);
-        request.input("totalPrice", sql.Decimal(18, 2), record.totalPrice);
-        request.input("customerName", sql.NVarChar(200), record.customerName);
-        request.input("customerPhone", sql.NVarChar(32), record.customerPhone);
-        request.input("customerAddress", sql.NVarChar(500), record.customerAddress);
-        request.input("customerNote", sql.NVarChar(1000), record.customerNote);
-        request.input("paymentMethod", sql.NVarChar(64), record.paymentMethod);
-        request.input("orderStatus", sql.NVarChar(32), record.orderStatus);
-        request.input("paymentStatus", sql.NVarChar(32), record.paymentStatus);
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
-        request.input("userId", sql.NVarChar(36), record.userId);
-        request.input("pointsEarned", sql.Int, record.pointsEarned);
-        request.input("pointsCreditedAt", sql.DateTime2(3), record.pointsCreditedAt === null ? null : new Date(record.pointsCreditedAt));
-        await request.query(`
-            INSERT INTO [dbo].[orders]
-                ([id], [subtotal], [shipping_fee], [discount], [total_price], [customer_name], [customer_phone],
-                 [customer_address], [customer_note], [payment_method], [order_status], [payment_status], [created_at], [updated_at], [user_id], [cancelled_at],
-                 [points_earned], [points_credited_at])
+        await transaction.query(`
+            INSERT INTO orders
+                (id, subtotal, shipping_fee, discount, total_price, customer_name, customer_phone,
+                 customer_address, customer_note, payment_method, order_status, payment_status, created_at, updated_at, user_id, cancelled_at,
+                 points_earned, points_credited_at)
             VALUES
-                (@id, @subtotal, @shippingFee, @discount, @totalPrice, @customerName, @customerPhone,
-                 @customerAddress, @customerNote, @paymentMethod, @orderStatus, @paymentStatus, @createdAt, @updatedAt, @userId,
-                 CASE WHEN @orderStatus = N'CANCELLED' THEN @updatedAt ELSE NULL END,
-                 @pointsEarned, @pointsCreditedAt);
-        `);
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                 CASE WHEN $11::varchar = 'CANCELLED' THEN $14::timestamptz ELSE NULL END, $16, $17);
+        `, [
+            record.id, record.subtotal, record.shippingFee, record.discount, record.totalPrice, record.customerName,
+            record.customerPhone, record.customerAddress, record.customerNote, record.paymentMethod, record.orderStatus,
+            record.paymentStatus, new Date(record.createdAt), new Date(record.updatedAt), record.userId,
+            record.pointsEarned, record.pointsCreditedAt === null ? null : new Date(record.pointsCreditedAt)
+        ]);
         await insertStatusHistory(transaction, record.id, record.statusHistory);
 
         for (const item of record.items) {
-            const variantLookup = transaction.request();
-            variantLookup.input("sku", sql.NVarChar(100), item.variantSku);
-            const variant = await variantLookup.query(`
-                SELECT [id] FROM [dbo].[product_variants] WITH (UPDLOCK, HOLDLOCK) WHERE [sku] = @sku;
-            `);
-            if (variant.recordset.length !== 1) throw new Error(`Seed order variant ${item.variantSku} could not be resolved`);
-            const itemRequest = transaction.request();
-            itemRequest.input("orderId", sql.NVarChar(64), record.id);
-            itemRequest.input("variantId", sql.Int, variant.recordset[0].id);
-            itemRequest.input("name", sql.NVarChar(200), item.name);
-            itemRequest.input("image", sql.NVarChar(500), item.image);
-            itemRequest.input("skuSnapshot", sql.NVarChar(100), item.variantSku);
-            itemRequest.input("optionsSnapshot", sql.NVarChar(sql.MAX), item.optionsSnapshot);
-            itemRequest.input("unitPrice", sql.Decimal(18, 2), item.unitPrice);
-            itemRequest.input("unitCost", sql.Decimal(18, 2), item.unitCost);
-            itemRequest.input("quantity", sql.Int, item.quantity);
-            itemRequest.input("lineTotal", sql.Decimal(18, 2), item.lineTotal);
-            await itemRequest.query(`
-                INSERT INTO [dbo].[order_items]
-                    ([order_id], [variant_id], [name_snapshot], [image_snapshot], [sku_snapshot], [options_snapshot],
-                     [unit_price], [unit_cost], [quantity], [line_total])
-                VALUES (@orderId, @variantId, @name, @image, @skuSnapshot, @optionsSnapshot, @unitPrice, @unitCost, @quantity, @lineTotal);
-            `);
+            const variant = await transaction.query(`
+                SELECT id FROM product_variants WHERE sku = $1 FOR UPDATE;
+            `, [item.variantSku]);
+            if (variant.rows.length !== 1) throw new Error(`Seed order variant ${item.variantSku} could not be resolved`);
+            await transaction.query(`
+                INSERT INTO order_items
+                    (order_id, variant_id, name_snapshot, image_snapshot, sku_snapshot, options_snapshot,
+                     unit_price, unit_cost, quantity, line_total)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+            `, [
+                record.id, variant.rows[0].id, item.name, item.image, item.variantSku, item.optionsSnapshot,
+                item.unitPrice, item.unitCost, item.quantity, item.lineTotal
+            ]);
         }
         await insertOrderVouchers(transaction, record.id, record.vouchers);
     }
@@ -780,56 +673,34 @@ async function insertOrders(transaction, records) {
 
 async function insertAddresses(transaction, userId, addresses) {
     for (const address of addresses) {
-        const request = transaction.request();
-        request.input("id", sql.NVarChar(36), address.id);
-        request.input("userId", sql.NVarChar(36), userId);
-        request.input("recipientName", sql.NVarChar(200), address.recipientName);
-        request.input("phone", sql.NVarChar(20), address.phone);
-        request.input("addressLine", sql.NVarChar(500), address.addressLine);
-        request.input("isDefault", sql.Bit, address.isDefault);
-        request.input("createdAt", sql.DateTime2(3), new Date(address.createdAt));
-        await request.query(`
-            INSERT INTO [dbo].[user_addresses]
-                ([id], [user_id], [recipient_name], [phone], [address_line], [is_default], [created_at], [updated_at])
-            VALUES
-                (@id, @userId, @recipientName, @phone, @addressLine, @isDefault, @createdAt, @createdAt);
-        `);
+        const createdAt = new Date(address.createdAt);
+        await transaction.query(`
+            INSERT INTO user_addresses
+                (id, user_id, recipient_name, phone, address_line, is_default, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $7);
+        `, [address.id, userId, address.recipientName, address.phone, address.addressLine, address.isDefault, createdAt]);
     }
 }
 
 async function insertStatusHistory(transaction, orderId, history) {
     for (const entry of history) {
-        const request = transaction.request();
-        request.input("orderId", sql.NVarChar(64), orderId);
-        request.input("status", sql.NVarChar(32), entry.status);
-        request.input("createdAt", sql.DateTime2(3), new Date(entry.at));
-        await request.query(`
-            INSERT INTO [dbo].[order_status_history] ([order_id], [status], [created_at])
-            VALUES (@orderId, @status, @createdAt);
-        `);
+        await transaction.query(`
+            INSERT INTO order_status_history (order_id, status, created_at) VALUES ($1, $2, $3);
+        `, [orderId, entry.status, new Date(entry.at)]);
     }
 }
 
 async function insertUsers(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("id", sql.NVarChar(36), record.id);
-        request.input("email", sql.NVarChar(320), record.email);
-        request.input("username", sql.NVarChar(64), record.username);
-        request.input("fullName", sql.NVarChar(200), record.fullName);
-        request.input("role", sql.NVarChar(16), record.role);
-        request.input("status", sql.NVarChar(20), record.status);
-        request.input("loyaltyPoints", sql.Int, record.loyaltyPoints);
-        request.input("emailVerifiedAt", sql.DateTime2(3), new Date(record.emailVerifiedAt));
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
         // No password hash: seeded customers cannot log in.
-        await request.query(`
-            INSERT INTO [dbo].[users]
-                ([id], [email], [username], [full_name], [role], [status], [loyalty_points], [email_verified_at], [created_at], [updated_at])
-            VALUES
-                (@id, @email, @username, @fullName, @role, @status, @loyaltyPoints, @emailVerifiedAt, @createdAt, @updatedAt);
-        `);
+        await transaction.query(`
+            INSERT INTO users
+                (id, email, username, full_name, role, status, loyalty_points, email_verified_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+        `, [
+            record.id, record.email, record.username, record.fullName, record.role, record.status, record.loyaltyPoints,
+            new Date(record.emailVerifiedAt), new Date(record.createdAt), new Date(record.updatedAt)
+        ]);
         await insertAddresses(transaction, record.id, record.addresses);
     }
 }
@@ -843,49 +714,38 @@ async function insertUsers(transaction, records) {
 async function backfillSeedExtras(transaction, users, orders) {
     let filled = 0;
     for (const user of users) {
-        const named = transaction.request();
-        named.input("id", sql.NVarChar(36), user.id);
-        named.input("fullName", sql.NVarChar(200), user.fullName);
-        const result = await named.query(`
-            UPDATE [dbo].[users] SET [full_name] = @fullName WHERE [id] = @id AND [full_name] IS NULL;
-        `);
-        filled += result.rowsAffected?.[0] || 0;
+        const result = await transaction.query(`
+            UPDATE users SET full_name = $2 WHERE id = $1 AND full_name IS NULL;
+        `, [user.id, user.fullName]);
+        filled += result.rowCount;
         if (user.addresses.length === 0) continue;
-        const count = transaction.request();
-        count.input("userId", sql.NVarChar(36), user.id);
-        const existing = await count.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[user_addresses] WHERE [user_id] = @userId;`);
-        if (Number(existing.recordset[0].count) === 0) {
+        const existing = await transaction.query("SELECT COUNT(*) AS count FROM user_addresses WHERE user_id = $1", [user.id]);
+        if (Number(existing.rows[0].count) === 0) {
             await insertAddresses(transaction, user.id, user.addresses);
             filled += user.addresses.length;
         }
     }
     for (const order of orders) {
-        const history = transaction.request();
-        history.input("orderId", sql.NVarChar(64), order.id);
-        const stored = await history.query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[order_status_history] WHERE [order_id] = @orderId;`);
-        if (Number(stored.recordset[0].count) === 0) {
+        const stored = await transaction.query("SELECT COUNT(*) AS count FROM order_status_history WHERE order_id = $1", [order.id]);
+        if (Number(stored.rows[0].count) === 0) {
             await insertStatusHistory(transaction, order.id, order.statusHistory);
             filled += order.statusHistory.length;
         }
         if (order.pointsEarned === 0) continue;
-        const points = transaction.request();
-        points.input("id", sql.NVarChar(64), order.id);
-        points.input("orderStatus", sql.NVarChar(32), order.orderStatus);
-        points.input("paymentStatus", sql.NVarChar(32), order.paymentStatus);
-        points.input("pointsEarned", sql.Int, order.pointsEarned);
-        points.input("pointsCreditedAt", sql.DateTime2(3), order.pointsCreditedAt === null ? null : new Date(order.pointsCreditedAt));
-        const recorded = await points.query(`
-            UPDATE [dbo].[orders] SET [points_earned] = @pointsEarned, [points_credited_at] = @pointsCreditedAt
-            WHERE [id] = @id AND [points_earned] = 0 AND [points_credited_at] IS NULL
-              AND [order_status] = @orderStatus AND [payment_status] = @paymentStatus;
-        `);
-        if ((recorded.rowsAffected?.[0] || 0) === 1) {
+        const recorded = await transaction.query(`
+            UPDATE orders SET points_earned = $4, points_credited_at = $5
+            WHERE id = $1 AND points_earned = 0 AND points_credited_at IS NULL
+              AND order_status = $2 AND payment_status = $3;
+        `, [
+            order.id, order.orderStatus, order.paymentStatus, order.pointsEarned,
+            order.pointsCreditedAt === null ? null : new Date(order.pointsCreditedAt)
+        ]);
+        if (recorded.rowCount === 1) {
             filled += 1;
             if (order.pointsCreditedAt !== null && order.userId !== null) {
-                const credit = transaction.request();
-                credit.input("userId", sql.NVarChar(36), order.userId);
-                credit.input("pointsEarned", sql.Int, order.pointsEarned);
-                await credit.query(`UPDATE [dbo].[users] SET [loyalty_points] = [loyalty_points] + @pointsEarned WHERE [id] = @userId;`);
+                await transaction.query("UPDATE users SET loyalty_points = loyalty_points + $2 WHERE id = $1", [
+                    order.userId, order.pointsEarned
+                ]);
             }
         }
     }
@@ -896,94 +756,60 @@ async function backfillSeedExtras(transaction, users, orders) {
 // so it stays equal to the order_vouchers rows even when the voucher already existed.
 async function insertVouchers(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("code", sql.NVarChar(20), record.code);
-        request.input("description", sql.NVarChar(200), record.description);
-        request.input("type", sql.NVarChar(16), record.type);
-        request.input("percent", sql.Int, record.percent);
-        request.input("maxDiscount", sql.Decimal(18, 2), record.maxDiscount);
-        request.input("startsAt", sql.DateTime2(3), new Date(record.startsAt));
-        request.input("endsAt", sql.DateTime2(3), new Date(record.endsAt));
-        request.input("quantity", sql.Int, record.quantity);
-        request.input("isEnabled", sql.Bit, record.isEnabled);
-        request.input("isListed", sql.Bit, record.isListed);
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
-        await request.query(`
-            INSERT INTO [dbo].[vouchers]
-                ([code], [description], [type], [percent], [max_discount], [starts_at], [ends_at], [quantity],
-                 [redeemed_count], [is_enabled], [is_listed], [created_at], [updated_at])
-            VALUES
-                (@code, @description, @type, @percent, @maxDiscount, @startsAt, @endsAt, @quantity,
-                 0, @isEnabled, @isListed, @createdAt, @updatedAt);
-        `);
+        await transaction.query(`
+            INSERT INTO vouchers
+                (code, description, type, percent, max_discount, starts_at, ends_at, quantity,
+                 redeemed_count, is_enabled, is_listed, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11, $12);
+        `, [
+            record.code, record.description, record.type, record.percent, record.maxDiscount,
+            new Date(record.startsAt), new Date(record.endsAt), record.quantity, record.isEnabled, record.isListed,
+            new Date(record.createdAt), new Date(record.updatedAt)
+        ]);
     }
 }
 
 async function insertOrderVouchers(transaction, orderId, vouchers) {
     for (const voucher of vouchers) {
-        const lookup = transaction.request();
-        lookup.input("code", sql.NVarChar(20), voucher.code);
-        const found = await lookup.query(`
-            SELECT [id] FROM [dbo].[vouchers] WITH (UPDLOCK, HOLDLOCK) WHERE [code] = @code;
-        `);
-        if (found.recordset.length !== 1) throw new Error(`Seed order voucher ${voucher.code} could not be resolved`);
-        const request = transaction.request();
-        request.input("orderId", sql.NVarChar(64), orderId);
-        request.input("voucherId", sql.Int, found.recordset[0].id);
-        request.input("code", sql.NVarChar(20), voucher.code);
-        request.input("type", sql.NVarChar(16), voucher.type);
-        request.input("percent", sql.Int, voucher.percent);
-        request.input("discountAmount", sql.Decimal(18, 2), voucher.discountAmount);
-        request.input("releasedAt", sql.DateTime2(3), voucher.releasedAt === null ? null : new Date(voucher.releasedAt));
-        await request.query(`
-            INSERT INTO [dbo].[order_vouchers]
-                ([order_id], [voucher_id], [code_snapshot], [type_snapshot], [percent_snapshot], [discount_amount], [released_at])
-            VALUES (@orderId, @voucherId, @code, @type, @percent, @discountAmount, @releasedAt);
-        `);
+        const found = await transaction.query("SELECT id FROM vouchers WHERE code = $1 FOR UPDATE", [voucher.code]);
+        if (found.rows.length !== 1) throw new Error(`Seed order voucher ${voucher.code} could not be resolved`);
+        await transaction.query(`
+            INSERT INTO order_vouchers
+                (order_id, voucher_id, code_snapshot, type_snapshot, percent_snapshot, discount_amount, released_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7);
+        `, [
+            orderId, found.rows[0].id, voucher.code, voucher.type, voucher.percent, voucher.discountAmount,
+            voucher.releasedAt === null ? null : new Date(voucher.releasedAt)
+        ]);
         if (voucher.releasedAt === null) {
-            const redeem = transaction.request();
-            redeem.input("voucherId", sql.Int, found.recordset[0].id);
-            await redeem.query(`
-                UPDATE [dbo].[vouchers] SET [redeemed_count] = [redeemed_count] + 1 WHERE [id] = @voucherId;
-            `);
+            await transaction.query("UPDATE vouchers SET redeemed_count = redeemed_count + 1 WHERE id = $1", [found.rows[0].id]);
         }
     }
 }
 
 async function insertReviews(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("productId", sql.Int, record.productId);
-        request.input("userId", sql.NVarChar(36), record.userId);
-        request.input("rating", sql.TinyInt, record.rating);
-        request.input("comment", sql.NVarChar(1000), record.comment);
-        request.input("isHidden", sql.Bit, record.isHidden);
-        request.input("createdAt", sql.DateTime2(3), new Date(record.createdAt));
-        request.input("updatedAt", sql.DateTime2(3), new Date(record.updatedAt));
-        await request.query(`
-            INSERT INTO [dbo].[product_reviews]
-                ([product_id], [user_id], [rating], [comment], [is_hidden], [created_at], [updated_at])
-            VALUES (@productId, @userId, @rating, @comment, @isHidden, @createdAt, @updatedAt);
-        `);
+        await transaction.query(`
+            INSERT INTO product_reviews
+                (product_id, user_id, rating, comment, is_hidden, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7);
+        `, [
+            record.productId, record.userId, record.rating, record.comment, record.isHidden,
+            new Date(record.createdAt), new Date(record.updatedAt)
+        ]);
     }
 }
 
 async function insertAudits(transaction, records) {
     for (const record of records) {
-        const request = transaction.request();
-        request.input("id", sql.NVarChar(80), record.id);
-        request.input("actor", sql.NVarChar(120), record.actor);
-        request.input("action", sql.NVarChar(40), record.action);
-        request.input("entity", sql.NVarChar(40), record.entity);
-        request.input("entityId", sql.NVarChar(80), record.entityId);
-        request.input("changesJson", sql.NVarChar(sql.MAX), record.changesJson);
-        request.input("timestamp", sql.DateTime2(3), new Date(record.timestamp));
-        await request.query(`
-            INSERT INTO [dbo].[audit_logs]
-                ([id], [actor], [action], [entity], [entity_id], [changes_json], [timestamp])
-            VALUES (@id, @actor, @action, @entity, @entityId, @changesJson, @timestamp);
-        `);
+        await transaction.query(`
+            INSERT INTO audit_logs
+                (id, actor, action, entity, entity_id, changes_json, timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6, $7);
+        `, [
+            record.id, record.actor, record.action, record.entity, record.entityId, record.changesJson,
+            new Date(record.timestamp)
+        ]);
     }
 }
 
@@ -1003,20 +829,18 @@ async function seedDatabase() {
     });
     normalized.orders = resolveSeedOrderItems(normalized.products, normalized.orders);
     const summary = createSummary(normalized);
-    const { mssql } = readDatabaseConfig();
-    const pool = new sql.ConnectionPool({
-        ...mssql,
-        pool: { ...mssql.pool },
-        options: { ...mssql.options }
-    });
+    const pool = createPool(readDatabaseConfig());
     let transaction;
     let transactionOpen = false;
 
     try {
-        await pool.connect();
-        transaction = new sql.Transaction(pool);
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transaction = await pool.connect();
+        await transaction.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
         transactionOpen = true;
+        await transaction.query(`
+            LOCK TABLE users, products, product_variants, vouchers, orders, order_items,
+                       order_vouchers, product_reviews, audit_logs IN SHARE ROW EXCLUSIVE MODE;
+        `);
         await ensureDefaultAdmin(transaction);
 
         const existingProducts = await loadProductCandidates(transaction, normalized.products);
@@ -1076,13 +900,14 @@ async function seedDatabase() {
         summary.inserted.reviews = reviewInserts.length;
         summary.inserted.audits = auditInserts.length;
 
-        await transaction.commit();
+        await transaction.query("SELECT setval(pg_get_serial_sequence('products', 'id'), (SELECT MAX(id) FROM products))");
+        await transaction.query("COMMIT");
         transactionOpen = false;
         return finalizeSummary(summary);
     } catch (error) {
         if (transactionOpen) {
             try {
-                await transaction.rollback();
+                await transaction.query("ROLLBACK");
             } catch {
                 // The original error remains the actionable failure; closing the pool discards the session.
             }
@@ -1090,36 +915,34 @@ async function seedDatabase() {
         }
         throw error;
     } finally {
-        if (pool.connected || pool.connecting) {
-            await pool.close();
-        }
+        transaction?.release();
+        await pool.end();
     }
 }
 
 const countRecords = async (transaction, table) => {
-    const result = await transaction.request().query(`SELECT COUNT_BIG(*) AS [count] FROM [dbo].[${table}];`);
-    return Number(result.recordset[0].count);
+    const result = await transaction.query(`SELECT COUNT(*) AS count FROM "${table}"`);
+    return Number(result.rows[0].count);
 };
 
 async function clearStore(transaction, password) {
     for (const [table] of CLEAR_TABLES) {
         if (table === "refresh_sessions") {
-            await transaction.request().query("UPDATE [dbo].[refresh_sessions] SET [replaced_by_id] = NULL;");
+            await transaction.query("UPDATE refresh_sessions SET replaced_by_id = NULL");
         }
-        await transaction.request().query(`DELETE FROM [dbo].[${table}];`);
+        await transaction.query(`DELETE FROM "${table}"`);
     }
     await ensureDefaultAdmin(transaction, password);
     const after = {};
     for (const [table] of CLEAR_TABLES) after[table] = await countRecords(transaction, table);
-    const adminResult = await transaction.request().query(`
-        SELECT [username], [role], [force_password_change]
-        FROM [dbo].[users];
+    const adminResult = await transaction.query(`
+        SELECT username, role, force_password_change FROM users;
     `);
     if (
-        adminResult.recordset.length !== 1
-        || adminResult.recordset[0].username !== DEFAULT_ADMIN_USERNAME
-        || adminResult.recordset[0].role !== "admin"
-        || !adminResult.recordset[0].force_password_change
+        adminResult.rows.length !== 1
+        || adminResult.rows[0].username !== DEFAULT_ADMIN_USERNAME
+        || adminResult.rows[0].role !== "admin"
+        || !adminResult.rows[0].force_password_change
     ) {
         throw new Error("Reset did not produce exactly one first-login administrator");
     }
@@ -1128,10 +951,22 @@ async function clearStore(transaction, password) {
 
 const requireLocalTarget = (environment) => {
     const config = readDatabaseConfig(environment);
-    if (!/^localhost$/i.test(config.mssql.server) || config.mssql.port !== 1433 || config.databaseName !== "DigiShop") {
-        throw new Error("Store reset is restricted to localhost:1433 database DigiShop");
+    let target;
+    try {
+        target = new URL(config.connectionString);
+    } catch {
+        throw new Error("Store reset is restricted to localhost:5432 database digishop");
     }
-    return config;
+    if (
+        !/^localhost$/i.test(target.hostname)
+        || (target.port && target.port !== "5432")
+        || target.searchParams.has("host")
+        || target.searchParams.has("port")
+        || decodeURIComponent(target.pathname.slice(1)) !== "digishop"
+    ) {
+        throw new Error("Store reset is restricted to localhost:5432 database digishop");
+    }
+    return { ...config, databaseName: "digishop", server: "localhost:5432" };
 };
 
 const requireResetPassword = (environment) => {
@@ -1149,35 +984,31 @@ async function resetDatabase({ environment = process.env, confirmation = environ
     }
     const password = requireResetPassword(environment);
 
-    const pool = new sql.ConnectionPool({
-        ...config.mssql,
-        pool: { ...config.mssql.pool },
-        options: { ...config.mssql.options }
-    });
+    const pool = createPool(config);
     let transaction;
     let transactionOpen = false;
     try {
-        await pool.connect();
-        transaction = new sql.Transaction(pool);
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transaction = await pool.connect();
+        await transaction.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
         transactionOpen = true;
         const before = {};
         for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
         const after = await clearStore(transaction, password);
-        await transaction.commit();
+        await transaction.query("COMMIT");
         transactionOpen = false;
-        return { database: config.databaseName, server: `${config.mssql.server}:${config.mssql.port}`, before, after };
+        return { database: config.databaseName, server: config.server, before, after };
     } catch (error) {
         if (transactionOpen) {
             try {
-                await transaction.rollback();
+                await transaction.query("ROLLBACK");
             } catch {
                 // Preserve the triggering error.
             }
         }
         throw error;
     } finally {
-        if (pool.connected || pool.connecting) await pool.close();
+        transaction?.release();
+        await pool.end();
     }
 }
 
@@ -1190,31 +1021,26 @@ async function verifyResetRollback({
         throw new Error("Set STORE_RESET_ROLLBACK_CONFIRMATION=ROLLBACK CHECK LOCAL DIGISHOP to confirm rollback check");
     }
     const password = requireResetPassword(environment);
-    const pool = new sql.ConnectionPool({
-        ...config.mssql,
-        pool: { ...config.mssql.pool },
-        options: { ...config.mssql.options }
-    });
+    const pool = createPool(config);
     let transaction;
     let transactionOpen = false;
     try {
-        await pool.connect();
-        transaction = new sql.Transaction(pool);
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+        transaction = await pool.connect();
+        await transaction.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
         transactionOpen = true;
         const before = {};
         for (const [table] of CLEAR_TABLES) before[table] = await countRecords(transaction, table);
         await clearStore(transaction, password);
-        await transaction.rollback();
+        await transaction.query("ROLLBACK");
         transactionOpen = false;
         const after = {};
-        for (const [table] of CLEAR_TABLES) after[table] = await countRecords(pool, table);
+        for (const [table] of CLEAR_TABLES) after[table] = await countRecords(transaction, table);
         if (CLEAR_TABLES.some(([table]) => before[table] !== after[table])) {
             throw new Error("Rollback verification failed: one or more table counts changed");
         }
         return {
             database: config.databaseName,
-            server: `${config.mssql.server}:${config.mssql.port}`,
+            server: config.server,
             outcome: "rolled back; no changes committed",
             before,
             after
@@ -1222,14 +1048,15 @@ async function verifyResetRollback({
     } catch (error) {
         if (transactionOpen) {
             try {
-                await transaction.rollback();
+                await transaction.query("ROLLBACK");
             } catch {
                 // Preserve the triggering error.
             }
         }
         throw error;
     } finally {
-        if (pool.connected || pool.connecting) await pool.close();
+        transaction?.release();
+        await pool.end();
     }
 }
 

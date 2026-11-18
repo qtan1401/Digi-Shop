@@ -7,16 +7,9 @@ const { resetDatabase } = require("../prisma/seed");
 const { normalizeSeedData } = require("../scripts/db/normalize-seed");
 
 const targetEnvironment = {
-    DATABASE_URL: "sqlserver://localhost:1433;database=DigiShop;user=sa;password=Test-only-password!;trustServerCertificate=true",
-    DB_SERVER: "localhost",
-    DB_PORT: "1433",
-    DB_NAME: "DigiShop",
-    DB_USER: "sa",
-    DB_PASSWORD: "test-only-password",
-    DB_ENCRYPT: "false",
-    DB_TRUST_SERVER_CERTIFICATE: "true",
-    DB_CONNECT_TIMEOUT_MS: "1000",
+    DATABASE_URL: "postgresql://test:test-only@localhost:5432/digishop",
     DB_POOL_MAX: "1",
+    DB_CONNECT_TIMEOUT_MS: "1000",
     ADMIN_DEFAULT_PASSWORD: "Fresh-test-only-password-123!",
     STORE_RESET_CONFIRMATION: "RESET LOCAL DIGISHOP"
 };
@@ -61,12 +54,21 @@ test("normal seed inputs cover every brand and device type with image-backed var
     }
 });
 
-test("reset rejects a non-local SQL Server target before connecting", async () => {
+test("reset rejects a non-local PostgreSQL target before connecting", async () => {
     await assert.rejects(
         resetDatabase({
-            environment: { ...targetEnvironment, DB_SERVER: "production.example" }
+            environment: { ...targetEnvironment, DATABASE_URL: "postgresql://test:test-only@production.example:5432/digishop" }
         }),
-        /restricted to localhost:1433 database DigiShop/
+        /restricted to localhost:5432 database digishop/
+    );
+});
+
+test("reset rejects connection-string host overrides before connecting", async () => {
+    await assert.rejects(
+        resetDatabase({
+            environment: { ...targetEnvironment, DATABASE_URL: "postgresql://test:test-only@localhost:5432/digishop?host=production.example" }
+        }),
+        /restricted to localhost:5432 database digishop/
     );
 });
 

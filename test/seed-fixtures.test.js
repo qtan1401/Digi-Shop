@@ -336,28 +336,22 @@ test("normalization rejects a balance that does not match the credited orders an
     assert.throws(broken((data) => { data.users[0].addresses.forEach((address) => { address.isDefault = false; }); }), /exactly one default/);
 });
 
-// A transaction double that answers the backfill's lookups and records every write.
+// A transaction double for the seed backfill's PostgreSQL lookups and writes.
 const backfillDouble = ({ addressCount = 0, historyCount = 0, pointsRows = 1 } = {}) => {
     const writes = [];
     return {
         writes,
-        request() {
-            const values = {};
-            return {
-                input(name, _type, value) { values[name] = value; },
-                async query(text) {
-                    const statement = text.replace(/\s+/g, " ").trim();
-                    if (/FROM \[dbo\]\.\[user_addresses\]/.test(statement)) return { recordset: [{ count: addressCount }] };
-                    if (/FROM \[dbo\]\.\[order_status_history\]/.test(statement)) return { recordset: [{ count: historyCount }] };
-                    const rowsAffected = [/^UPDATE \[dbo\]\.\[orders\]/.test(statement) ? pointsRows : 1];
-                    writes.push({ statement, values });
-                    return { recordset: [], rowsAffected };
-                }
-            };
+        async query(text, values = []) {
+            const statement = text.replace(/\s+/g, " ").trim();
+            if (/FROM user_addresses/.test(statement)) return { rows: [{ count: addressCount }] };
+            if (/FROM order_status_history/.test(statement)) return { rows: [{ count: historyCount }] };
+            const rowCount = /^UPDATE orders/.test(statement) ? pointsRows : 1;
+            writes.push({ statement, values });
+            return { rows: [], rowCount };
         }
     };
 };
-const tableOf = (write) => write.statement.match(/\[dbo\]\.\[(\w+)\]/)[1];
+const tableOf = (write) => write.statement.match(/^(?:INSERT INTO|UPDATE) (\w+)/)[1];
 
 test("backfill fills a previously seeded database: names, address book, history and the points of credited orders", async () => {
     const user = users[0];
@@ -368,9 +362,9 @@ test("backfill fills a previously seeded database: names, address book, history 
     const inserted = (table) => double.writes.filter((write) => tableOf(write) === table && /^INSERT/.test(write.statement));
     assert.equal(inserted("user_addresses").length, user.addresses.length);
     assert.equal(inserted("order_status_history").length, credited.statusHistory.length);
-    const balance = double.writes.find((write) => /SET \[loyalty_points\] = \[loyalty_points\] \+ @pointsEarned/.test(write.statement));
-    assert.equal(balance.values.pointsEarned, credited.pointsEarned);
-    assert.equal(balance.values.userId, user.id);
+    const balance = double.writes.find((write) => /SET loyalty_points = loyalty_points \+/.test(write.statement));
+    assert.equal(balance.values[1], credited.pointsEarned);
+    assert.equal(balance.values[0], user.id);
 });
 
 test("backfill is idempotent: a populated database gets no inserts and no second credit", async () => {
@@ -386,7 +380,7 @@ test("backfill records the points of an order that is not credited yet without t
     const waiting = orders.find((order) => order.pointsCreditedAt === null && order.pointsEarned > 0);
     const double = backfillDouble({ historyCount: 1 });
     await backfillSeedExtras(double, [], [waiting]);
-    assert.ok(double.writes.some((write) => /^UPDATE \[dbo\]\.\[orders\]/.test(write.statement) && write.values.pointsCreditedAt === null));
+    assert.ok(double.writes.some((write) => /^UPDATE orders/.test(write.statement) && write.values[4] === null));
     assert.equal(double.writes.some((write) => /loyalty_points/.test(write.statement)), false);
 });
 
@@ -436,17 +430,11 @@ test("gallery backfill fills a product that has no gallery rows and leaves an ed
     const run = async (existingCount) => {
         const writes = [];
         const double = {
-            request() {
-                const values = {};
-                return {
-                    input(name, _type, value) { values[name] = value; },
-                    async query(text) {
-                        const statement = text.replace(/\s+/g, " ").trim();
-                        if (/COUNT_BIG/.test(statement)) return { recordset: [{ count: existingCount }] };
-                        writes.push({ statement, values });
-                        return { recordset: [], rowsAffected: [1] };
-                    }
-                };
+            async query(text, values = []) {
+                const statement = text.replace(/\s+/g, " ").trim();
+                if (/COUNT\(\*\)/.test(statement)) return { rows: [{ count: existingCount }] };
+                writes.push({ statement, values });
+                return { rows: [], rowCount: 1 };
             }
         };
         const filled = await backfillProductImages(double, [product]);
@@ -454,8 +442,8 @@ test("gallery backfill fills a product that has no gallery rows and leaves an ed
     };
     const empty = await run(0);
     assert.equal(empty.filled, product.images.length);
-    assert.deepEqual(empty.writes.map((write) => write.values.url), product.images.map((image) => image.url));
-    assert.ok(empty.writes.every((write) => /^INSERT INTO \[dbo\]\.\[product_images\]/.test(write.statement)));
+    assert.deepEqual(empty.writes.map((write) => write.values[1]), product.images.map((image) => image.url));
+    assert.ok(empty.writes.every((write) => /^INSERT INTO product_images/.test(write.statement)));
     const populated = await run(2);
     assert.equal(populated.filled, 0);
     assert.equal(populated.writes.length, 0);
