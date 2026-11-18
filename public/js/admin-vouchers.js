@@ -179,10 +179,9 @@
         };
         const renderFoot = () => {
             if (state.phase === "loading") { slots.foot.innerHTML = `<div class="ao-foot-sk-row">${bar("8rem", "12px")}</div>`; return; }
-            if (state.phase === "error" || (!state.list.length && !filtered())) { slots.foot.innerHTML = ""; return; }
+            if (state.phase === "error" || !state.list.length) { slots.foot.innerHTML = ""; return; }
             const active = state.counts ? ` · ${num(state.counts.active)} đang chạy` : "";
-            const pager = state.meta.totalPages > 1 ? `<div class="ao-foot-nav">${pagerHtml(state.meta.page, state.meta.totalPages)}</div>` : "";
-            slots.foot.innerHTML = `<div class="ao-foot ao-foot-flat"><p class="ao-count">${num(state.meta.total)} voucher${active}</p>${pager}</div>`;
+            slots.foot.innerHTML = `<div class="ao-foot ao-foot-flat"><p class="ao-count">${num(state.meta.total)} voucher${active}</p><div class="ao-foot-nav">${pagerHtml(state.meta.page, state.meta.totalPages)}</div></div>`;
         };
         const renderAll = () => { renderTabs(); renderBody(); renderFoot(); };
 

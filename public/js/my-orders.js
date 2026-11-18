@@ -172,9 +172,7 @@
     const renderPager = () => {
         const { status, data, meta } = st.list;
         if (st.auth !== "user" || status !== "ready" || !meta || !data.length) { el.pager.innerHTML = ""; return; }
-        el.pager.innerHTML = meta.totalPages <= 1
-            ? `<p class="catalog-pagination__count">${Number(meta.total).toLocaleString("vi-VN")} đơn hàng</p>`
-            : R.renderPagination({ page: meta.page, totalPages: meta.totalPages, total: meta.total, pageSize: meta.pageSize, ariaLabel: "Phân trang đơn hàng", noun: "đơn hàng", hrefForPage: (n) => buildUrl({ ...st.url, page: n }) });
+        el.pager.innerHTML = R.renderPagination({ page: meta.page, totalPages: meta.totalPages, total: meta.total, pageSize: meta.pageSize, ariaLabel: "Phân trang đơn hàng", noun: "đơn hàng", hrefForPage: (n) => buildUrl({ ...st.url, page: n }) });
     };
 
     // ---------- chi tiết (khối 6-9) ----------

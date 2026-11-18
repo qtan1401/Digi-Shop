@@ -247,7 +247,6 @@
         const holder = $("#product-pagination");
         const total = state.totalPages;
         const current = state.page;
-        if (total <= 1) { holder.innerHTML = ""; return; }
         const arrow = (label, page, direction, disabled) => disabled
             ? `<span class="pg__item pg__arrow" aria-label="${label}" aria-disabled="true">${ICON_CHEVRON(direction)}</span>`
             : `<a class="pg__item pg__arrow" href="${escapeHtml(pageHref(page))}" aria-label="${label}">${ICON_CHEVRON(direction)}</a>`;
