@@ -77,6 +77,9 @@ const updatePayButton = () => {
     button.disabled = disabled;
     if (disabled) button.setAttribute("aria-disabled", "true"); else button.removeAttribute("aria-disabled");
     button.textContent = label;
+    const compactTotal = document.querySelector(".checkout-summary__toggle-total");
+    const summaryTotal = document.getElementById("summary-total");
+    if (compactTotal && summaryTotal) compactTotal.textContent = summaryTotal.textContent || "—";
 };
 
 const refreshSummary = () => {
@@ -142,8 +145,8 @@ const formValues = () => ({
     note: document.getElementById("customer-note")?.value?.trim() || ""
 });
 
-const validateForm = () => {
-    let valid = true;
+const SHIPPING_FIELDS = ["customer-email", "customer-name", "customer-phone", "customer-address"];
+const validateFields = (ids) => {
     const rules = [
         ["customer-email", "error-email", isValidEmail, "Email không hợp lệ (VD: ten@example.com)."],
         ["customer-name", "error-name", (value) => value.trim().length >= 2, "Họ và tên không được để trống (tối thiểu 2 ký tự)."],
@@ -151,7 +154,7 @@ const validateForm = () => {
         ["customer-address", "error-address", (value) => value.trim().length >= 5, "Địa chỉ nhận hàng không được để trống (tối thiểu 5 ký tự)."]
     ];
     let firstInvalid = null;
-    rules.forEach(([inputId, errorId, test, message]) => {
+    rules.filter(([inputId]) => ids.includes(inputId)).forEach(([inputId, errorId, test, message]) => {
         const input = document.getElementById(inputId);
         const error = document.getElementById(errorId);
         if (!input || !error) return;
@@ -160,10 +163,38 @@ const validateForm = () => {
         error.textContent = ok ? "" : message;
         error.style.display = ok ? "none" : "block";
         if (!ok && !firstInvalid) firstInvalid = input;
-        valid = valid && ok;
     });
-    firstInvalid?.focus();
-    return valid;
+    return { ok: !firstInvalid, focus: firstInvalid };
+};
+
+const validatePaymentStep = () => {
+    const method = document.getElementById("payment-method");
+    if (!["COD", "BANKING", "MOMO", "VNPAY"].includes(method?.value)) {
+        showCheckoutError("Vui lòng chọn phương thức thanh toán.");
+        return { ok: false, focus: method };
+    }
+    const pay = window.CheckoutVouchers?.payState?.();
+    if (pay && !pay.ready) {
+        showCheckoutError("Vui lòng kiểm tra voucher và điểm thưởng trước khi tiếp tục.");
+        return { ok: false, focus: document.getElementById("voucher-block") };
+    }
+    return { ok: true };
+};
+
+const validateForm = () => {
+    const shipping = validateFields(SHIPPING_FIELDS);
+    if (!shipping.ok) {
+        window.CheckoutSteps?.goTo(0);
+        shipping.focus?.focus();
+        return false;
+    }
+    const payment = validatePaymentStep();
+    if (!payment.ok) {
+        window.CheckoutSteps?.goTo(1);
+        payment.focus?.focus();
+        return false;
+    }
+    return true;
 };
 
 const attachLiveValidation = () => {
@@ -179,6 +210,17 @@ const attachLiveValidation = () => {
 const draftMode = () => Array.isArray(cartItems) ? "cart" : "buy-now";
 const draftProductId = () => currentProduct?.id ?? Number(getUrlParam("id"));
 const draftVariantId = () => currentVariant?.id ?? Number(getUrlParam("variantId"));
+const draftMatchesCheckout = () => {
+    if (!checkoutDraft || checkoutDraft.mode !== draftMode()) return false;
+    if (checkoutDraft.mode === "buy-now") {
+        return Number(checkoutDraft.productId) === Number(draftProductId()) &&
+            Number(checkoutDraft.variantId) === Number(draftVariantId());
+    }
+    const previous = checkoutDraft.cartSnapshot || [];
+    return previous.length === cartItems.length && previous.every((item, index) =>
+        Number(item.variantId) === Number(cartItems[index].variantId) &&
+        Number(item.quantity) === Number(cartItems[index].quantity));
+};
 const currentSnapshot = () => Array.isArray(cartItems)
     ? cartItems.map((item) => ({ ...item }))
     : currentProduct && currentVariant ? [{
@@ -202,8 +244,9 @@ const saveCheckoutDraft = () => {
         productId: draftProductId(),
         variantId: draftVariantId(),
         cartSnapshot: currentSnapshot(),
-        form: formValues(),
-        returnPath: window.DigiCheckoutState.currentReturnPath(draftMode(), draftProductId(), draftVariantId())
+        form: { ...formValues(), email: isGuestSession() ? guestEmail() : "" },
+        returnPath: window.DigiCheckoutState.currentReturnPath(draftMode(), draftProductId(), draftVariantId()),
+        step: window.CheckoutSteps?.current() ?? 0
     });
 };
 
@@ -214,6 +257,10 @@ const showCheckoutError = (message) => {
         alert.style.display = "block";
         alert.focus?.();
     }
+};
+const goCheckoutLogin = () => {
+    if (saveCheckoutDraft()) window.location.assign("/auth.html?tab=login");
+    else showCheckoutError("Không thể lưu phiên checkout trong tab này. Hãy bật sessionStorage rồi thử lại.");
 };
 
 const renderForbidden = () => {
@@ -291,6 +338,28 @@ const guestEmailHtml = () => `
                     <p class="vc-limit" id="guest-email-note">Bạn không cần đăng nhập. Một tài khoản sẽ được tạo hoặc liên kết với email này để bạn xem lại đơn hàng sau; email xác nhận đơn hàng cũng được gửi tới đây.</p>
                 </div>`;
 
+const renderCheckoutReview = () => {
+    const target = document.getElementById("checkout-review");
+    if (!target) return;
+    const values = formValues();
+    const method = document.getElementById("payment-method");
+    const productRows = currentSnapshot().map((item) => `
+        <div class="order-detail-row checkout-review__product"><span class="order-detail-label">${escapeHtml(item.name || item.product?.name || "Sản phẩm")} × ${escapeHtml(item.quantity)}</span><span class="order-detail-value">${formatPrice(Number(item.price || item.variant?.price || 0) * Number(item.quantity || 0))}</span></div>`).join("");
+    const row = (label, value) => `<div class="order-detail-row"><span class="order-detail-label">${label}</span><span class="order-detail-value">${escapeHtml(value)}</span></div>`;
+    target.innerHTML = `
+        <div class="checkout-review__heading"><h3>Thông tin giao hàng</h3><button type="button" class="btn btn--secondary" data-checkout-edit-step="0">Sửa</button></div>
+        <div class="order-detail-box">
+            ${isGuestSession() ? row("Email", guestEmail()) : ""}
+            ${row("Người nhận", values.customerName)}
+            ${row("Số điện thoại", values.customerPhone)}
+            ${row("Địa chỉ", values.customerAddress)}
+            ${values.note ? row("Ghi chú", values.note) : ""}
+            ${productRows}
+        </div>
+        <div class="checkout-review__heading"><h3>Thanh toán</h3><button type="button" class="btn btn--secondary" data-checkout-edit-step="1">Sửa</button></div>
+        <div class="order-detail-box">${row("Phương thức", method?.selectedOptions[0]?.textContent || values.paymentMethod)}</div>`;
+};
+
 const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
     checkoutBlocked = Boolean(blocked);
     const container = document.getElementById("payment-info");
@@ -298,53 +367,64 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
         ${renderMergeError()}
         ${renderMergeBanner()}
         ${renderUnavailableNotice(items)}
+        <div id="checkout-error-alert" class="checkout-alert-error" role="alert" tabindex="-1" style="display:none;"></div>
         <div class="checkout-layout">
             <div class="checkout-card__form">
-                ${qtyControls}
-                ${qtyControls ? '<div class="checkout-divider"></div>' : ''}
-                <div class="checkout-section-title">Thông tin giao hàng</div>
-                ${isGuestSession() ? guestEmailHtml() : ""}
-                <div class="checkout-input-group saved-address" id="saved-address-picker" hidden></div>
-                <div class="checkout-grid-2">
-                    <div class="checkout-input-group">
-                        <label for="customer-name">Họ và tên người nhận <span class="required-star">*</span></label>
-                        <input type="text" id="customer-name" class="checkout-input" autocomplete="name" aria-describedby="error-name">
-                        <span class="checkout-field-error" id="error-name" role="alert" style="display:none;"></span>
+                <section id="checkout-step-shipping" class="checkout-steps__panel">
+                    <h2 class="checkout-section-title" tabindex="-1">Giao hàng</h2>
+                    ${qtyControls}
+                    ${qtyControls ? '<div class="checkout-divider"></div>' : ''}
+                    ${isGuestSession() ? guestEmailHtml() : ""}
+                    <div class="checkout-input-group saved-address" id="saved-address-picker" hidden></div>
+                    <div class="checkout-grid-2">
+                        <div class="checkout-input-group">
+                            <label for="customer-name">Họ và tên người nhận <span class="required-star">*</span></label>
+                            <input type="text" id="customer-name" class="checkout-input" autocomplete="name" aria-describedby="error-name">
+                            <span class="checkout-field-error" id="error-name" role="alert" style="display:none;"></span>
+                        </div>
+                        <div class="checkout-input-group">
+                            <label for="customer-phone">Số điện thoại <span class="required-star">*</span></label>
+                            <input type="tel" id="customer-phone" class="checkout-input" autocomplete="tel" aria-describedby="error-phone">
+                            <span class="checkout-field-error" id="error-phone" role="alert" style="display:none;"></span>
+                        </div>
                     </div>
                     <div class="checkout-input-group">
-                        <label for="customer-phone">Số điện thoại <span class="required-star">*</span></label>
-                        <input type="tel" id="customer-phone" class="checkout-input" autocomplete="tel" aria-describedby="error-phone">
-                        <span class="checkout-field-error" id="error-phone" role="alert" style="display:none;"></span>
-                    </div>
-                </div>
-                <div class="checkout-input-group">
-                    <label for="customer-address">Địa chỉ nhận hàng <span class="required-star">*</span></label>
-                    <input type="text" id="customer-address" class="checkout-input" autocomplete="street-address" aria-describedby="error-address">
-                    <span class="checkout-field-error" id="error-address" role="alert" style="display:none;"></span>
-                </div>
-                <div class="checkout-grid-2">
-                    <div class="checkout-input-group">
-                        <label for="payment-method">Phương thức thanh toán</label>
-                        <select id="payment-method" class="checkout-select"><option value="COD">Thanh toán khi nhận hàng (COD)</option><option value="BANKING">Chuyển khoản ngân hàng</option><option value="MOMO">MoMo QR</option><option value="VNPAY">VNPay QR</option></select>
+                        <label for="customer-address">Địa chỉ nhận hàng <span class="required-star">*</span></label>
+                        <input type="text" id="customer-address" class="checkout-input" autocomplete="street-address" aria-describedby="error-address">
+                        <span class="checkout-field-error" id="error-address" role="alert" style="display:none;"></span>
                     </div>
                     <div class="checkout-input-group">
                         <label for="customer-note">Ghi chú (Tùy chọn)</label>
                         <input type="text" id="customer-note" class="checkout-input" autocomplete="off">
                     </div>
-                </div>
+                </section>
+                <section id="checkout-step-payment" class="checkout-steps__panel" hidden>
+                    <h2 class="checkout-section-title" tabindex="-1">Thanh toán</h2>
+                    <div class="checkout-input-group">
+                        <label for="payment-method">Phương thức thanh toán</label>
+                        <select id="payment-method" class="checkout-select"><option value="COD">Thanh toán khi nhận hàng (COD)</option><option value="BANKING">Chuyển khoản ngân hàng</option><option value="MOMO">MoMo QR</option><option value="VNPAY">VNPay QR</option></select>
+                    </div>
+                    <div id="voucher-banner" class="vc-banner" role="alert" tabindex="-1" hidden></div>
+                    <hr class="vc-rule">
+                    <section id="voucher-block" class="vc-block" aria-label="Voucher"></section>
+                    ${isGuestSession() ? '<div class="checkout-voucher-login"><span>Bạn vẫn dùng được voucher khi không đăng nhập.</span><button type="button" class="btn btn--secondary" data-checkout-login>Đăng nhập</button></div>' : ""}
+                    <hr class="vc-rule">
+                    <section id="points-block" class="vc-block" aria-label="Điểm thưởng"></section>
+                </section>
+                <section id="checkout-step-confirm" class="checkout-steps__panel" hidden>
+                    <h2 class="checkout-section-title" tabindex="-1">Xác nhận đơn hàng</h2>
+                    <div id="checkout-review"></div>
+                    <button class="btn btn--primary btn--checkout" id="btn-checkout" data-checkout-steps-submit type="button" onclick="handleCheckout()" ${checkoutBlocked ? "disabled aria-disabled=\"true\"" : ""}>${checkoutBlocked ? "Xử lý sản phẩm trước khi thanh toán" : "Xác nhận thanh toán"}</button>
+                </section>
             </div>
             <aside class="checkout-summary" aria-label="Tóm tắt đơn hàng">
-                <div id="voucher-banner" class="vc-banner" role="alert" tabindex="-1" hidden></div>
-                <div class="checkout-summary__title">Đơn hàng của bạn</div>
-                ${summaryHtml}
-                <hr class="vc-rule">
-                <section id="voucher-block" class="vc-block" aria-label="Voucher"></section>
-                <hr class="vc-rule">
-                <section id="points-block" class="vc-block" aria-label="Điểm thưởng"></section>
-                <hr class="vc-rule">
-                <dl id="summary-breakdown" class="vc-sum" aria-live="polite"></dl>
-                <div id="checkout-error-alert" class="checkout-alert-error" role="alert" tabindex="-1" style="display:none;"></div>
-                <button class="btn btn--primary btn--checkout" id="btn-checkout" type="button" onclick="handleCheckout()" ${checkoutBlocked ? "disabled aria-disabled=\"true\"" : ""}>${checkoutBlocked ? "Xử lý sản phẩm trước khi thanh toán" : "Xác nhận thanh toán"}</button>
+                <button class="checkout-summary__toggle" type="button" aria-expanded="false" aria-controls="checkout-summary-content">Tổng: <strong class="checkout-summary__toggle-total">—</strong><span class="checkout-summary__toggle-chevron" aria-hidden="true">⌄</span></button>
+                <div id="checkout-summary-content" class="checkout-summary__content">
+                    <div class="checkout-summary__title">Đơn hàng của bạn</div>
+                    ${summaryHtml}
+                    <hr class="vc-rule">
+                    <dl id="summary-breakdown" class="vc-sum" aria-live="polite"></dl>
+                </div>
             </aside>
         </div>`;
     container.closest(".payment-container")?.classList.add("payment-container--wide");
@@ -357,7 +437,7 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
         isGuest: isGuestSession,
         getEmail: guestEmail,
         onChange: updatePayButton,
-        goLogin: () => { if (saveCheckoutDraft()) window.location.assign("/auth.html?tab=login"); else showCheckoutError("Không thể lưu phiên checkout trong tab này. Hãy bật sessionStorage rồi thử lại."); }
+        goLogin: goCheckoutLogin
     });
     // Guest vouchers are quoted per email, so the voucher block waits for the first valid one.
     document.getElementById("customer-email")?.addEventListener("change", () => {
@@ -370,6 +450,32 @@ const renderCheckoutForm = (summaryHtml, qtyControls, blocked, items = []) => {
     document.getElementById("payment-method")?.addEventListener("change", updatePayButton);
     refreshSummary();
     applyDraftForm();
+    const summaryToggle = container.querySelector(".checkout-summary__toggle");
+    summaryToggle.addEventListener("click", () => {
+        summaryToggle.setAttribute("aria-expanded", String(summaryToggle.getAttribute("aria-expanded") !== "true"));
+    });
+    container.querySelector(".checkout-card__form").addEventListener("click", (event) => {
+        if (event.target.closest("[data-checkout-login]")) goCheckoutLogin();
+        const edit = event.target.closest("[data-checkout-edit-step]");
+        if (edit) window.CheckoutSteps.goTo(Number(edit.dataset.checkoutEditStep));
+    });
+    window.CheckoutSteps.mount(container.querySelector(".checkout-card__form"), {
+        steps: [
+            { id: "checkout-step-shipping", title: "Giao hàng", panel: document.getElementById("checkout-step-shipping") },
+            { id: "checkout-step-payment", title: "Thanh toán", panel: document.getElementById("checkout-step-payment") },
+            { id: "checkout-step-confirm", title: "Xác nhận", panel: document.getElementById("checkout-step-confirm") }
+        ],
+        initialStep: draftMatchesCheckout() && (!isGuestSession() || isValidEmail(guestEmail())) ? checkoutDraft.step : 0,
+        validate: (index) => {
+            const result = index === 0 ? validateFields(SHIPPING_FIELDS) : validatePaymentStep();
+            return result.ok ? true : result;
+        },
+        onChange: (index) => {
+            if (index === 2) renderCheckoutReview();
+            saveCheckoutDraft();
+        }
+    });
+    if (window.CheckoutSteps.current() === 2) renderCheckoutReview();
     initSavedAddresses();
 };
 
@@ -429,9 +535,10 @@ const initSavedAddresses = async () => {
 };
 
 const applyDraftForm = () => {
-    const form = checkoutDraft?.form;
+    const form = draftMatchesCheckout() ? checkoutDraft.form : null;
     if (!form) return;
     const values = {
+        "customer-email": form.email,
         "customer-name": form.customerName,
         "customer-phone": form.customerPhone,
         "customer-address": form.customerAddress,
@@ -442,6 +549,10 @@ const applyDraftForm = () => {
         const element = document.getElementById(id);
         if (element) element.value = value || "";
     });
+    if (isGuestSession() && isValidEmail(guestEmail())) {
+        guestEmailSeen = true;
+        window.CheckoutVouchers?.activate?.();
+    }
     const banner = document.getElementById("checkout-merge-banner");
     const heading = document.querySelector(".payment-container h1");
     (banner || heading)?.focus?.();
@@ -713,6 +824,18 @@ const handleCheckout = async () => {
             return;
         }
         const detail = serverError(error);
+        const field = [
+            [/email/i, "customer-email", 0],
+            [/tên khách hàng|họ và tên/i, "customer-name", 0],
+            [/số điện thoại/i, "customer-phone", 0],
+            [/địa chỉ/i, "customer-address", 0],
+            [/phương thức thanh toán/i, "payment-method", 1]
+        ].find(([pattern]) => pattern.test(detail.message));
+        if (field) {
+            window.CheckoutSteps.goTo(field[2]);
+        } else if (detail.code.startsWith("VOUCHER_") || detail.code.startsWith("POINTS_")) {
+            window.CheckoutSteps.goTo(1);
+        }
         if (detail.code === "VOUCHER_UNAVAILABLE") {
             updatePayButton();
             window.CheckoutVouchers?.setBlocked?.(detail.message);
@@ -722,6 +845,7 @@ const handleCheckout = async () => {
         updatePayButton();
         if (detail.code.startsWith("VOUCHER_") || detail.code.startsWith("POINTS_")) window.CheckoutVouchers?.reload?.();
         showCheckoutError(detail.message || error?.message || "Không thể hoàn tất thanh toán. Vui lòng thử lại.");
+        if (field) document.getElementById(field[1])?.focus();
     }
 };
 

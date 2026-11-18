@@ -74,6 +74,7 @@
     };
 
     const normalizeForm = (form = {}) => ({
+        email: typeof form.email === "string" ? form.email.slice(0, 320) : "",
         customerName: typeof form.customerName === "string" ? form.customerName.slice(0, 200) : "",
         customerPhone: typeof form.customerPhone === "string" ? form.customerPhone.slice(0, 40) : "",
         customerAddress: typeof form.customerAddress === "string" ? form.customerAddress.slice(0, 500) : "",
@@ -100,7 +101,8 @@
             mode,
             ...(productId ? { productId, variantId } : {}),
             cartSnapshot,
-            form: normalizeForm(draft.form)
+            form: normalizeForm(draft.form),
+            step: Number.isInteger(draft.step) && draft.step >= 0 && draft.step <= 2 ? draft.step : 0
         };
     };
 
@@ -121,7 +123,7 @@
         }
     };
 
-    const saveDraft = ({ mode, productId, variantId, cartSnapshot, form, returnPath } = {}) => {
+    const saveDraft = ({ mode, productId, variantId, cartSnapshot, form, returnPath, step } = {}) => {
         const normalizedMode = normalizeMode(mode);
         const safeReturnPath = normalizeReturnPath(returnPath) || currentReturnPath(normalizedMode, productId, variantId);
         if (!normalizedMode || !safeReturnPath) return null;
@@ -136,7 +138,8 @@
             mode: normalizedMode,
             ...(normalizedMode === "buy-now" ? { productId: normalizedProductId, variantId: normalizedVariantId } : {}),
             cartSnapshot: Array.isArray(cartSnapshot) ? cartSnapshot.map(normalizeItem).filter(Boolean) : [],
-            form: normalizeForm(form)
+            form: normalizeForm(form),
+            step: Number.isInteger(step) && step >= 0 && step <= 2 ? step : 0
         };
         if (normalizedMode === "buy-now" && (!draft.productId || draft.productId <= 0 || !draft.variantId || draft.variantId <= 0)) return null;
         return storageSet(DRAFT_KEY, JSON.stringify(draft)) ? draft : null;
