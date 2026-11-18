@@ -344,8 +344,8 @@ const getAdminProducts = async (filters = {}) => {
     }
     const q = typeof filters.q === "string" ? filters.q.trim() : "";
     if (q) where.OR = [
-        { name: { contains: q } },
-        { variants: { some: { isActive: true, sku: { contains: q } } } }
+        { name: { contains: q, mode: "insensitive" } },
+        { variants: { some: { isActive: true, sku: { contains: q, mode: "insensitive" } } } }
     ];
     const total = await productRepository.countProducts(where);
     const totalPages = Math.max(1, Math.ceil(total / pageSize));

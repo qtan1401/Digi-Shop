@@ -33,9 +33,9 @@ const customerWhere = (search) => {
     const where = { role: "user" };
     if (search) {
         where.OR = [
-            { email: { contains: search } },
-            { fullName: { contains: search } },
-            { username: { contains: search } }
+            { email: { contains: search, mode: "insensitive" } },
+            { fullName: { contains: search, mode: "insensitive" } },
+            { username: { contains: search, mode: "insensitive" } }
         ];
     }
     return where;

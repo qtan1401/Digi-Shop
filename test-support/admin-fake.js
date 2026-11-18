@@ -1,7 +1,7 @@
 // Fake Prisma for the admin integration tests (users, order list, dashboard aggregates).
 // `$queryRawUnsafe` does not parse SQL: it recognises the three dashboard statements by their text and computes the
 // same aggregates in JavaScript from the in-memory rows (its own bucketing, independent of src/services/admin-period).
-// So these tests prove the wiring, the period boundaries and the profit arithmetic, not the T-SQL itself.
+// These tests prove the wiring, the period boundaries and the profit arithmetic, not the PostgreSQL SQL itself.
 
 const OFFSET_MS = 7 * 3600e3;
 
@@ -13,6 +13,8 @@ const matchField = (actual, condition) => {
     }
     for (const [op, value] of Object.entries(condition)) {
         if (op === "contains") { if (typeof actual !== "string" || !ci(actual).includes(ci(value))) return false; }
+        else if (op === "equals") { if (condition.mode === "insensitive" ? ci(actual) !== ci(value) : actual !== value) return false; }
+        else if (op === "mode" && value === "insensitive") continue;
         else if (op === "not") { if (matchField(actual, value)) return false; }
         else if (op === "in") { if (!value.includes(actual)) return false; }
         else if (op === "gte") { if (!(actual >= value)) return false; }
@@ -43,9 +45,9 @@ const bucketOf = (granularity, instant) => {
 };
 
 const granularityOf = (sql) => {
-    if (sql.includes("DATEDIFF(day, '19000101'")) return "week";
-    if (sql.includes("DATEPART(quarter")) return "quarter";
-    if (sql.includes("MONTH(")) return "month";
+    if (sql.includes("date_trunc('week'")) return "week";
+    if (sql.includes("date_trunc('quarter'")) return "quarter";
+    if (sql.includes("date_trunc('month'")) return "month";
     return "year";
 };
 
@@ -139,7 +141,7 @@ const createAdminFake = (state) => {
                 const variant = state.variants.find((row) => row.id === item.variantId);
                 return state.products.find((row) => row.id === variant.productId);
             };
-            if (sql.includes("SELECT TOP 5")) {
+            if (sql.includes("LIMIT 5")) {
                 const byProduct = new Map();
                 for (const item of sold) {
                     const product = productOf(item);
@@ -164,7 +166,7 @@ const createAdminFake = (state) => {
                 }
                 return [...groups.values()];
             }
-            if (sql.includes("p.device_type AS deviceType")) {
+            if (sql.includes('p.device_type AS "deviceType"')) {
                 const groups = new Map();
                 for (const item of sold) {
                     const order = state.orders.find((row) => row.id === item.orderId);

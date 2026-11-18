@@ -207,9 +207,9 @@ const adminOrderWhere = ({ status, paymentStatus, from, to, search } = {}) => {
     }
     if (search) {
         where.OR = [
-            { id: { contains: search } },
-            { customerName: { contains: search } },
-            { customerPhone: { contains: search } }
+            { id: { contains: search, mode: "insensitive" } },
+            { customerName: { contains: search, mode: "insensitive" } },
+            { customerPhone: { contains: search, mode: "insensitive" } }
         ];
     }
     return where;
@@ -345,7 +345,7 @@ const updateStatus = async (id, data) => {
     const prisma = getPrismaClient();
     const row = await prisma.$transaction(async (transaction) => {
         const locked = await transaction.$queryRaw`
-            SELECT [id] FROM [dbo].[orders] WITH (UPDLOCK, ROWLOCK) WHERE [id] = ${orderId};
+            SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE;
         `;
         if (locked.length === 0) return null;
         const before = await transaction.order.findUnique({ where: { id: orderId } });
@@ -390,7 +390,7 @@ const cancelOrder = async (id) => {
     const orderId = String(id);
     return getPrismaClient().$transaction(async (transaction) => {
         const locked = await transaction.$queryRaw`
-            SELECT [id] FROM [dbo].[orders] WITH (UPDLOCK, ROWLOCK) WHERE [id] = ${orderId};
+            SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE;
         `;
         if (locked.length === 0) return null;
         const current = await transaction.order.findUnique({ where: { id: orderId } });

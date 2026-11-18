@@ -311,10 +311,10 @@ const listAdminReviews = async (query = {}) => {
     const q = typeof query.q === "string" ? query.q.trim() : "";
     if (q) {
         where.OR = [
-            { comment: { contains: q } },
-            { user: { username: { contains: q } } },
-            { guestName: { contains: q } },
-            { product: { name: { contains: q } } }
+            { comment: { contains: q, mode: "insensitive" } },
+            { user: { username: { contains: q, mode: "insensitive" } } },
+            { guestName: { contains: q, mode: "insensitive" } },
+            { product: { name: { contains: q, mode: "insensitive" } } }
         ];
     }
 

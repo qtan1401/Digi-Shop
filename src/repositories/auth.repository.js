@@ -23,14 +23,14 @@ const findUserByEmail = async (email, client = getPrismaClient()) =>
     mapUser(await client.user.findFirst({ where: { email }, select: USER_SELECT }));
 
 const findUserByUsername = async (username, client = getPrismaClient()) =>
-    mapUser(await client.user.findFirst({ where: { username }, select: USER_SELECT }));
+    mapUser(await client.user.findFirst({ where: { username: { equals: username, mode: "insensitive" } }, select: USER_SELECT }));
 
 const findUserById = async (id, client = getPrismaClient()) =>
     mapUser(await client.user.findUnique({ where: { id }, select: USER_SELECT }));
 
 const findUserByIdentifier = async (identifier, client = getPrismaClient()) =>
     mapUser(await client.user.findFirst({
-        where: { OR: [{ email: identifier }, { username: identifier }] },
+        where: { OR: [{ email: identifier }, { username: { equals: identifier, mode: "insensitive" } }] },
         select: USER_SELECT
     }));
 
@@ -111,18 +111,18 @@ const activateUser = async (userId, now = new Date(), client = getPrismaClient()
 
 const incrementFailedPasswordAttempts = async (userId, client = getPrismaClient()) => {
     const count = await client.$executeRaw`
-        UPDATE [dbo].[users]
-        SET [failed_password_attempts] = [failed_password_attempts] + 1,
-            [password_locked_at] = CASE
-                WHEN [failed_password_attempts] + 1 >= 5 THEN SYSUTCDATETIME()
-                ELSE [password_locked_at]
+        UPDATE users
+        SET failed_password_attempts = failed_password_attempts + 1,
+            password_locked_at = CASE
+                WHEN failed_password_attempts + 1 >= 5 THEN now()
+                ELSE password_locked_at
             END,
-            [updated_at] = SYSUTCDATETIME()
-        WHERE [id] = ${userId}
-          AND [role] = N'user'
-          AND [password_hash] IS NOT NULL
-          AND [password_locked_at] IS NULL
-          AND [failed_password_attempts] < 5;
+            updated_at = now()
+        WHERE id = ${userId}
+          AND role = 'user'
+          AND password_hash IS NOT NULL
+          AND password_locked_at IS NULL
+          AND failed_password_attempts < 5;
     `;
     return count > 0;
 };
