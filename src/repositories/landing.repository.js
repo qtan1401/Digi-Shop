@@ -41,17 +41,18 @@ const findNewest = async (limit, deviceType) => {
 const findBestSellers = async (limit, since) => {
     const client = getPrismaClient();
     const ranked = await client.$queryRaw(Prisma.sql`
-        SELECT TOP (${limit}) v.product_id AS id,
+        SELECT v.product_id AS id,
             SUM(CASE WHEN o.created_at >= ${since} THEN oi.quantity ELSE 0 END) AS recent_units,
             SUM(oi.quantity) AS total_units
         FROM order_items oi
         JOIN orders o ON o.id = oi.order_id
         JOIN product_variants v ON v.id = oi.variant_id
         JOIN products p ON p.id = v.product_id
-        WHERE o.order_status <> 'CANCELLED' AND p.is_deleted = 0
-            AND EXISTS (SELECT 1 FROM product_variants active WHERE active.product_id = p.id AND active.is_active = 1)
+        WHERE o.order_status <> 'CANCELLED' AND p.is_deleted = false
+            AND EXISTS (SELECT 1 FROM product_variants active WHERE active.product_id = p.id AND active.is_active = true)
         GROUP BY v.product_id
         ORDER BY recent_units DESC, total_units DESC, v.product_id ASC
+        LIMIT ${limit}
     `);
     const ids = ranked.map((row) => Number(row.id));
     if (!ids.length) return [];

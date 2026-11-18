@@ -27,7 +27,10 @@ const clone = (value) => value === undefined ? undefined : structuredClone(value
 const matches = (row, where = {}) => Object.entries(where).every(([key, expected]) => {
     if (key === "OR") return expected.some((clause) => matches(row, clause));
     if (expected && typeof expected === "object" && "contains" in expected) {
-        return String(row[key] ?? "").includes(expected.contains);
+        const actual = String(row[key] ?? "");
+        return expected.mode === "insensitive"
+            ? actual.toLocaleLowerCase().includes(expected.contains.toLocaleLowerCase())
+            : actual.includes(expected.contains);
     }
     if (expected && typeof expected === "object" && "in" in expected) return expected.in.includes(row[key]);
     return row[key] === expected;
@@ -101,7 +104,7 @@ const fakePrisma = {
         const brand = values.find((value) => BRANDS.includes(value));
         if (sql.includes("p.device_type IN") && category) rows = rows.filter((product) => product.deviceType === category);
         if (sql.includes("p.brand IN") && brand) rows = rows.filter((product) => product.brand === brand);
-        if (sql.includes("CHARINDEX(")) {
+        if (sql.includes("immutable_unaccent(")) {
             const queryText = values[0];
             if (queryText) rows = rows.filter((product) =>
                 [product.name, product.description].some((text) => text.toLowerCase().includes(queryText.toLowerCase()))
@@ -109,7 +112,7 @@ const fakePrisma = {
         }
         if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
         const pageRows = sql.includes("OFFSET")
-            ? rows.slice(Number(values.at(-2)), Number(values.at(-2)) + Number(values.at(-1)))
+            ? rows.slice(Number(values.at(-1)), Number(values.at(-1)) + Number(values.at(-2)))
             : rows;
         return pageRows.map((product) => {
             const prices = productVariants.filter((variant) => variant.productId === product.id && variant.isActive).map((variant) => Number(variant.price));
@@ -152,10 +155,10 @@ const fakePrisma = {
                 const direct = Object.fromEntries(Object.entries(where).filter(([key]) => key !== "OR"));
                 const directMatch = matches(row, direct);
                 const orMatch = !where.OR || where.OR.some((clause) => {
-                    if (clause.name?.contains) return String(row.name).includes(clause.name.contains);
-                    const skuQuery = clause.variants?.some?.sku?.contains;
-                    return skuQuery && productVariants.some((variant) =>
-                        variant.productId === row.id && variant.isActive && variant.sku.includes(skuQuery)
+                    if (clause.name?.contains) return matches(row, { name: clause.name });
+                    const skuQuery = clause.variants?.some?.sku;
+                    return skuQuery?.contains && productVariants.some((variant) =>
+                        variant.productId === row.id && variant.isActive && matches(variant, { sku: skuQuery })
                     );
                 });
                 return directMatch && orMatch;

@@ -375,23 +375,27 @@ const restoreProduct = async (id) => restore(id);
 
 const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxPrice, minRating = null, sort, order }) => {
     const client = getPrismaClient();
-    const predicates = [Prisma.sql`p.is_deleted = 0`];
-    if (q) predicates.push(Prisma.sql`(
-        CHARINDEX(${q} COLLATE Latin1_General_100_CI_AI, p.name COLLATE Latin1_General_100_CI_AI) > 0
-        OR CHARINDEX(${q} COLLATE Latin1_General_100_CI_AI, p.description COLLATE Latin1_General_100_CI_AI) > 0
-    )`);
+    const predicates = [Prisma.sql`p.is_deleted = false`];
+    if (q) {
+        // Treat LIKE wildcards as literal characters, matching substring-search semantics.
+        const escapedQuery = q.replace(/[\\%_]/g, "\\$&");
+        predicates.push(Prisma.sql`(
+            lower(immutable_unaccent(p.name)) LIKE '%' || lower(immutable_unaccent(${escapedQuery})) || '%' ESCAPE E'\\\\'
+            OR lower(immutable_unaccent(p.description)) LIKE '%' || lower(immutable_unaccent(${escapedQuery})) || '%' ESCAPE E'\\\\'
+        )`);
+    }
     if (category.length) predicates.push(Prisma.sql`p.device_type IN (${Prisma.join(category)})`);
     if (tag.length) predicates.push(Prisma.sql`p.brand IN (${Prisma.join(tag)})`);
     if (minPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) >= ${minPrice}`);
     if (maxPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) <= ${maxPrice}`);
     // Same figure the cards show: average of visible star ratings rounded to one decimal; unrated Products never match.
     if (minRating !== null) predicates.push(Prisma.sql`(
-        SELECT ROUND(AVG(CAST(r.rating AS float)), 1) FROM product_reviews r
-        WHERE r.product_id = p.id AND r.is_hidden = 0 AND r.rating IS NOT NULL
+        SELECT ROUND(AVG(r.rating::numeric), 1) FROM product_reviews r
+        WHERE r.product_id = p.id AND r.is_hidden = false AND r.rating IS NOT NULL
     ) >= ${minRating}`);
 
     const primaryOrder = sort === "name"
-        ? Prisma.sql`p.name COLLATE Vietnamese_100_CI_AS ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`
+        ? Prisma.sql`p.name COLLATE "vi-VN-x-icu" ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`
         : sort === "price"
             ? Prisma.sql`f.min_price ${Prisma.raw(order === "desc" ? "DESC" : "ASC")}`
             : null;
@@ -399,7 +403,7 @@ const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxP
     const cte = Prisma.sql`
         WITH prices AS (
             SELECT product_id, MIN(price) AS min_price
-            FROM product_variants WHERE is_active = 1 GROUP BY product_id
+            FROM product_variants WHERE is_active = true GROUP BY product_id
         ), filtered AS (
             SELECT p.id, COALESCE(v.min_price, 0) AS min_price
             FROM products p LEFT JOIN prices v ON v.product_id = p.id
@@ -415,7 +419,7 @@ const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxP
         SELECT f.id, f.min_price FROM filtered f
         JOIN products p ON p.id = f.id
         ORDER BY ${orderBy}
-        OFFSET ${(actualPage - 1) * pageSize} ROWS FETCH NEXT ${pageSize} ROWS ONLY
+        LIMIT ${pageSize} OFFSET ${(actualPage - 1) * pageSize}
     `);
     const ids = rows.map((row) => Number(row.id));
     const records = ids.length ? await client.product.findMany({

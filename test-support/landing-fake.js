@@ -30,7 +30,7 @@ const createLandingFake = () => {
             return match ? take(match[1].split(",").length) : [];
         };
         let rows = state.products.filter((product) => !product.isDeleted);
-        if (sql.includes("CHARINDEX")) take(2);
+        if (sql.includes("immutable_unaccent")) take(2);
         const categories = inValues("p\\.device_type");
         const brands = inValues("p\\.brand");
         if (categories.length) rows = rows.filter((product) => categories.includes(product.deviceType));
@@ -42,7 +42,7 @@ const createLandingFake = () => {
     };
 
     const bestSellerRows = (values) => {
-        const [limit, since] = values;
+        const [since, limit] = values;
         const totals = new Map();
         for (const item of state.orderItems) {
             const order = state.orders.find((candidate) => candidate.id === item.orderId);
@@ -67,7 +67,7 @@ const createLandingFake = () => {
             if (sql.includes("order_items")) return bestSellerRows(values);
             const rows = catalogRows(sql, values);
             if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
-            const [offset, size] = values.slice(-2).map(Number);
+            const [size, offset] = values.slice(-2).map(Number);
             return rows.slice(offset, offset + size).map((product) => ({ id: product.id, min_price: minPriceOf(product.id) }));
         },
         product: {
