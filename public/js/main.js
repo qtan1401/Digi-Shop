@@ -1,5 +1,6 @@
 // ===== MAIN.JS =====
 // Product cards link to detail; customers must select a purchasable variant there.
+const MIN_SEARCH_LENGTH = 2;
 const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", minRating: "", categories: new Set(), tags: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
 const normalizeCatalogText = (value) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("vi-VN").replace(/đ/g, "d");
 const { DEVICE_TYPES: categoryValues, BRANDS: tagValues, brandFromSlug } = window.CatalogTaxonomy;
@@ -35,7 +36,7 @@ const syncCatalogControls = () => {
     const active = document.activeElement, count = Array.from(catalogState.search.trim()).length, priceError = getPriceFilterError();
     document.querySelectorAll("[data-filter-search]").forEach((input) => { if (input !== active && input.value !== catalogState.search) input.value = catalogState.search; });
     document.querySelectorAll("[data-filter-search-clear]").forEach((button) => { button.hidden = catalogState.search === ""; });
-    document.querySelectorAll("[data-filter-search-hint]").forEach((hint) => { hint.textContent = count > 0 && count < 3 ? `Nhập thêm ${3 - count} ký tự để bắt đầu tìm kiếm.` : ""; });
+    document.querySelectorAll("[data-filter-search-hint]").forEach((hint) => { hint.textContent = count > 0 && count < MIN_SEARCH_LENGTH ? `Nhập thêm ${MIN_SEARCH_LENGTH - count} ký tự để bắt đầu tìm kiếm.` : ""; });
     document.querySelectorAll("[data-filter-price]").forEach((input) => {
         const value = input.dataset.filterPrice === "min" ? catalogState.minPrice : catalogState.maxPrice;
         if (input !== active && input.value !== value) input.value = value;
@@ -83,7 +84,7 @@ const buildCatalogUrl = (page = catalogState.page) => {
     const categoryPath = categories.length === 1 && tags.length <= 1, tagPath = categories.length === 0 && tags.length === 1;
     url.pathname = categoryPath ? `/danh-muc/${categories[0]}` : tagPath ? `/the/${tags[0].toLowerCase()}` : "/catalog.html";
     if (page > 1) params.set("page", String(page));
-    if (catalogState.search.trim().length >= 3) params.set("q", catalogState.search.trim());
+    if (Array.from(catalogState.search.trim()).length >= MIN_SEARCH_LENGTH) params.set("q", catalogState.search.trim());
     if (catalogState.sortBy !== "default") { params.set("sort", catalogState.sortBy); params.set("order", catalogState.sortDirection); }
     if (catalogState.minPrice !== "") params.set("minPrice", catalogState.minPrice);
     if (catalogState.maxPrice !== "") params.set("maxPrice", catalogState.maxPrice);
@@ -109,7 +110,7 @@ const renderEmpty = (error) => {
     el("catalog-count").textContent = "0 sản phẩm"; el("catalog-status").textContent = ""; setApplyLabel();
     if (error) return setGridMessage(`<p class="catalog-empty">Vui lòng kiểm tra khoảng giá.</p>`);
     if (!catalogState.catalogTotal && !hasActiveFilter()) return setGridMessage('<p class="catalog-empty">Chưa có sản phẩm nào.</p>');
-    if (query.length >= 3) return setGridMessage(`<p class="catalog-empty">Không có sản phẩm nào khớp <span>“${escapeHtml(query)}”</span>. Thử từ khoá khác. <button type="button" class="link-btn" data-catalog-clear-search>Xoá tìm kiếm</button></p>`);
+    if (Array.from(query).length >= MIN_SEARCH_LENGTH) return setGridMessage(`<p class="catalog-empty">Không có sản phẩm nào khớp <span>“${escapeHtml(query)}”</span>. Thử từ khoá khác. <button type="button" class="link-btn" data-catalog-clear-search>Xoá tìm kiếm</button></p>`);
     setGridMessage(`<p class="catalog-empty">Không có sản phẩm nào khớp bộ lọc. <button type="button" class="link-btn" data-filter-clear>Xoá lọc</button></p>`);
 };
 const renderError = (network) => {
@@ -193,7 +194,7 @@ const bindCatalogControls = () => {
     document.addEventListener("input", (event) => {
         const target = event.target;
         if (target.matches("[data-filter-search]")) {
-            catalogState.search = target.value; const count = Array.from(catalogState.search.trim()).length; syncCatalogControls(); changeCatalog(count >= 3 ? 250 : 0);
+            catalogState.search = target.value; const count = Array.from(catalogState.search.trim()).length; syncCatalogControls(); changeCatalog(count >= MIN_SEARCH_LENGTH ? 250 : 0);
         } else if (target.matches("[data-filter-price]")) {
             const value = target.value.trim();
             if (target.dataset.filterPrice === "min") catalogState.minPrice = value; else catalogState.maxPrice = value;

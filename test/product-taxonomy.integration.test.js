@@ -101,6 +101,12 @@ const fakePrisma = {
         const brand = values.find((value) => BRANDS.includes(value));
         if (sql.includes("p.device_type IN") && category) rows = rows.filter((product) => product.deviceType === category);
         if (sql.includes("p.brand IN") && brand) rows = rows.filter((product) => product.brand === brand);
+        if (sql.includes("CHARINDEX(")) {
+            const queryText = values[0];
+            if (queryText) rows = rows.filter((product) =>
+                [product.name, product.description].some((text) => text.toLowerCase().includes(queryText.toLowerCase()))
+            );
+        }
         if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
         const pageRows = sql.includes("OFFSET")
             ? rows.slice(Number(values.at(-2)), Number(values.at(-2)) + Number(values.at(-1)))
@@ -538,6 +544,22 @@ test("public catalog applies page size and clamps a non-empty out-of-range page"
     assert.equal(invalidFilter.status, 400);
     const invalidSearch = await fetch(`${baseUrl}/api/products?q=${"x".repeat(121)}`);
     assert.equal(invalidSearch.status, 400);
+});
+
+test("public catalog searches two-character product names and ignores one-character keywords", async () => {
+    await createProduct(productInput({ name: "Keychron K2", sku: "KEYCHRON-K2" }));
+    await createProduct(productInput({ name: "Logitech Mouse", sku: "LOGITECH-MOUSE" }));
+
+    const searched = await fetch(`${baseUrl}/api/products?q=K2`);
+    assert.equal(searched.status, 200);
+    assert.deepEqual((await searched.json()).data.map((product) => product.name), ["Keychron K2"]);
+
+    const short = await fetch(`${baseUrl}/api/products?q=K`);
+    assert.equal(short.status, 200);
+    assert.deepEqual((await short.json()).data.map((product) => product.name), ["Keychron K2", "Logitech Mouse"]);
+
+    const maximum = await fetch(`${baseUrl}/api/products?q=${"x".repeat(120)}`);
+    assert.equal(maximum.status, 200);
 });
 
 test("admin catalog pages non-empty results and clamps to the last page", async () => {

@@ -10,6 +10,7 @@ const { BRANDS, DEVICE_TYPES } = require("../../public/js/catalog-taxonomy");
 const joinChoices = (choices) => `${choices.slice(0, -1).join(", ")} hoặc ${choices.at(-1)}`;
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
 const MAX_GALLERY_IMAGES = 20;
+const MIN_SEARCH_LENGTH = 2;
 
 const createDomainError = (message, errors = [], statusCode = 400) => {
     const error = new Error(message);
@@ -388,7 +389,7 @@ const getCatalogPage = async (filters = {}) => {
     if (filters.minRating !== undefined && !/^[1-5]$/.test(String(filters.minRating))) throw createDomainError("Invalid minRating.");
     const minRating = filters.minRating === undefined ? null : Number(filters.minRating);
     const result = await productRepository.getCatalogPage({
-        page, pageSize, q: Array.from(q).length >= 3 ? q : null,
+        page, pageSize, q: Array.from(q).length >= MIN_SEARCH_LENGTH ? q : null,
         category: allowed("category", DEVICE_TYPES),
         tag: allowed("tag", BRANDS), minPrice, maxPrice, minRating, sort, order
     });
