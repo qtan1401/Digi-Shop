@@ -71,4 +71,15 @@ Các kiểm tra thủ công:
 - **WebSocket chéo instance:** dán ảnh hai tab với `X-Instance` khác nhau và Live review update tại đây.
 - **Failover:** dán ảnh trang vẫn hoạt động sau khi dừng app ở cổng 3102 tại đây.
 
-## Trên Cloud Run
+## Trên Render (một instance)
+
+Bản deploy trên Render dùng gói miễn phí nên chỉ có **một instance** (`RATE_LIMIT_STORE=memory`, `REVIEW_EVENTS_MODE=direct`; xem [deploy.md](deploy.md)). Khả năng nhiều instance được chứng minh bằng cụm ba tiến trình ở phần trên: `/healthz` và `X-Instance` luân phiên, đánh giá realtime chéo instance, giới hạn đăng nhập dùng chung qua database, worker thanh toán chạy một nơi nhờ advisory lock, ảnh tải lên ở Cloudinary.
+
+Trên Render, mở `https://<tên-dịch-vụ>.onrender.com/healthz` để thấy `X-Instance` của dịch vụ, và ghi rõ trong `Readme.txt` và video rằng bằng chứng scaling nằm ở cụm local. Muốn chạy nhiều instance trên một dịch vụ, cần gói Render trả phí cho phép scale ngang, rồi đặt `RATE_LIMIT_STORE=database` và `REVIEW_EVENTS_MODE=database`.
+
+Nếu một nền tảng khác cho phép nhiều instance, `npm run cloud:smoke -- https://<url> 30` gửi 30 request `/healthz` song song và gom theo `X-Instance`.
+
+### Ảnh chụp minh chứng trên Render
+
+- **`/healthz`:** dán ảnh phản hồi từ địa chỉ công khai tại đây.
+- **Ghi chú trong Readme.txt:** nhắc rằng cụm ba instance chạy trên máy và ảnh minh chứng ở mục trước.

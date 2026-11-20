@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added Postgres-backed shared rate limits and cross-instance review events, advisory-lock payment-expiry coordination, optional Cloudinary product-image storage, instance health identity, and a three-process local load-balancer/smoke runbook. Added a Dockerfile, a Render Blueprint (`render.yaml`) and a Render + Neon + Cloudinary deployment guide (`docs/deploy.md`).
 - **Password recovery** is now a standard reset flow: `POST /api/auth/recover` only emails a single-use link (30 minutes, hash stored in the new `password_reset_tokens`, migration `20261108030000_password_reset_tokens`) and always answers 202; the password, lock and sessions stay untouched until the owner opens `/reset-password.html` and sets a new one (`POST /api/auth/reset-password`), which signs every session out. The temporary-password email is gone. The verification email link now points at `/verify-email.html` and is in Vietnamese.
 - **Registration** asks only for email, full name and shipping address and always answers the same; the new account is passwordless and receives the password link, which also activates it. Username is optional and set later. The first saved address has an empty phone until the customer adds one.
 - Every storefront page (cart, product, checkout, profile, login, recovery, email verification, 403) now uses the same header as the homepage, and the old `.navbar` styles were removed; the cart page keeps its side padding on mobile.
