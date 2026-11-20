@@ -7,6 +7,7 @@
     "start": "node server.js",
     "cluster": "node scripts/cluster/start-cluster.js",
     "cluster:smoke": "node scripts/cluster/smoke.js",
+    "cloud:smoke": "node scripts/cluster/cloud-smoke.js",
     "db:create": "node scripts/db/create-database.js",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
@@ -20,6 +21,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": "24.x"
+  },
   "type": "commonjs",
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",
