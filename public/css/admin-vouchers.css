@@ -10,11 +10,11 @@
 
 /* ----- bảng ----- */
 .ao .av-table { min-width: 0; }
-.ao .av-th-code { min-width: 14rem; }
-.ao .av-th-offer, .ao .av-th-range { min-width: 9rem; }
+.ao .av-th-code { min-width: 11rem; }
+.ao .av-th-offer, .ao .av-th-range { min-width: 7rem; }
 .ao .av-th-usage { min-width: 7rem; }
-.ao .av-th-status { min-width: 9rem; }
-.ao .av-td-code { max-width: 18rem; }
+.ao .av-th-status { min-width: 7rem; }
+.ao .av-td-code { max-width: 14rem; }
 .ao .av-nowrap { white-space: nowrap; }
 .ao .av-code-line { display: flex; align-items: center; gap: 8px; }
 .ao .av-code {
@@ -34,7 +34,7 @@
 .ao .av-listed { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 14px; line-height: 20px; }
 .ao .av-col-listed { display: none; padding: 12px; text-align: left; }
 .ao .av-hidden-mark { display: inline-flex; flex-shrink: 0; }
-@container vcard (min-width: 64rem) {
+@container vcard (min-width: 80rem) {
     .ao .av-col-listed { display: table-cell; }
     .ao .av-hidden-mark { display: none; }
 }

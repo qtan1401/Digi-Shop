@@ -106,6 +106,7 @@
                 <div data-slot="stats"></div>
                 <div data-slot="charts"></div>
                 <p class="sr-only" role="status" aria-live="polite" data-slot="live"></p>
+                <div class="ad-tip" role="tooltip" data-slot="tip" hidden></div>
             </div>`;
         const $ = (name) => rootEl.querySelector(`[data-slot="${name}"]`);
         const slots = { period: $("period"), pickers: $("pickers"), granularity: $("granularity"), stats: $("stats"), charts: $("charts"), live: $("live"), rangeError: $("range-error") };
@@ -149,22 +150,43 @@
             </div>`;
         };
 
-        /* ---------- biểu đồ cột ---------- */
         // series: [{ key, name, tone }]; tone 0 = đậm (--chart-fill), 1 = nhạt (45%). Cột âm vẽ chiều cao 0, số thật vẫn hiện.
-        const columnsHtml = (buckets, series, valueOf, format, aria) => {
-            const peak = Math.max(1, ...buckets.flatMap((b) => series.map((s) => Math.max(0, valueOf(b, s.key)))));
-            const showNumbers = buckets.length <= MAX_BARS_WITH_NUMBERS;
-            const cols = buckets.map((b) => {
+        // Trục dọc có vạch chia "đẹp"; khung cuộn ngang bên trong thẻ; nhãn trục ngang được thưa ra khi nhiều cột.
+        const niceScale = (peak, integer) => {
+            let step = peak / 4;
+            const mag = Math.pow(10, Math.floor(Math.log10(step)));
+            const norm = step / mag;
+            step = (norm <= 1 ? 1 : norm <= 2 ? 2 : (norm <= 2.5 && !integer) ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+            if (integer && step < 1) step = 1;
+            const n = Math.max(1, Math.ceil(peak / step - 1e-9));
+            return { max: n * step, ticks: Array.from({ length: n + 1 }, (_, i) => i * step) };
+        };
+        const columnsHtml = (buckets, series, valueOf, format, aria, tipOf) => {
+            const peak = Math.max(1, ...buckets.flatMap((b) => series.map((s) => Math.max(0, Number(valueOf(b, s.key)) || 0))));
+            const scale = niceScale(peak, !!format.integer);
+            // Số trên đầu cột chỉ hiện với một chuỗi, ≤ 12 cột và cột đủ rộng (56px); ngược lại có trong tooltip, aria và bảng số liệu.
+            const showNumbers = series.length === 1 && buckets.length <= MAX_BARS_WITH_NUMBERS;
+            const focusable = buckets.length <= 24;
+            const colW = showNumbers ? 56 : Math.max(36, series.length * 22 + 8);
+            const labelW = Math.max(...buckets.map((b) => String(b.label).length), 1) * 6.5 + 12;
+            const step = Math.max(1, Math.ceil(labelW / (colW + 8)));
+            const cols = buckets.map((b, i) => {
                 const bars = series.map((s) => {
-                    const v = valueOf(b, s.key);
-                    const pct = Math.max(0, v) / peak * 100;
-                    return `<div class="ad-bar-wrap" title="${esc(`${b.label} · ${s.name}: ${format.full(v)}`)}">
+                    const v = Number(valueOf(b, s.key)) || 0;
+                    const pct = Math.max(0, v) / scale.max * 100;
+                    return `<div class="ad-bar-wrap">
                         ${showNumbers ? `<span class="ad-bar-n tabular${v < 0 ? " is-neg" : ""}">${format.short(v)}</span>` : ""}
                         <div class="ad-bar ad-bar--${s.tone}" style="height:${pct}%"></div></div>`;
                 }).join("");
-                return `<div class="ad-col" style="min-width:${Math.max(36, series.length * 22 + 8)}px"><div class="ad-bars">${bars}</div><p class="ad-axis-l tabular">${esc(b.label)}</p></div>`;
+                const tip = [String(b.label), ...tipOf(b)].join("\n");
+                const a11y = focusable ? ` tabindex="0" role="img" aria-label="${esc(tip.replace(/\n/g, ", "))}"` : "";
+                return `<div class="ad-col" style="min-width:${colW}px" data-tip="${esc(tip)}"${a11y}><div class="ad-bars">${bars}</div><p class="ad-axis-l tabular" aria-hidden="true">${i % step === 0 ? esc(b.label) : ""}</p></div>`;
             }).join("");
-            return `<div class="ad-scroll scrollbar-clean"><div class="ad-cols" role="img" aria-label="${esc(aria)}">${cols}</div></div>`;
+            const yTicks = scale.ticks.map((t) => `<span style="bottom:${t / scale.max * 100}%">${format.short(t)}</span>`).join("");
+            const lines = scale.ticks.map((t) => `<i style="bottom:${t / scale.max * 100}%"></i>`).join("");
+            const label = `${aria}. ${buckets.length} cột, cuộn ngang để xem hết; số liệu đầy đủ trong bảng số liệu bên dưới`;
+            return `<div class="ad-plot"><div class="ad-yaxis" aria-hidden="true">${yTicks}</div>
+                <div class="ad-scroll scrollbar-clean" tabindex="0" role="group" aria-label="${esc(label)}"><div class="ad-cols"><div class="ad-grid" aria-hidden="true">${lines}</div>${cols}</div></div></div>`;
         };
         const legendHtml = (series) => `<ul class="ad-legend" aria-label="Chú giải">${series.map((s) => `<li><span class="ad-dot ad-bar--${s.tone}" aria-hidden="true"></span>${esc(s.name)}</li>`).join("")}</ul>`;
         const chartCard = (id, title, sub, body) => `
@@ -194,6 +216,29 @@
                 </table></div>
             </details>`;
 
+        const CMP_ROWS = [["orders", "Số đơn", num], ["revenue", "Doanh thu", vnd], ["profit", "Lợi nhuận", vnd], ["itemsSold", "Sản phẩm bán", num], ["newUsers", "Khách mới", num]];
+        const dmy = (s) => String(s || "").split("-").reverse().join("/");
+        // Thay đổi % có dấu; mũi tên + chữ (không chỉ màu). null = kỳ trước chưa có số để so.
+        const changeHtml = (c) => {
+            if (c === null || c === undefined || !Number.isFinite(Number(c))) return '<span class="ad-chg ad-chg--na">Chưa có kỳ trước</span>';
+            const v = Number(c);
+            if (v > 0) return `<span class="ad-chg ad-chg--up"><span aria-hidden="true">▲</span> Tăng +${trim(v)}%</span>`;
+            if (v < 0) return `<span class="ad-chg ad-chg--down"><span aria-hidden="true">▼</span> Giảm −${trim(Math.abs(v))}%</span>`;
+            return '<span class="ad-chg ad-chg--flat"><span aria-hidden="true">■</span> Không đổi 0%</span>';
+        };
+        const compareHtml = (d) => {
+            const p = d.previous;
+            if (!p || !p.totals) return chartCard("ad-cmp-title", "So sánh với kỳ trước", "", '<p class="ad-empty">Chưa có kỳ trước để so sánh.</p>');
+            const items = CMP_ROWS.map(([key, name, fmt]) => `
+                <li class="ad-cmp__item">
+                    <p class="ad-cmp__name">${name}</p>
+                    <p class="ad-cmp__now tabular">${fmt(d.totals[key])}</p>
+                    <p class="ad-cmp__prev tabular">Kỳ trước: ${fmt(p.totals[key])}</p>
+                    <p class="ad-cmp__chg">${changeHtml(p.change && p.change[key])}</p>
+                </li>`).join("");
+            return chartCard("ad-cmp-title", "So sánh với kỳ trước", `Kỳ này ${esc(periodLabel())} · kỳ trước ${esc(dmy(p.from))} – ${esc(dmy(p.to))}`, `<ul class="ad-cmp">${items}</ul>`);
+        };
+
         const chartsHtml = () => {
             if (state.phase === "loading") {
                 return `<div class="ad-charts" aria-busy="true">${[0, 1].map(() => `<section class="card ad-chart"><header class="ov-card-head"><div class="sk" style="width:140px;height:16px"></div></header><div class="ad-skel-cols">${[40, 70, 55, 90, 35, 60, 80, 45].map((h) => `<div class="sk" style="height:${h}%;border-radius:6px 6px 0 0"></div>`).join("")}</div></section>`).join("")}</div>`;
@@ -208,17 +253,34 @@
             }
             const d = state.data;
             if (!d) return "";
-            const unit = { year: "năm", quarter: "quý", month: "tháng", week: "tuần" }[d.granularity];
+            const buckets = Array.isArray(d.buckets) ? d.buckets : [];
+            const totals = d.totals || {};
+            const types = Array.isArray(d.deviceTypes) ? d.deviceTypes : [];
+            const unit = { year: "năm", quarter: "quý", month: "tháng", week: "tuần" }[d.granularity] || "kỳ";
             const sub = `Theo ${unit} · ${esc(periodLabel())}`;
+            const typeName = (t) => TYPE_LABELS[t] || t;
+            const typeCount = (b) => Object.keys(b.deviceTypes || {}).length;
+            const typeLines = (b) => Object.entries(b.deviceTypes || {}).map(([t, n]) => `${typeName(t)}: ${num(n)}`);
             const money = { short: compact, full: vnd };
-            const count = { short: num, full: (v) => `${num(v)} sản phẩm` };
+            const count = (suffix) => ({ short: num, full: (v) => `${num(v)} ${suffix}`, integer: true });
             const moneySeries = [{ key: "revenue", name: "Doanh thu", tone: 0 }, { key: "profit", name: "Lợi nhuận", tone: 1 }];
-            const hint = d.buckets.length > MAX_BARS_WITH_NUMBERS ? '<p class="ad-hint">Nhiều cột nên số chỉ hiện khi rê vào cột; đủ số liệu có trong bảng bên dưới.</p>' : "";
-            return `<div class="ad-charts">
-                ${chartCard("ad-money-title", "Doanh thu và lợi nhuận", sub, `${legendHtml(moneySeries)}${columnsHtml(d.buckets, moneySeries, (b, k) => b[k], money, `Doanh thu và lợi nhuận ${sub}: ${d.buckets.map((b) => `${b.label} doanh thu ${vnd(b.revenue)}, lợi nhuận ${vnd(b.profit)}`).join("; ")}`)}${hint}`)}
-                ${chartCard("ad-items-title", "Số sản phẩm bán", sub, `${columnsHtml(d.buckets, [{ key: "itemsSold", name: "Sản phẩm bán", tone: 0 }], (b, k) => b[k], count, `Số sản phẩm bán ${sub}: ${d.buckets.map((b) => `${b.label} ${num(b.itemsSold)}`).join("; ")}`)}`)}
-                ${chartCard("ad-types-title", "Loại sản phẩm bán", `Theo loại thiết bị · ${esc(periodLabel())}`, typeBarsHtml(d.deviceTypes))}
-            </div>${tableHtml(d.buckets, d.totals)}`;
+            const hasNeg = buckets.some((b) => Number(b.profit) < 0);
+            const hint = '<p class="ad-hint">Số cụ thể hiện khi rê chuột, chạm hoặc focus vào cột; đủ số liệu có trong bảng số liệu bên dưới.</p>'
+                + (hasNeg ? '<p class="ad-hint">Kỳ lỗ: cột lợi nhuận âm vẽ chiều cao 0, số thật ở nhãn cột và bảng số liệu.</p>' : "");
+            const series1 = (key, name) => [{ key, name, tone: 0 }];
+            const empty = !buckets.length || (!totals.orders && !totals.revenue && !totals.itemsSold && !totals.newUsers);
+            if (empty) {
+                return `<div class="ad-charts">${chartCard("ad-empty-title", "Thống kê theo kỳ", sub, '<p class="ad-empty">Không có đơn hàng hay khách mới nào trong kỳ này. Thử chọn khoảng thời gian khác.</p>')}${compareHtml(d)}</div>${tableHtml(buckets, totals)}`;
+            }
+            return `<div class="ad-charts${buckets.length > 8 ? " ad-charts--wide" : ""}">
+                ${compareHtml(d)}
+                ${chartCard("ad-money-title", "Doanh thu và lợi nhuận", sub, `${legendHtml(moneySeries)}${columnsHtml(buckets, moneySeries, (b, k) => b[k], money, `Doanh thu và lợi nhuận ${sub}`, (b) => [`Doanh thu: ${vnd(b.revenue)}`, `Lợi nhuận: ${vnd(b.profit)}`])}${hint}`)}
+                ${chartCard("ad-orders-title", "Số đơn", sub, columnsHtml(buckets, series1("orders", "Số đơn"), (b, k) => b[k], count("đơn"), `Số đơn ${sub}`, (b) => [`Số đơn: ${num(b.orders)}`]))}
+                ${chartCard("ad-items-title", "Số sản phẩm bán", sub, columnsHtml(buckets, series1("itemsSold", "Sản phẩm bán"), (b, k) => b[k], count("sản phẩm"), `Số sản phẩm bán ${sub}`, (b) => [`Sản phẩm bán: ${num(b.itemsSold)}`]))}
+                ${chartCard("ad-typecount-title", "Số loại sản phẩm bán", sub, columnsHtml(buckets, [{ key: "types", name: "Số loại sản phẩm", tone: 0 }], (b) => typeCount(b), count("loại"), `Số loại sản phẩm bán ${sub}`, (b) => [`Số loại sản phẩm: ${num(typeCount(b))}`, ...typeLines(b)]))}
+                ${chartCard("ad-users-title", "Khách hàng mới", sub, columnsHtml(buckets, series1("newUsers", "Khách mới"), (b, k) => b[k], count("khách"), `Khách hàng mới ${sub}`, (b) => [`Khách mới: ${num(b.newUsers)}`]))}
+                ${chartCard("ad-types-title", "Loại sản phẩm bán", `Theo loại thiết bị · ${esc(periodLabel())}`, typeBarsHtml(types))}
+            </div>${tableHtml(buckets, totals)}`;
         };
 
         const renderResults = () => {
@@ -232,6 +294,9 @@
             if (!rangeValid()) {
                 slots.rangeError.textContent = "Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.";
                 slots.rangeError.hidden = false;
+                seq++;
+                state.data = null; state.fetching = false;
+                slots.stats.innerHTML = ""; slots.charts.innerHTML = ""; slots.charts.classList.remove("is-fetching");
                 return;
             }
             slots.rangeError.hidden = true;
@@ -295,6 +360,27 @@
             load({ quiet: true });
         });
         rootEl.addEventListener("click", (e) => { if (e.target.closest("[data-ad-retry]")) load(); });
+
+        /* ---------- tooltip: rê chuột, chạm hoặc focus bàn phím vào một cột ---------- */
+        const tipEl = $("tip");
+        const hideTip = () => { tipEl.hidden = true; };
+        const showTip = (el) => {
+            tipEl.textContent = el.dataset.tip || "";
+            tipEl.hidden = false;
+            const r = el.getBoundingClientRect();
+            const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+            const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), Math.max(8, window.innerWidth - w - 8));
+            const top = r.top - h - 8 >= 8 ? r.top - h - 8 : r.bottom + 8;
+            tipEl.style.left = `${left}px`;
+            tipEl.style.top = `${top}px`;
+        };
+        const tipTarget = (e) => (e.target.closest ? e.target.closest("[data-tip]") : null);
+        rootEl.addEventListener("pointerover", (e) => { const el = tipTarget(e); if (el) showTip(el); });
+        rootEl.addEventListener("pointerout", (e) => { if (tipTarget(e)) hideTip(); });
+        rootEl.addEventListener("focusin", (e) => { const el = tipTarget(e); if (el) showTip(el); });
+        rootEl.addEventListener("focusout", hideTip);
+        rootEl.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+        window.addEventListener("scroll", hideTip, true);
 
         renderControls();
         renderResults();

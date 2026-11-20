@@ -33,7 +33,7 @@ const productFields = {
     deviceType: "mouse",
     description: "A new mouse",
     options: "[]",
-    variants: JSON.stringify([{ sku: "IP17-256", price: 999, stock: 7, optionValues: {} }])
+    variants: JSON.stringify([{ sku: "IP17-256", price: 999, costPrice: 1, stock: 7, optionValues: {} }])
 };
 const createPng = (pixel) => PNG.sync.write({ width: 1, height: 1, data: Buffer.from(pixel) });
 const png = createPng([255, 0, 0, 255]);
@@ -238,7 +238,7 @@ test("editing without a replacement retains the image and a replacement changes 
         body: JSON.stringify({
             ...productFields,
             name: "Updated mouse",
-            variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
+            variants: JSON.stringify([{ sku: "IP17-256", price: 1000, costPrice: 1, stock: 8, optionValues: {} }])
         })
     });
     assert.equal(retainedResponse.status, 200);
@@ -249,7 +249,7 @@ test("editing without a replacement retains the image and a replacement changes 
     for (const [key, value] of Object.entries({
         ...productFields,
         name: "Replaced mouse",
-        variants: JSON.stringify([{ sku: "IP17-256", price: 1000, stock: 8, optionValues: {} }])
+        variants: JSON.stringify([{ sku: "IP17-256", price: 1000, costPrice: 1, stock: 8, optionValues: {} }])
     })) form.append(key, value);
     form.append("image", new Blob([replacement], { type: "image/png" }), "replacement.png");
     const replaceResponse = await fetch(`${baseUrl}/api/admin/products/${created.id}`, {

@@ -1,7 +1,7 @@
 /* ===== ADMIN SHELL: khung (sidebar, thanh đầu trang, ☰) + router hash =====
  * Chạy sau admin.js (AdminUI), admin-orders.js (AdminOrders), admin-overview.js (AdminOverview),
  * admin-users.js (AdminUsers), admin-dashboard.js (AdminDashboard).
- * Router: #/tong-quan (mặc định) · #/thong-ke · #/san-pham · #/don-hang[/<orderId>] · #/nguoi-dung · #/voucher · #/danh-gia · #/tai-khoan
+ * Router: #/tong-quan (mặc định) · #/thong-ke · #/san-pham · #/danh-muc-the · #/don-hang[/<orderId>] · #/nguoi-dung · #/voucher · #/danh-gia · #/tai-khoan
  * #/danh-gia và #/tai-khoan (cùng audit log) là tính năng ngoài đề: chỉ hiện khi máy chủ báo extras (ADMIN_EXTRAS=1), còn lại ẩn và quay về Tổng quan.
  * Mỗi màn là <section data-view="...">; đổi màn chỉ ẩn/hiện, bắn 'admin:view' trên document.
  */
@@ -14,6 +14,7 @@
         "tong-quan": { title: "Tổng quan" },
         "thong-ke": { title: "Thống kê" },
         "san-pham": { title: "Sản phẩm" },
+        "danh-muc-the": { title: "Danh mục & thẻ" },
         "don-hang": { title: "Đơn hàng" },
         "nguoi-dung": { title: "Người dùng" },
         "voucher": { title: "Voucher" },
@@ -124,6 +125,7 @@
     /* ---------- Màn Voucher và Đánh giá (module riêng, mount một lần khi mở lần đầu) ---------- */
     const MODULES = {
         "thong-ke": { global: "AdminDashboard", root: "dashboard-root", mounted: false, label: "Thống kê" },
+        "danh-muc-the": { global: "AdminCategories", root: "categories-root", mounted: false, label: "Danh mục & thẻ" },
         "nguoi-dung": { global: "AdminUsers", root: "users-root", mounted: false, label: "Người dùng" },
         "voucher": { global: "AdminVouchers", root: "vouchers-root", mounted: false, label: "Voucher" },
         "danh-gia": { global: "AdminReviews", root: "reviews-root", mounted: false, label: "Đánh giá" }

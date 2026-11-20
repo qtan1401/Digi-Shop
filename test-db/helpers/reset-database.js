@@ -45,9 +45,11 @@ function createUser(client, data = {}) {
 }
 
 async function createProduct(client, { name = "Bàn phím Keychron", brand = "Keychron", deviceType = "keyboard", stock = 10, price = 1000000, costPrice = 600000 } = {}) {
+    const category = await client.category.findFirst({ where: { slug: deviceType, isDeleted: false }, select: { id: true } });
+    if (!category) throw new Error(`Missing test category: ${deviceType}`);
     const product = await client.product.create({ data: {
         name, brand, deviceType, image: "/images/test-keyboard.png", description: `${name} cho máy tính`,
-        slug: `contract-${randomUUID()}`
+        slug: `contract-${randomUUID()}`, categoryId: category.id
     } });
     const variant = await client.productVariant.create({ data: {
         productId: product.id, sku: `TEST-${randomUUID()}`, combinationKey: "0".repeat(64),

@@ -34,6 +34,7 @@ const variantsJson = (variants) => JSON.stringify(variants);
 const baseFields = (overrides = {}) => ({
     name: "Logitech MX Master 3S",
     brand: "Logitech",
+    categoryId: "1",
     deviceType: "mouse",
     description: "A mouse with a gallery",
     options: "[]",

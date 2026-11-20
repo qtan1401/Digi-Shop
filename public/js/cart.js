@@ -419,7 +419,12 @@ const CartService = {
     },
 
     getCount() {
-        return this.getItems().reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        return this.getItems().reduce((sum, item) => {
+            if (item.available === false) return sum;
+            const quantity = Number(item.quantity || 0);
+            const stock = item.stock === undefined ? NaN : Number(item.stock);
+            return sum + (Number.isFinite(stock) ? Math.max(0, Math.min(quantity, stock)) : quantity);
+        }, 0);
     },
 
     getSubtotal() {

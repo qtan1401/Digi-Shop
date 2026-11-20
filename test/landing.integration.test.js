@@ -26,9 +26,12 @@ let nextProductId;
 let nextVariantId;
 let nextOrderId;
 
-const addProduct = ({ name, deviceType = "mouse", brand = "Logitech", createdAt = daysAgo(1), prices = [1_000_000], stock = 5, isDeleted = false, activeVariants = true }) => {
+const addProduct = ({ name, deviceType = "mouse", categoryId, brand = "Logitech", createdAt = daysAgo(1), prices = [1_000_000], stock = 5, isDeleted = false, activeVariants = true }) => {
     const id = nextProductId++;
-    fake.state.products.push({ id, name, deviceType, brand, image: `/img/${id}.png`, description: name, isDeleted, createdAt });
+    const category = categoryId === undefined
+        ? fake.state.categories.find(({ slug }) => slug === deviceType)
+        : fake.state.categories.find(({ id: value }) => value === categoryId);
+    fake.state.products.push({ id, name, categoryId: category.id, deviceType: category.slug, brand, image: `/img/${id}.png`, description: name, isDeleted, createdAt });
     prices.forEach((price) => fake.state.variants.push({ id: nextVariantId++, productId: id, price, stock, isActive: activeVariants }));
     return id;
 };
@@ -215,10 +218,13 @@ test("the landing page is served at / and the catalog is its own page at /catalo
     assert.match(catalog, /<a href="\/catalog\.html" aria-current="page">Sản phẩm<\/a>/);
 });
 
-test("category and brand pages are rendered from catalog.html and the sitemap lists /catalog.html", async () => {
-    addProduct({ name: "Mouse One", deviceType: "mouse" });
+test("dynamic category, tag and brand pages render catalog products and sitemap URLs", async () => {
+    fake.state.categories.push({ id: 7, slug: "gaming-gear", name: "Gaming Gear", sortOrder: 6, isDeleted: false });
+    fake.state.tags.push({ id: 1, slug: "ergonomic", name: "Ergonomic", isDeleted: false });
+    const productId = addProduct({ name: "Mouse One", categoryId: 7, deviceType: "gaming-gear" });
+    fake.state.productTags.push({ productId, tagId: 1 });
 
-    const category = await fetch(`${baseUrl}/danh-muc/mouse`);
+    const category = await fetch(`${baseUrl}/danh-muc/gaming-gear`);
     assert.equal(category.status, 200);
     const html = await category.text();
     assert.match(html, /id="product-grid"/);
@@ -226,16 +232,26 @@ test("category and brand pages are rendered from catalog.html and the sitemap li
     assert.match(html, /Mouse One/);
     assert.match(html, /aria-current="page">1<\/span>/);
 
-    const brand = await (await fetch(`${baseUrl}/the/logitech`)).text();
-    assert.match(brand, /id="product-grid"/);
+    const brandResponse = await fetch(`${baseUrl}/hang/logitech`);
+    assert.equal(brandResponse.status, 200);
+    assert.match(await brandResponse.text(), /Mouse One/);
+    const oldBrandUrl = await fetch(`${baseUrl}/the/logitech`, { redirect: "manual" });
+    assert.equal(oldBrandUrl.status, 301);
+    assert.equal(oldBrandUrl.headers.get("location"), "/hang/logitech");
+    const tagPage = await fetch(`${baseUrl}/the/ergonomic`);
+    assert.equal(tagPage.status, 200);
+    assert.match(await tagPage.text(), /Mouse One/);
 
-    const withRating = await fetch(`${baseUrl}/danh-muc/mouse?minRating=4`);
+    const withRating = await fetch(`${baseUrl}/danh-muc/gaming-gear?minRating=4`);
     assert.match(await withRating.text(), /name="robots" content="noindex,follow"/);
-    assert.equal((await fetch(`${baseUrl}/danh-muc/mouse?minRating=9`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/danh-muc/gaming-gear?minRating=9`)).status, 400);
 
     const sitemap = await (await fetch(`${baseUrl}/sitemap.xml`)).text();
     assert.match(sitemap, /<loc>https:\/\/shop\.example\.test\/<\/loc>/);
     assert.match(sitemap, /<loc>https:\/\/shop\.example\.test\/catalog\.html<\/loc>/);
+    assert.match(sitemap, /https:\/\/shop\.example\.test\/danh-muc\/gaming-gear/);
+    assert.match(sitemap, /https:\/\/shop\.example\.test\/hang\/logitech/);
+    assert.match(sitemap, /https:\/\/shop\.example\.test\/the\/ergonomic/);
 });
 
 test("pagination always shows the page number, even for a single page or none", () => {

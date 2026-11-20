@@ -18,7 +18,9 @@ if (process.env.npm_lifecycle_event !== "test:db" || !process.env.TEST_DATABASE_
         orders: commerce.orders.length,
         orderItems: commerce.orders.reduce((total, order) => total + order.items.length, 0),
         vouchers: commerce.vouchers.length,
-        reviews: commerce.reviews.length
+        reviews: commerce.reviews.length,
+        tags: new Set(commerce.products.flatMap((product) => product.tags)).size,
+        productTags: commerce.products.reduce((total, product) => total + new Set(product.tags).size, 0)
     };
 
     const readCounts = async () => ({
@@ -29,7 +31,9 @@ if (process.env.npm_lifecycle_event !== "test:db" || !process.env.TEST_DATABASE_
         orders: await db.order.count(),
         orderItems: await db.orderItem.count(),
         vouchers: await db.voucher.count(),
-        reviews: await db.productReview.count()
+        reviews: await db.productReview.count(),
+        tags: await db.tag.count({ where: { isDeleted: false } }),
+        productTags: await db.productTag.count()
     });
 
     test("seed mode writes the commerce fixture and is idempotent on PostgreSQL", async () => {
@@ -38,5 +42,8 @@ if (process.env.npm_lifecycle_event !== "test:db" || !process.env.TEST_DATABASE_
         assert.deepEqual(await readCounts(), expectedCounts);
         await seedDatabase();
         assert.deepEqual(await readCounts(), expectedCounts);
+        const perTag = await db.productTag.groupBy({ by: ["tagId"], _count: { productId: true } });
+        assert.ok(perTag.every((row) => row._count.productId >= 3));
+        assert.equal(await db.product.count({ where: { tags: { none: {} } } }), 0);
     });
 }

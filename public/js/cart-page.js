@@ -248,6 +248,7 @@ async function validateGuestCart(items) {
             };
         });
         localStorage.setItem("digi_cart", JSON.stringify(merged));
+        CartService.updateBadge();
         renderCart(merged);
     } catch (error) {
         validatedItems = [];

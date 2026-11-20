@@ -4,31 +4,45 @@ const productService = require("../services/product.service");
 const { readAuthConfig } = require("../auth/config");
 const renderer = require("../../public/js/catalog-renderer.js");
 
-const { DEVICE_TYPE_LABELS: categories, BRANDS, brandSlug } = require("../../public/js/catalog-taxonomy");
-const tags = Object.fromEntries(BRANDS.map((brand) => [brandSlug(brand), brand]));
+const { sendNotFound } = require("../middlewares/not-found");
+const categoryService = require("../services/category.service");
+const tagService = require("../services/tag.service");
+const { BRANDS, brandSlug, brandFromSlug } = require("../../public/js/catalog-taxonomy");
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const jsonForHtml = (value) => JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 const origin = () => readAuthConfig().appOrigins[0];
 const basePath = path.join(__dirname, "../../public/catalog.html");
 const queryValues = (value) => value === undefined ? [] : Array.isArray(value) ? value : [value];
 const buildPage = async (req, res, facetType, slug) => {
-    const values = facetType === "category" ? categories : tags;
-    const label = Object.hasOwn(values, slug) ? values[slug] : undefined;
-    if (!label) return res.status(404).send("Not found");
-
-    const route = facetType === "category" ? `/danh-muc/${slug}` : `/the/${slug}`;
-    const categoryFilters = new Set(facetType === "category" ? [slug] : []);
-    const tagFilters = new Set(facetType === "tag" ? [label] : []);
+    let facet;
+    try {
+        facet = facetType === "category" ? await categoryService.getCategoryBySlug(slug)
+            : facetType === "tag" ? await tagService.getTagBySlug(slug) : brandFromSlug(slug);
+    } catch (error) {
+        if (error.statusCode === 404) return sendNotFound(req, res);
+        throw error;
+    }
+    if (!facet) return sendNotFound(req, res);
+    const label = facetType === "brand" ? facet : facet.name;
+    const canonicalSlug = facetType === "brand" ? brandSlug(label) : facet.slug;
+    const route = `${{ category: "/danh-muc", tag: "/the", brand: "/hang" }[facetType]}/${canonicalSlug}`;
+    const categoryFilters = new Set(facetType === "category" ? [canonicalSlug] : []);
+    const tagFilters = new Set(facetType === "tag" ? [canonicalSlug] : []);
+    const brandFilters = new Set(facetType === "brand" ? [label] : []);
     queryValues(req.query.category).forEach((value) => categoryFilters.add(value));
     queryValues(req.query.tag).forEach((value) => tagFilters.add(value));
+    queryValues(req.query.brand).forEach((value) => brandFilters.add(value));
     const filterKeys = ["q", "sort", "order", "minPrice", "maxPrice", "minRating"];
     if (["page", ...filterKeys].some((key) => Array.isArray(req.query[key]))) {
         return res.status(400).send("Invalid catalog query");
     }
 
-    const filters = { page: req.query.page, pageSize: 12, category: [...categoryFilters], tag: [...tagFilters] };
+    // Like the catalog page, an unusable page number (abc, 0, -1, 1.5) shows page 1.
+    const requestedPage = Number(req.query.page);
+    const page = Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
+    const filters = { page, pageSize: 12, category: [...categoryFilters], tag: [...tagFilters], brand: [...brandFilters] };
     for (const key of filterKeys) if (req.query[key] !== undefined) filters[key] = req.query[key];
-    const filtered = [...filterKeys, "category", "tag"].some((key) => req.query[key] !== undefined);
+    const filtered = [...filterKeys, "category", "tag", "brand"].some((key) => req.query[key] !== undefined);
     try {
         const result = await productService.getCatalogPage(filters);
         const actualPage = result.meta.page;
@@ -42,6 +56,7 @@ const buildPage = async (req, res, facetType, slug) => {
             }
             queryValues(req.query.category).forEach((value) => params.append("category", String(value)));
             queryValues(req.query.tag).forEach((value) => params.append("tag", String(value)));
+            queryValues(req.query.brand).forEach((value) => params.append("brand", String(value)));
             if (number > 1) params.set("page", String(number));
             const suffix = params.toString();
             return `${route}${suffix ? `?${suffix}` : ""}`;
@@ -90,17 +105,33 @@ const buildPage = async (req, res, facetType, slug) => {
     }
 };
 exports.category = (req, res) => buildPage(req, res, "category", req.params.category);
-exports.tag = (req, res) => buildPage(req, res, "tag", req.params.tag);
+exports.brand = (req, res) => buildPage(req, res, "brand", req.params.brand);
+exports.tag = (req, res) => {
+    const brand = brandFromSlug(req.params.tag);
+    if (brand) {
+        const page = req.query.page;
+        const suffix = page === undefined ? "" : `?page=${encodeURIComponent(String(page))}`;
+        return res.redirect(301, `/hang/${brandSlug(brand)}${suffix}`);
+    }
+    return buildPage(req, res, "tag", req.params.tag);
+};
 exports.robots = (_req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${origin()}/sitemap.xml\n`);
 exports.sitemap = async (_req, res) => {
     const base = origin();
     const urls = [`${base}/`, `${base}/catalog.html`];
-    for (const slug of Object.keys(categories)) {
+    const categories = await categoryService.listCategories();
+    const tags = await tagService.listTags();
+    for (const { slug } of categories) {
         const result = await productService.getCatalogPage({ category: [slug], page: 1, pageSize: 12 });
         for (let page = 1; page <= result.meta.totalPages; page++) urls.push(`${base}/danh-muc/${slug}${page > 1 ? `?page=${page}` : ""}`);
     }
-    for (const [slug, brand] of Object.entries(tags)) {
-        const result = await productService.getCatalogPage({ tag: [brand], page: 1, pageSize: 12 });
+    for (const brand of BRANDS) {
+        const slug = brandSlug(brand);
+        const result = await productService.getCatalogPage({ brand: [brand], page: 1, pageSize: 12 });
+        for (let page = 1; page <= result.meta.totalPages; page++) urls.push(`${base}/hang/${slug}${page > 1 ? `?page=${page}` : ""}`);
+    }
+    for (const { slug } of tags) {
+        const result = await productService.getCatalogPage({ tag: [slug], page: 1, pageSize: 12 });
         for (let page = 1; page <= result.meta.totalPages; page++) urls.push(`${base}/the/${slug}${page > 1 ? `?page=${page}` : ""}`);
     }
     const products = await productService.getCatalogPage({ page: 1, pageSize: 12 });

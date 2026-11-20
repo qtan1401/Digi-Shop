@@ -8,6 +8,9 @@ const createProductCatalogFake = () => {
     const reset = () => {
         Object.assign(tables, {
             products: [],
+            categories: [{ id: 1, slug: "mouse", name: "Chuột", sortOrder: 0, isDeleted: false }],
+            tags: [],
+            productTags: [],
             productOptions: [],
             productOptionValues: [],
             productVariants: [],
@@ -23,9 +26,16 @@ const createProductCatalogFake = () => {
     };
     reset();
     const clone = (value) => value === undefined ? undefined : structuredClone(value);
+    // PostgreSQL LIKE '%value%' with the default backslash escape: unescaped % and _ stay wildcards.
+    const likeContains = (actual, pattern) => new RegExp(pattern.replace(/\\(.)|(%)|(_)|[.*+?^${}()|[\]\\]/g, (match, escaped, percent, underscore) =>
+        escaped !== undefined ? escaped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : percent ? "[\\s\\S]*" : underscore ? "[\\s\\S]" : `\\${match}`)).test(actual);
     const matches = (row, where = {}) => Object.entries(where).every(([key, expected]) => {
         if (key === "OR") return expected.some((clause) => matches(row, clause));
-        if (expected && typeof expected === "object" && "contains" in expected) return String(row[key] ?? "").includes(expected.contains);
+        if (key === "products" && expected?.some) {
+            return tables.productTags.some((link) => link.tagId === row.id && matches(link, expected.some));
+        }
+        if (expected && typeof expected === "object" && "in" in expected) return expected.in.includes(row[key]);
+        if (expected && typeof expected === "object" && "contains" in expected) return likeContains(String(row[key] ?? ""), expected.contains);
         return row[key] === expected;
     });
     const hydrateVariant = (row, include = {}) => {
@@ -49,6 +59,7 @@ const createProductCatalogFake = () => {
     const hydrateProduct = (row, include = {}) => {
         if (!row) return row;
         const result = clone(row);
+        if (include.category) result.category = clone(tables.categories.find((category) => category.id === row.categoryId));
         if (include.options) {
             const spec = include.options === true ? {} : include.options;
             result.options = tables.productOptions
@@ -80,12 +91,44 @@ const createProductCatalogFake = () => {
     };
     const fakePrisma = {
         $transaction: async (work) => work(fakePrisma),
+        $queryRaw: async (query, ...parameters) => {
+            const sql = query.sql || query.join?.("?") || "";
+            if (sql.includes("FROM categories") && sql.includes("FOR UPDATE")) {
+                return clone(tables.categories.filter((row) => row.id === parameters[0]));
+            }
+            if (sql.includes("FROM tags") && sql.includes("FOR UPDATE")) {
+                return clone(tables.tags.filter((row) => row.id === parameters[0]));
+            }
+            if (sql.includes("FROM products") && sql.includes("FOR UPDATE")) {
+                return clone(tables.products.filter((row) => row.id === parameters[0]));
+            }
+            return [];
+        },
+        category: {
+            findMany: async ({ where = {} } = {}) => clone(tables.categories.filter((row) => matches(row, where))),
+            findFirst: async ({ where = {} } = {}) => clone(tables.categories.find((row) => matches(row, where))) || null
+        },
+        tag: {
+            findMany: async ({ where = {} } = {}) => clone(tables.tags.filter((row) => matches(row, where))),
+            findFirst: async ({ where = {} } = {}) => clone(tables.tags.find((row) => matches(row, where))) || null
+        },
+        productTag: {
+            findMany: async ({ where }) => tables.productTags
+                .filter((link) => where.productId.in.includes(link.productId))
+                .map((link) => ({ productId: link.productId, tag: clone(tables.tags.find((tag) => tag.id === link.tagId)) }))
+                .filter(({ tag }) => tag && !tag.isDeleted),
+            deleteMany: async ({ where }) => {
+                tables.productTags = tables.productTags.filter((link) => link.productId !== where.productId);
+            },
+            createMany: async ({ data }) => { tables.productTags.push(...clone(data)); }
+        },
         product: {
             findMany: async ({ where = {}, orderBy, include } = {}) => {
                 const rows = tables.products.filter((row) => matches(row, where));
                 if (orderBy?.id === "asc") rows.sort((a, b) => a.id - b.id);
                 return rows.map((row) => hydrateProduct(row, include));
             },
+            findFirst: async ({ where }) => clone(tables.products.find((row) => matches(row, where))) || null,
             findUnique: async ({ where, include }) =>
                 hydrateProduct(tables.products.find((row) => matches(row, where)), include),
             create: async ({ data }) => {

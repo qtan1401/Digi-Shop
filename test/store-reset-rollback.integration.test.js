@@ -5,8 +5,8 @@ const { verifyResetRollback } = require("../prisma/seed");
 
 const clearedTables = [
     "order_vouchers", "order_status_history", "vouchers", "product_reviews", "payment_attempts", "order_items", "orders", "cart_items", "carts", "cart_merge_operations",
-    "oauth_identities", "refresh_sessions", "email_verification_tokens", "user_addresses", "product_images", "product_variant_option_values",
-    "product_variants", "product_option_values", "product_options", "products", "users", "audit_logs"
+    "oauth_identities", "refresh_sessions", "email_verification_tokens", "user_addresses", "product_images", "product_tags", "product_variant_option_values",
+    "product_variants", "product_option_values", "product_options", "products", "tags", "categories", "users", "audit_logs"
 ];
 const initialTables = Object.fromEntries(clearedTables.map((table) => [table, [{ marker: `${table}-legacy-a` }, { marker: `${table}-legacy-b` }]]));
 let poolInstance;

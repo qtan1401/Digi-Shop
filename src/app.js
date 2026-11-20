@@ -16,6 +16,7 @@ const addressRoutes = require("./routes/address.routes");
 const profileRoutes = require("./routes/profile.routes");
 const guestRoutes = require("./routes/guest.routes");
 const landingRoutes = require("./routes/landing.routes");
+const { sendNotFound, handleError } = require("./middlewares/not-found");
 const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/auth");
 
 const app = express();
@@ -53,5 +54,8 @@ app.use("/api/payments", paymentRoutes); // Provider callbacks and customer paym
 app.get("/", (req, res) => {
     res.json({ message: "Welcome to Digi-Shop API" });
 });
+
+app.use(sendNotFound);
+app.use(handleError);
 
 module.exports = app;

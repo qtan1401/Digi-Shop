@@ -1,18 +1,32 @@
 // Fake Prisma for the admin integration tests (users, order list, dashboard aggregates).
-// `$queryRawUnsafe` does not parse SQL: it recognises the three dashboard statements by their text and computes the
-// same aggregates in JavaScript from the in-memory rows (its own bucketing, independent of src/services/admin-period).
+// `$queryRawUnsafe` does not parse SQL: it recognises the dashboard statements (top products, new users, orders, order
+// items) by their text and computes the same aggregates in JavaScript from the in-memory rows (its own bucketing,
+// independent of src/services/admin-period).
 // These tests prove the wiring, the period boundaries and the profit arithmetic, not the PostgreSQL SQL itself.
 
 const OFFSET_MS = 7 * 3600e3;
 
 const ci = (value) => (typeof value === "string" ? value.toLowerCase() : value);
 
+// Like PostgreSQL's LIKE '%value%' with the default backslash escape: unescaped % and _ are wildcards.
+const likeContains = (actual, pattern) => {
+    let source = "";
+    for (let i = 0; i < pattern.length; i++) {
+        const char = pattern[i];
+        if (char === "\\" && i + 1 < pattern.length) source += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        else if (char === "%") source += "[\\s\\S]*";
+        else if (char === "_") source += "[\\s\\S]";
+        else source += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+    return new RegExp(source, "i").test(actual);
+};
+
 const matchField = (actual, condition) => {
     if (condition === null || typeof condition !== "object" || condition instanceof Date) {
         return actual instanceof Date && condition instanceof Date ? actual.getTime() === condition.getTime() : ci(actual) === ci(condition);
     }
     for (const [op, value] of Object.entries(condition)) {
-        if (op === "contains") { if (typeof actual !== "string" || !ci(actual).includes(ci(value))) return false; }
+        if (op === "contains") { if (typeof actual !== "string" || !likeContains(actual, value)) return false; }
         else if (op === "equals") { if (condition.mode === "insensitive" ? ci(actual) !== ci(value) : actual !== value) return false; }
         else if (op === "mode" && value === "insensitive") continue;
         else if (op === "not") { if (matchField(actual, value)) return false; }
@@ -155,6 +169,16 @@ const createAdminFake = (state) => {
             const granularity = granularityOf(sql);
             const [from, to] = params;
             const inRange = (order) => order.createdAt >= from && order.createdAt < to;
+            if (sql.includes("FROM users u")) {
+                const groups = new Map();
+                for (const user of state.users.filter((row) => row.role === "user" && row.createdAt >= from && row.createdAt < to)) {
+                    const bucket = bucketOf(granularity, user.createdAt);
+                    const row = groups.get(bucket.toISOString()) || { bucket, newUsers: 0 };
+                    row.newUsers += 1;
+                    groups.set(bucket.toISOString(), row);
+                }
+                return [...groups.values()];
+            }
             if (sql.includes("COUNT(*) AS orders")) {
                 const groups = new Map();
                 for (const order of state.orders.filter((row) => row.orderStatus !== "CANCELLED" && inRange(row))) {

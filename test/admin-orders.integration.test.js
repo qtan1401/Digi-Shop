@@ -93,6 +93,13 @@ test("search matches order id, customer name and phone", async () => {
     assert.deepEqual((await list("?q=O002")).body.data.map((o) => o.id), ["O002"]);
 });
 
+test("search treats % and _ as literal characters, not wildcards", async () => {
+    addOrder({ customerName: "Sale 50% off", customerPhone: "0911111111" }); addOrder({ customerName: "Le C", customerPhone: "0922222222" });
+    assert.deepEqual((await list("?q=" + encodeURIComponent("%"))).body.data.map((o) => o.id), ["O001"]);
+    assert.deepEqual((await list("?q=" + encodeURIComponent("_"))).body.data.map((o) => o.id), []);
+    assert.deepEqual((await list("?q=" + encodeURIComponent("L_ C"))).body.data.map((o) => o.id), []);
+});
+
 test("range today and yesterday use shop days (UTC+7), custom is inclusive", async () => {
     const now = new Date();
     addOrder({ createdAt: now });

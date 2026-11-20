@@ -18,9 +18,12 @@ const REQUIRED_TABLES = [
     "carts",
     "cart_items",
     "cart_merge_operations",
-    "payment_attempts"
+    "payment_attempts",
+    "categories",
+    "tags",
+    "product_tags"
 ];
-const REQUIRED_MIGRATION = "20261120000000_postgresql_baseline";
+const REQUIRED_MIGRATION = "20261121001000_category_device_type_length";
 
 class DatabaseSchemaError extends Error {
     constructor() {
@@ -67,7 +70,8 @@ async function verifyDatabaseSchema(client) {
               'product_variants', 'product_variant_option_values', 'orders', 'order_items',
               'audit_logs', 'users', 'oauth_identities', 'refresh_sessions',
               'email_verification_tokens', 'carts', 'cart_items',
-              'cart_merge_operations', 'payment_attempts'
+              'cart_merge_operations', 'payment_attempts', 'categories',
+              'tags', 'product_tags'
           );
     `);
     const existingTables = new Set(rows.map(({ tableName }) => tableName));

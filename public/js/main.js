@@ -1,9 +1,25 @@
 // ===== MAIN.JS =====
 // Product cards link to detail; customers must select a purchasable variant there.
 const MIN_SEARCH_LENGTH = 2;
-const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", minRating: "", categories: new Set(), tags: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
+const catalogState = { canPurchase: true, sortBy: "default", sortDirection: "asc", search: "", minPrice: "", maxPrice: "", minRating: "", categories: new Set(), tags: new Set(), brands: new Set(), page: 1, totalPages: 1, total: 0, catalogTotal: 0, controller: null, searchTimer: null };
 const normalizeCatalogText = (value) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("vi-VN").replace(/đ/g, "d");
-const { DEVICE_TYPES: categoryValues, BRANDS: tagValues, brandFromSlug } = window.CatalogTaxonomy;
+const { DEVICE_TYPE_LABELS, BRANDS, brandFromSlug } = window.CatalogTaxonomy;
+let categoryValues = Object.keys(DEVICE_TYPE_LABELS);
+let categoryLabels = DEVICE_TYPE_LABELS;
+let tagValues = [];
+let brandValues = BRANDS;
+const loadTaxonomy = async () => {
+    try {
+        const response = await fetch("/api/catalog/taxonomy");
+        if (!response.ok) throw new Error("Taxonomy unavailable");
+        const taxonomy = await response.json();
+        categoryValues = taxonomy.categories.map(({ slug }) => slug);
+        categoryLabels = Object.fromEntries(taxonomy.categories.map(({ slug, name }) => [slug, name]));
+        tagValues = taxonomy.tags;
+        brandValues = taxonomy.brands;
+        renderer().setCategoryLabels(categoryLabels);
+    } catch (_) { /* Legacy category labels keep catalog filters usable while the API is unavailable. */ }
+};
 // Chip khoảng giá: [nhãn, minPrice, maxPrice]
 // Chip đánh giá: [nhãn, minRating]
 const ratingRanges = [["Mọi đánh giá", ""], ["Từ 4 sao", "4"], ["Từ 3 sao", "3"]];
@@ -13,27 +29,30 @@ const getPriceFilterError = () => {
     if ([min, max].some((value) => value !== null && (!Number.isFinite(value) || value < 0))) return "Hãy nhập mức giá hợp lệ, không nhỏ hơn 0₫.";
     return min !== null && max !== null && min > max ? "Giá tối thiểu không được lớn hơn giá tối đa." : "";
 };
+const searchQuery = () => catalogState.search.trim().replace(/\s+/g, " ");
 const renderer = () => window.CatalogRenderer;
 const el = (id) => document.getElementById(id);
-const hasActiveFilter = () => catalogState.search !== "" || catalogState.minPrice !== "" || catalogState.maxPrice !== "" || catalogState.minRating !== "" || catalogState.categories.size > 0 || catalogState.tags.size > 0;
+const hasActiveFilter = () => catalogState.search !== "" || catalogState.minPrice !== "" || catalogState.maxPrice !== "" || catalogState.minRating !== "" || catalogState.categories.size > 0 || catalogState.tags.size > 0 || catalogState.brands.size > 0;
 
 // ----- Bộ lọc: một mẫu, vẽ hai bản (cột từ 1024px, panel trượt dưới 1024px) -----
 const filterBodyHtml = (kind) => {
-    const { icon, deviceTypeLabels } = renderer();
-    const radio = (label, value) => `<label class="filter-option"><input type="radio" name="loai-${kind}" value="${value}" data-filter-category>${label}</label>`;
-    const brand = (value) => `<label class="filter-option"><span class="filter-check"><input type="checkbox" name="hang-${kind}" value="${value}" data-filter-brand>${icon("check")}</span>${value}</label>`;
+    const { icon, escapeHtml } = renderer();
+    const radio = (label, value) => `<label class="filter-option"><input type="radio" name="loai-${kind}" value="${escapeHtml(value)}" data-filter-category>${escapeHtml(label)}</label>`;
+    const brand = (value) => `<label class="filter-option"><span class="filter-check"><input type="checkbox" name="hang-${kind}" value="${escapeHtml(value)}" data-filter-brand>${icon("check")}</span>${escapeHtml(value)}</label>`;
+    const tag = ({ slug, name }) => `<label class="filter-option"><span class="filter-check"><input type="checkbox" name="the-${kind}" value="${escapeHtml(slug)}" data-filter-tag>${icon("check")}</span>${escapeHtml(name)}</label>`;
     const chips = priceRanges.map(([label], index) => `<button type="button" role="radio" aria-checked="false" data-price-chip="${index}" class="chip ${kind === "col" ? "chip--sm" : "chip--md"}${kind === "col" && index === 0 ? " chip--wide" : ""}">${label}</button>`).join("");
     const ratingChips = ratingRanges.map(([label], index) => `<button type="button" role="radio" aria-checked="false" data-rating-chip="${index}" class="chip ${kind === "col" ? "chip--sm" : "chip--md"}${kind === "col" && index === 0 ? " chip--wide" : ""}">${label}</button>`).join("");
     const priceField = (label, key) => `<label class="price-field">${label}${kind === "col" ? " (đ)" : ""}<span class="price-field__box"><input type="text" inputmode="numeric" autocomplete="off" class="ui-input tabular${kind === "col" ? " ui-input--compact" : ""}" data-filter-price="${key}">${kind === "col" ? "" : '<span class="price-field__unit">đ</span>'}</span></label>`;
     return `<div class="filter-search"><div class="search"><svg class="icon search__icon" aria-hidden="true"><use href="#i-search"/></svg><input type="search" maxlength="120" autocomplete="off" aria-label="Tìm theo tên" placeholder="Tìm theo tên" class="ui-input search__input" data-filter-search><button type="button" class="search__clear" aria-label="Xoá từ khoá" data-filter-search-clear hidden>${icon("x")}</button></div><p class="filter-hint" data-filter-search-hint aria-live="polite"></p></div>`
-        + `<fieldset><legend>Loại</legend>${radio("Tất cả", "")}${categoryValues.map((value) => radio(deviceTypeLabels[value], value)).join("")}</fieldset>`
-        + `<fieldset><legend>Hãng</legend>${tagValues.map(brand).join("")}</fieldset>`
+        + `<fieldset><legend>Loại</legend>${radio("Tất cả", "")}${categoryValues.map((value) => radio(categoryLabels[value], value)).join("")}</fieldset>`
+        + `<fieldset><legend>Hãng</legend>${brandValues.map(brand).join("")}</fieldset>`
+        + `<fieldset><legend>Thẻ</legend>${tagValues.map(tag).join("")}</fieldset>`
         + `<fieldset><legend class="legend--chips">Đánh giá</legend><div role="radiogroup" aria-label="Đánh giá tối thiểu" class="chips chips--${kind}">${ratingChips}</div></fieldset>`
         + `<fieldset><legend class="legend--chips">Khoảng giá</legend><div role="radiogroup" aria-label="Khoảng giá có sẵn" class="chips chips--${kind}">${chips}</div><div class="price-fields">${priceField("Từ", "min")}${priceField("Đến", "max")}</div><p class="filter-error" role="alert" data-filter-price-error></p></fieldset>`;
 };
 const renderFilterControls = () => document.querySelectorAll("[data-filter-host]").forEach((host) => { host.innerHTML = filterBodyHtml(host.dataset.filterHost); });
 const syncCatalogControls = () => {
-    const active = document.activeElement, count = Array.from(catalogState.search.trim()).length, priceError = getPriceFilterError();
+    const active = document.activeElement, count = Array.from(searchQuery()).length, priceError = getPriceFilterError();
     document.querySelectorAll("[data-filter-search]").forEach((input) => { if (input !== active && input.value !== catalogState.search) input.value = catalogState.search; });
     document.querySelectorAll("[data-filter-search-clear]").forEach((button) => { button.hidden = catalogState.search === ""; });
     document.querySelectorAll("[data-filter-search-hint]").forEach((hint) => { hint.textContent = count > 0 && count < MIN_SEARCH_LENGTH ? `Nhập thêm ${MIN_SEARCH_LENGTH - count} ký tự để bắt đầu tìm kiếm.` : ""; });
@@ -46,9 +65,22 @@ const syncCatalogControls = () => {
     document.querySelectorAll("[data-price-chip]").forEach((chip) => { const [, min, max] = priceRanges[Number(chip.dataset.priceChip)]; chip.setAttribute("aria-checked", String(catalogState.minPrice === min && catalogState.maxPrice === max)); });
     document.querySelectorAll("[data-rating-chip]").forEach((chip) => chip.setAttribute("aria-checked", String(catalogState.minRating === ratingRanges[Number(chip.dataset.ratingChip)][1])));
     document.querySelectorAll("[data-filter-category]").forEach((input) => { input.checked = input.value === "" ? catalogState.categories.size === 0 : catalogState.categories.size === 1 && catalogState.categories.has(input.value); });
-    document.querySelectorAll("[data-filter-brand]").forEach((input) => { input.checked = catalogState.tags.has(input.value); });
+    document.querySelectorAll("[data-filter-brand]").forEach((input) => { input.checked = catalogState.brands.has(input.value); });
+    document.querySelectorAll("[data-filter-tag]").forEach((input) => { input.checked = catalogState.tags.has(input.value); });
     document.querySelectorAll("[data-filter-clear]").forEach((button) => { button.disabled = !hasActiveFilter(); });
     updateSortButtons();
+    syncCatalogHeading();
+};
+const baseCatalogHead = { title: document.title, description: document.querySelector('meta[name="description"]')?.content };
+const syncCatalogHeading = () => {
+    const categories = [...catalogState.categories], tags = [...catalogState.tags], brands = [...catalogState.brands];
+    const total = categories.length + tags.length + brands.length;
+    const label = total !== 1 ? "" : categories.length ? categoryLabels[categories[0]] : brands.length ? brands[0] : tagValues.find(({ slug }) => slug === tags[0])?.name;
+    const heading = document.querySelector("h1");
+    if (heading) heading.textContent = label || "Thiết bị công nghệ";
+    document.title = label ? `${label} — Sản phẩm công nghệ | NodeShop` : baseCatalogHead.title;
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta && baseCatalogHead.description) meta.content = label ? `Khám phá các sản phẩm ${label} tại NodeShop.` : baseCatalogHead.description;
 };
 
 // ----- Sắp xếp -----
@@ -64,11 +96,17 @@ const updateSortButtons = () => {
     if (label) label.textContent = catalogState.sortBy === "default" ? "Mặc định" : sortLabel(catalogState.sortBy, catalogState.sortDirection === "desc");
 };
 const parseLocationState = () => {
-    const url = new URL(window.location.href), categoryPath = url.pathname.match(/^\/danh-muc\/([a-z]+)\/?$/i), tagPath = url.pathname.match(/^\/the\/([a-z]+)\/?$/i);
+    const url = new URL(window.location.href), categoryPath = url.pathname.match(/^\/danh-muc\/([a-z0-9-]+)\/?$/i), tagPath = url.pathname.match(/^\/the\/([a-z0-9-]+)\/?$/i), brandPath = url.pathname.match(/^\/hang\/([a-z0-9-]+)\/?$/i);
     catalogState.categories = new Set(url.searchParams.getAll("category").filter((value) => categoryValues.includes(value)));
-    catalogState.tags = new Set(url.searchParams.getAll("tag").filter((value) => tagValues.includes(value)));
+    catalogState.tags = new Set(url.searchParams.getAll("tag").filter((value) => tagValues.some(({ slug }) => slug === value)));
+    catalogState.brands = new Set(url.searchParams.getAll("brand").filter((value) => brandValues.includes(value)));
+    for (const legacy of url.searchParams.getAll("tag")) {
+        const brand = brandFromSlug(legacy);
+        if (brand) catalogState.brands.add(brand);
+    }
     if (categoryPath && categoryValues.includes(categoryPath[1].toLowerCase())) catalogState.categories.add(categoryPath[1].toLowerCase());
-    if (tagPath && brandFromSlug(tagPath[1])) catalogState.tags.add(brandFromSlug(tagPath[1]));
+    if (tagPath && tagValues.some(({ slug }) => slug === tagPath[1].toLowerCase())) catalogState.tags.add(tagPath[1].toLowerCase());
+    if (brandPath && brandFromSlug(brandPath[1])) catalogState.brands.add(brandFromSlug(brandPath[1]));
     catalogState.page = Math.max(1, Number.parseInt(url.searchParams.get("page"), 10) || 1);
     catalogState.search = url.searchParams.get("q") || "";
     catalogState.minPrice = url.searchParams.get("minPrice") || ""; catalogState.maxPrice = url.searchParams.get("maxPrice") || "";
@@ -79,18 +117,21 @@ const parseLocationState = () => {
 };
 const buildCatalogUrl = (page = catalogState.page) => {
     const url = new URL(window.location.href), params = url.searchParams;
-    ["page", "q", "sort", "order", "minPrice", "maxPrice", "minRating", "category", "tag"].forEach((key) => params.delete(key));
-    const categories = [...catalogState.categories], tags = [...catalogState.tags];
-    const categoryPath = categories.length === 1 && tags.length <= 1, tagPath = categories.length === 0 && tags.length === 1;
-    url.pathname = categoryPath ? `/danh-muc/${categories[0]}` : tagPath ? `/the/${tags[0].toLowerCase()}` : "/catalog.html";
+    ["page", "q", "sort", "order", "minPrice", "maxPrice", "minRating", "category", "tag", "brand"].forEach((key) => params.delete(key));
+    const categories = [...catalogState.categories], tags = [...catalogState.tags], brands = [...catalogState.brands];
+    const categoryPath = categories.length === 1 && tags.length === 0 && brands.length === 0;
+    const tagPath = categories.length === 0 && tags.length === 1 && brands.length === 0;
+    const brandPath = categories.length === 0 && tags.length === 0 && brands.length === 1;
+    url.pathname = categoryPath ? `/danh-muc/${categories[0]}` : tagPath ? `/the/${tags[0]}` : brandPath ? `/hang/${brands[0].toLowerCase()}` : "/catalog.html";
     if (page > 1) params.set("page", String(page));
-    if (Array.from(catalogState.search.trim()).length >= MIN_SEARCH_LENGTH) params.set("q", catalogState.search.trim());
+    if (Array.from(searchQuery()).length >= MIN_SEARCH_LENGTH) params.set("q", searchQuery());
     if (catalogState.sortBy !== "default") { params.set("sort", catalogState.sortBy); params.set("order", catalogState.sortDirection); }
     if (catalogState.minPrice !== "") params.set("minPrice", catalogState.minPrice);
     if (catalogState.maxPrice !== "") params.set("maxPrice", catalogState.maxPrice);
     if (catalogState.minRating !== "") params.set("minRating", catalogState.minRating);
     if (!categoryPath) categories.forEach((value) => params.append("category", value));
     if (!tagPath) tags.forEach((value) => params.append("tag", value));
+    if (!brandPath) brands.forEach((value) => params.append("brand", value));
     return url.pathname + url.search;
 };
 const syncUrl = (replace = false) => window.history[replace ? "replaceState" : "pushState"]({}, "", buildCatalogUrl());
@@ -106,7 +147,7 @@ const renderLoading = () => {
     el("catalog-pagination").innerHTML = ""; el("catalog-status").textContent = "Đang tải danh sách sản phẩm";
 };
 const renderEmpty = (error) => {
-    const { escapeHtml } = renderer(), query = catalogState.search.trim();
+    const { escapeHtml } = renderer(), query = searchQuery();
     el("catalog-count").textContent = "0 sản phẩm"; el("catalog-status").textContent = ""; setApplyLabel();
     if (error) return setGridMessage(`<p class="catalog-empty">Vui lòng kiểm tra khoảng giá.</p>`);
     if (!catalogState.catalogTotal && !hasActiveFilter()) return setGridMessage('<p class="catalog-empty">Chưa có sản phẩm nào.</p>');
@@ -134,8 +175,8 @@ const loadProducts = async () => {
     const controller = new AbortController(); catalogState.controller = controller; const sequence = ++requestSequence;
     const url = new URL("/api/products", window.location.origin), params = url.searchParams;
     params.set("page", String(catalogState.page)); params.set("pageSize", "12");
-    if (catalogState.search.trim()) params.set("q", catalogState.search.trim());
-    catalogState.categories.forEach((value) => params.append("category", value)); catalogState.tags.forEach((value) => params.append("tag", value));
+    if (searchQuery()) params.set("q", searchQuery());
+    catalogState.categories.forEach((value) => params.append("category", value)); catalogState.tags.forEach((value) => params.append("tag", value)); catalogState.brands.forEach((value) => params.append("brand", value));
     if (catalogState.minPrice !== "") params.set("minPrice", catalogState.minPrice); if (catalogState.maxPrice !== "") params.set("maxPrice", catalogState.maxPrice);
     if (catalogState.minRating !== "") params.set("minRating", catalogState.minRating);
     if (catalogState.sortBy !== "default") params.set("sort", catalogState.sortBy);
@@ -149,7 +190,7 @@ const loadProducts = async () => {
     } catch (error) { if (error.name === "AbortError" || sequence !== requestSequence) return; renderError(error instanceof TypeError); }
 };
 const changeCatalog = (delay = 0) => { catalogState.page = 1; if (catalogState.controller) catalogState.controller.abort(); syncUrl(); window.clearTimeout(catalogState.searchTimer); catalogState.searchTimer = window.setTimeout(loadProducts, delay); };
-const clearAllFilters = () => { catalogState.search = ""; catalogState.minPrice = ""; catalogState.maxPrice = ""; catalogState.minRating = ""; catalogState.categories = new Set(); catalogState.tags = new Set(); syncCatalogControls(); changeCatalog(); };
+const clearAllFilters = () => { catalogState.search = ""; catalogState.minPrice = ""; catalogState.maxPrice = ""; catalogState.minRating = ""; catalogState.categories = new Set(); catalogState.tags = new Set(); catalogState.brands = new Set(); syncCatalogControls(); changeCatalog(); };
 
 // ----- Lớp nổi: dropdown sắp xếp, panel lọc -----
 const setupSortMenu = () => {
@@ -194,7 +235,7 @@ const bindCatalogControls = () => {
     document.addEventListener("input", (event) => {
         const target = event.target;
         if (target.matches("[data-filter-search]")) {
-            catalogState.search = target.value; const count = Array.from(catalogState.search.trim()).length; syncCatalogControls(); changeCatalog(count >= MIN_SEARCH_LENGTH ? 250 : 0);
+            catalogState.search = target.value; const count = Array.from(searchQuery()).length; syncCatalogControls(); changeCatalog(count >= MIN_SEARCH_LENGTH ? 250 : 0);
         } else if (target.matches("[data-filter-price]")) {
             const value = target.value.trim();
             if (target.dataset.filterPrice === "min") catalogState.minPrice = value; else catalogState.maxPrice = value;
@@ -204,7 +245,8 @@ const bindCatalogControls = () => {
     document.addEventListener("change", (event) => {
         const target = event.target;
         if (target.matches("[data-filter-category]")) { catalogState.categories = target.value ? new Set([target.value]) : new Set(); }
-        else if (target.matches("[data-filter-brand]")) { target.checked ? catalogState.tags.add(target.value) : catalogState.tags.delete(target.value); }
+        else if (target.matches("[data-filter-brand]")) { target.checked ? catalogState.brands.add(target.value) : catalogState.brands.delete(target.value); }
+        else if (target.matches("[data-filter-tag]")) { target.checked ? catalogState.tags.add(target.value) : catalogState.tags.delete(target.value); }
         else return;
         syncCatalogControls(); changeCatalog();
     });
@@ -222,7 +264,7 @@ const bindCatalogControls = () => {
     setupSortMenu(); setupFilterPanel();
 };
 document.addEventListener("DOMContentLoaded", async () => {
-    renderFilterControls(); bindCatalogControls(); parseLocationState();
+    await loadTaxonomy(); renderFilterControls(); bindCatalogControls(); parseLocationState();
     try { const authState = await (window.DigiAuth?.ready || Promise.resolve({ authenticated: false })); catalogState.canPurchase = authState.user?.role !== "admin"; } catch (_) { catalogState.canPurchase = true; }
     window.addEventListener("popstate", () => { if (catalogState.controller) catalogState.controller.abort(); parseLocationState(); loadProducts(); });
     loadProducts();

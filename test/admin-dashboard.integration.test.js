@@ -104,7 +104,7 @@ test("series by month for 2026: cancelled and unpaid orders never reach revenue 
     assert.deepEqual([mar.orders, mar.revenue, mar.profit, mar.itemsSold], [2, 940, 140, 1], "A paid + D pending; C cancelled ignored");
     assert.deepEqual(mar.deviceTypes, { laptop: 1 });
     assert.deepEqual([apr.orders, apr.revenue, apr.profit, apr.itemsSold], [1, 300, 60, 3], "B is 1 April in Vietnam time");
-    assert.deepEqual(data.totals, { orders: 4, revenue: 1340, profit: 220, itemsSold: 5 });
+    assert.deepEqual(data.totals, { orders: 4, revenue: 1340, profit: 220, itemsSold: 5, newUsers: 3 });
     assert.deepEqual(data.deviceTypes, [
         { deviceType: "mouse", quantity: 4, revenue: 400 },
         { deviceType: "laptop", quantity: 1, revenue: 1000 }
@@ -132,11 +132,71 @@ test("series by week starts on Monday: a custom week range around 1 April", asyn
 
 test("a range with no orders is all zeros, and an unbounded query defaults to the current year by month", async () => {
     const empty = await get("/api/admin/dashboard/series?granularity=month&from=2024-01-01&to=2024-03-31");
-    assert.deepEqual(empty.body.data.totals, { orders: 0, revenue: 0, profit: 0, itemsSold: 0 });
+    assert.deepEqual(empty.body.data.totals, { orders: 0, revenue: 0, profit: 0, itemsSold: 0, newUsers: 0 });
     assert.equal(empty.body.data.buckets.length, 3);
     const defaults = await get("/api/admin/dashboard/series");
     assert.equal(defaults.body.data.granularity, "month");
     assert.equal(defaults.body.data.buckets.length, 12);
+});
+
+test("series: a week that crosses the year boundary is one bucket keyed by its Monday", async () => {
+    const { body } = await get("/api/admin/dashboard/series?granularity=week&from=2025-12-29&to=2026-01-04");
+    assert.equal(body.data.buckets.length, 1);
+    const [week] = body.data.buckets;
+    assert.deepEqual([week.key, week.label, week.orders, week.revenue, week.profit, week.itemsSold], ["2025-12-29", "29/12", 2, 1100, 220, 2], "F (31 Dec 23:59) and E (1 Jan 00:00) share the week");
+    assert.deepEqual(week.deviceTypes, { laptop: 1, mouse: 1 });
+});
+
+test("series: new users are customers only, bucketed in shop time, and counted in the totals", async () => {
+    state.users.push({ id: "c4", role: "user", status: "ACTIVE", authVersion: 1, createdAt: new Date("2025-12-31T17:00:00Z") }); // 1 Jan 00:00 Vietnam
+    state.users.push({ id: "c5", role: "user", status: "ACTIVE", authVersion: 1, createdAt: new Date("2025-12-31T16:59:59Z") }); // 31 Dec 23:59 Vietnam
+    state.users.push({ id: "a2", role: "admin", status: "ACTIVE", authVersion: 1, createdAt: new Date("2026-02-10T03:00:00Z") });
+    const { body } = await get("/api/admin/dashboard/series?granularity=month&from=2026-01-01&to=2026-12-31");
+    assert.deepEqual(body.data.buckets.map((b) => b.newUsers), [1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0], "administrators are not new users; c5 belongs to 2025");
+    assert.equal(body.data.totals.newUsers, 4);
+    assert.equal(body.data.previous.totals.newUsers, 1, "c5 is in 2025");
+    const years = await get("/api/admin/dashboard/series?granularity=year&from=2025-01-01&to=2026-12-31");
+    assert.deepEqual(years.body.data.buckets.map((b) => [b.key, b.newUsers]), [["2025-01-01", 1], ["2026-01-01", 4]]);
+});
+
+test("series: every bucket has all fields, and the query is grouped in SQL (no order is loaded)", async () => {
+    const rawBefore = state.calls.filter((call) => call === "$queryRawUnsafe").length;
+    const { body } = await get("/api/admin/dashboard/series?granularity=month&from=2026-01-01&to=2026-12-31");
+    for (const bucket of body.data.buckets) {
+        assert.deepEqual(Object.keys(bucket).sort(), ["deviceTypes", "itemsSold", "key", "label", "newUsers", "orders", "profit", "revenue"]);
+    }
+    assert.equal(state.calls.filter((call) => call === "$queryRawUnsafe").length - rawBefore, 6, "orders, items and users for the range and for the previous range");
+    assert.ok(!state.calls.includes("order.findMany"));
+});
+
+test("series: a whole year is compared with the previous year", async () => {
+    const { body } = await get("/api/admin/dashboard/series?granularity=month&from=2026-01-01&to=2026-12-31");
+    assert.deepEqual(body.data.previous, {
+        from: "2025-01-01",
+        to: "2025-12-31",
+        totals: { orders: 1, revenue: 1000, profit: 200, itemsSold: 1, newUsers: 0 },
+        change: { orders: 300, revenue: 34, profit: 10, itemsSold: 400, newUsers: null }
+    });
+});
+
+test("series: a quarter is compared with the previous quarter across the year boundary", async () => {
+    const { body } = await get("/api/admin/dashboard/series?granularity=quarter&from=2026-04-01&to=2026-06-30");
+    assert.deepEqual(body.data.totals, { orders: 1, revenue: 300, profit: 60, itemsSold: 3, newUsers: 3 });
+    assert.deepEqual([body.data.previous.from, body.data.previous.to], ["2026-01-01", "2026-03-31"]);
+    assert.deepEqual(body.data.previous.totals, { orders: 3, revenue: 1040, profit: 160, itemsSold: 2, newUsers: 0 });
+    assert.deepEqual(body.data.previous.change, { orders: -66.7, revenue: -71.2, profit: -62.5, itemsSold: 50, newUsers: null });
+    const q1 = await get("/api/admin/dashboard/series?granularity=month&from=2026-01-01&to=2026-03-31");
+    assert.deepEqual([q1.body.data.previous.from, q1.body.data.previous.to], ["2025-10-01", "2025-12-31"], "Q1 follows Q4 of the previous year");
+});
+
+test("series: a custom range is compared with the equal-length range ending the day before it", async () => {
+    const { body } = await get("/api/admin/dashboard/series?granularity=week&from=2026-03-16&to=2026-03-16");
+    assert.deepEqual([body.data.previous.from, body.data.previous.to], ["2026-03-15", "2026-03-15"]);
+    assert.deepEqual(body.data.totals, { orders: 1, revenue: 0, profit: 0, itemsSold: 0, newUsers: 0 });
+    assert.deepEqual(body.data.previous.totals, { orders: 1, revenue: 940, profit: 140, itemsSold: 1, newUsers: 0 });
+    assert.deepEqual(body.data.previous.change, { orders: 0, revenue: -100, profit: -100, itemsSold: -100, newUsers: null });
+    const longer = await get("/api/admin/dashboard/series?granularity=week&from=2026-03-10&to=2026-03-22");
+    assert.deepEqual([longer.body.data.previous.from, longer.body.data.previous.to], ["2026-02-25", "2026-03-09"], "13 days");
 });
 
 test("invalid granularity or dates, or too many buckets, are 400", async () => {

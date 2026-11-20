@@ -51,7 +51,7 @@ const validateCartItems = async (items) => {
             variantLabel: variantLabel(variant.optionValues),
             sku: variant.sku,
             optionValues: variant.optionValues,
-            image: product.image,
+            image: variant.image || product.image,
             description: product.description,
             price: variant.price,
             stock: variant.stock

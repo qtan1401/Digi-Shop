@@ -5,6 +5,7 @@ const argon2 = require("argon2");
 const pg = require("pg");
 const seedData = require("./seed-data");
 const { readDatabaseConfig } = require("../src/db/config");
+const { DEVICE_TYPE_LABELS } = require("../public/js/catalog-taxonomy");
 
 const DEFAULT_ADMIN_USERNAME = seedData.administrator.username;
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD;
@@ -73,11 +74,14 @@ const CLEAR_TABLES = [
     ["email_verification_tokens", "EmailVerificationToken"],
     ["user_addresses", "UserAddress"],
     ["product_images", "ProductImage"],
+    ["product_tags", "ProductTag"],
     ["product_variant_option_values", "ProductVariantOptionValue"],
     ["product_variants", "ProductVariant"],
     ["product_option_values", "ProductOptionValue"],
     ["product_options", "ProductOption"],
     ["products", "Product"],
+    ["tags", "Tag"],
+    ["categories", "Category"],
     ["users", "User"],
     ["audit_logs", "AuditLog"]
 ];
@@ -562,12 +566,76 @@ function classifyAudits(seedRecords, existingRecords, conflicts, summary) {
 }
 
 
+// The six live categories (slug and name from the taxonomy) plus the hidden phone/tablet rows that the soft-deleted legacy
+// products point at. A live category is inserted only when no live row has that slug, a hidden one only when no row has it,
+// so admin edits and the migration's rows are kept.
+const HIDDEN_CATEGORIES = [["phone", "Điện thoại"], ["tablet", "Máy tính bảng"]];
+const SEED_TAGS = [
+    ["gaming", "Gaming"],
+    ["khong-day", "Không dây"],
+    ["van-phong", "Văn phòng"],
+    ["co-hoc", "Cơ học"],
+    ["rgb", "RGB"],
+    ["di-dong", "Di động"],
+    ["sang-tao-noi-dung", "Sáng tạo nội dung"]
+];
+
+async function ensureCategories(transaction) {
+    const categories = [
+        ...Object.entries(DEVICE_TYPE_LABELS).map(([slug, name]) => [slug, name, false]),
+        ...HIDDEN_CATEGORIES.map(([slug, name]) => [slug, name, true])
+    ];
+    for (const [index, [slug, name, isDeleted]] of categories.entries()) {
+        await transaction.query(`
+            INSERT INTO categories (slug, name, sort_order, is_deleted, deleted_at)
+            SELECT $1::varchar, $2::varchar, $3::int, $4::boolean, CASE WHEN $4::boolean THEN now() END
+            WHERE NOT EXISTS (SELECT 1 FROM categories WHERE slug = $1::varchar AND (is_deleted = false OR $4::boolean));
+        `, [slug, name, index + 1, isDeleted]);
+    }
+}
+
+async function ensureTags(transaction) {
+    const ids = new Map();
+    for (const [slug, name] of SEED_TAGS) {
+        const result = await transaction.query(`
+            INSERT INTO tags (slug, name)
+            SELECT $1::varchar(40), $2::varchar(60)
+            WHERE NOT EXISTS (SELECT 1 FROM tags WHERE slug = $1::varchar(40) AND is_deleted = false)
+            RETURNING id;
+        `, [slug, name]);
+        const id = result.rows[0]?.id ?? (await transaction.query(
+            "SELECT id FROM tags WHERE slug = $1 AND is_deleted = false",
+            [slug]
+        )).rows[0]?.id;
+        if (!id) throw new Error(`Seed tag ${slug} could not be resolved`);
+        ids.set(slug, id);
+    }
+    return ids;
+}
+
+async function insertProductTags(transaction, products, tagIds) {
+    for (const product of products) {
+        if (!Array.isArray(product.tags) || product.tags.length === 0) {
+            throw new Error(`Seed product ${product.id} must have at least one tag`);
+        }
+        for (const slug of new Set(product.tags)) {
+            const tagId = tagIds.get(slug);
+            if (!tagId) throw new Error(`Unknown seed tag ${slug} on product ${product.id}`);
+            await transaction.query(`
+                INSERT INTO product_tags (product_id, tag_id) VALUES ($1, $2)
+                ON CONFLICT (product_id, tag_id) DO NOTHING;
+            `, [product.id, tagId]);
+        }
+    }
+}
+
 async function insertProducts(transaction, records) {
     for (const record of records) {
         await transaction.query(`
             INSERT INTO products
-                (id, brand, device_type, name, slug, image, description, is_deleted, deleted_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+                (id, brand, device_type, category_id, name, slug, image, description, is_deleted, deleted_at, created_at, updated_at)
+            VALUES ($1, $2, $3::varchar(40), (SELECT id FROM categories WHERE slug = $3::varchar(40) ORDER BY is_deleted, id LIMIT 1),
+                    $4, $5, $6, $7, $8, $9, $10, $11);
         `, [
             record.id, record.brand, record.deviceType, record.name, record.slug, record.image,
             record.description, record.isDeleted, record.deletedAt && new Date(record.deletedAt),
@@ -634,41 +702,67 @@ async function backfillProductImages(transaction, products) {
     return filled;
 }
 
-async function insertOrders(transaction, records) {
-    for (const record of records) {
-        await transaction.query(`
-            INSERT INTO orders
-                (id, subtotal, shipping_fee, discount, total_price, customer_name, customer_phone,
-                 customer_address, customer_note, payment_method, order_status, payment_status, created_at, updated_at, user_id, cancelled_at,
-                 points_earned, points_credited_at)
-            VALUES
-                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                 CASE WHEN $11::varchar = 'CANCELLED' THEN $14::timestamptz ELSE NULL END, $16, $17);
-        `, [
-            record.id, record.subtotal, record.shippingFee, record.discount, record.totalPrice, record.customerName,
-            record.customerPhone, record.customerAddress, record.customerNote, record.paymentMethod, record.orderStatus,
-            record.paymentStatus, new Date(record.createdAt), new Date(record.updatedAt), record.userId,
-            record.pointsEarned, record.pointsCreditedAt === null ? null : new Date(record.pointsCreditedAt)
-        ]);
-        await insertStatusHistory(transaction, record.id, record.statusHistory);
+const INSERT_CHUNK_ROWS = 500;
 
-        for (const item of record.items) {
-            const variant = await transaction.query(`
-                SELECT id FROM product_variants WHERE sku = $1 FOR UPDATE;
-            `, [item.variantSku]);
-            if (variant.rows.length !== 1) throw new Error(`Seed order variant ${item.variantSku} could not be resolved`);
-            await transaction.query(`
-                INSERT INTO order_items
-                    (order_id, variant_id, name_snapshot, image_snapshot, sku_snapshot, options_snapshot,
-                     unit_price, unit_cost, quantity, line_total)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
-            `, [
-                record.id, variant.rows[0].id, item.name, item.image, item.variantSku, item.optionsSnapshot,
-                item.unitPrice, item.unitCost, item.quantity, item.lineTotal
-            ]);
-        }
-        await insertOrderVouchers(transaction, record.id, record.vouchers);
+/**
+ * Multi-row INSERT in chunks of INSERT_CHUNK_ROWS. `columns` are [name, SQL type] pairs and `rows` arrays of values in
+ * that order. Every placeholder carries an explicit cast so PostgreSQL never has to deduce a parameter type
+ * ("inconsistent types deduced for parameter"); a chunk of 500 rows stays far below the 65535 parameter limit.
+ */
+async function insertBatch(transaction, table, columns, rows, chunkSize = INSERT_CHUNK_ROWS) {
+    const names = columns.map(([name]) => name).join(", ");
+    for (let start = 0; start < rows.length; start += chunkSize) {
+        const parameters = [];
+        const tuples = rows.slice(start, start + chunkSize).map((row) => {
+            const placeholders = columns.map(([, type], column) => {
+                parameters.push(row[column]);
+                return `$${parameters.length}::${type}`;
+            });
+            return `(${placeholders.join(", ")})`;
+        });
+        await transaction.query(`INSERT INTO ${table} (${names}) VALUES ${tuples.join(", ")}`, parameters);
     }
+}
+
+/** Orders, their status history, lines and order vouchers, each table in batches (a two-year demo history is ~800 orders). */
+async function insertOrders(transaction, records) {
+    if (records.length === 0) return;
+    await insertBatch(transaction, "orders", [
+        ["id", "varchar"], ["subtotal", "numeric(18,2)"], ["shipping_fee", "numeric(18,2)"], ["discount", "numeric(18,2)"],
+        ["total_price", "numeric(18,2)"], ["customer_name", "varchar"], ["customer_phone", "varchar"],
+        ["customer_address", "varchar"], ["customer_note", "varchar"], ["payment_method", "varchar"],
+        ["order_status", "varchar"], ["payment_status", "varchar"], ["created_at", "timestamptz"],
+        ["updated_at", "timestamptz"], ["user_id", "varchar"], ["cancelled_at", "timestamptz"],
+        ["points_redeemed", "integer"], ["points_discount", "numeric(18,2)"], ["points_released_at", "timestamptz"],
+        ["points_earned", "integer"], ["points_credited_at", "timestamptz"]
+    ], records.map((record) => [
+        record.id, record.subtotal, record.shippingFee, record.discount, record.totalPrice, record.customerName,
+        record.customerPhone, record.customerAddress, record.customerNote, record.paymentMethod, record.orderStatus,
+        record.paymentStatus, new Date(record.createdAt), new Date(record.updatedAt), record.userId,
+        record.orderStatus === "CANCELLED" ? new Date(record.updatedAt) : null,
+        record.pointsRedeemed, record.pointsDiscount,
+        record.pointsReleasedAt === null ? null : new Date(record.pointsReleasedAt),
+        record.pointsEarned, record.pointsCreditedAt === null ? null : new Date(record.pointsCreditedAt)
+    ]));
+    await insertBatch(transaction, "order_status_history", [
+        ["order_id", "varchar"], ["status", "varchar"], ["created_at", "timestamptz"]
+    ], records.flatMap((record) => record.statusHistory.map((entry) => [record.id, entry.status, new Date(entry.at)])));
+
+    const skus = [...new Set(records.flatMap((record) => record.items.map((item) => item.variantSku)))];
+    const variants = await transaction.query("SELECT id, sku FROM product_variants WHERE sku = ANY($1::varchar[])", [skus]);
+    const variantIdBySku = new Map(variants.rows.map((row) => [row.sku, row.id]));
+    for (const sku of skus) {
+        if (!variantIdBySku.has(sku)) throw new Error(`Seed order variant ${sku} could not be resolved`);
+    }
+    await insertBatch(transaction, "order_items", [
+        ["order_id", "varchar"], ["variant_id", "integer"], ["name_snapshot", "varchar"], ["image_snapshot", "varchar"],
+        ["sku_snapshot", "varchar"], ["options_snapshot", "text"], ["unit_price", "numeric(18,2)"],
+        ["unit_cost", "numeric(18,2)"], ["quantity", "integer"], ["line_total", "numeric(18,2)"]
+    ], records.flatMap((record) => record.items.map((item) => [
+        record.id, variantIdBySku.get(item.variantSku), item.name, item.image, item.variantSku, item.optionsSnapshot,
+        item.unitPrice, item.unitCost, item.quantity, item.lineTotal
+    ])));
+    await insertOrderVouchers(transaction, records);
 }
 
 async function insertAddresses(transaction, userId, addresses) {
@@ -691,18 +785,22 @@ async function insertStatusHistory(transaction, orderId, history) {
 }
 
 async function insertUsers(transaction, records) {
-    for (const record of records) {
-        // No password hash: seeded customers cannot log in.
-        await transaction.query(`
-            INSERT INTO users
-                (id, email, username, full_name, role, status, loyalty_points, email_verified_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
-        `, [
-            record.id, record.email, record.username, record.fullName, record.role, record.status, record.loyaltyPoints,
-            new Date(record.emailVerifiedAt), new Date(record.createdAt), new Date(record.updatedAt)
-        ]);
-        await insertAddresses(transaction, record.id, record.addresses);
-    }
+    // No password hash: seeded customers cannot log in.
+    await insertBatch(transaction, "users", [
+        ["id", "varchar"], ["email", "varchar"], ["username", "varchar"], ["full_name", "varchar"], ["role", "varchar"],
+        ["status", "varchar"], ["loyalty_points", "integer"], ["email_verified_at", "timestamptz"],
+        ["created_at", "timestamptz"], ["updated_at", "timestamptz"]
+    ], records.map((record) => [
+        record.id, record.email, record.username, record.fullName, record.role, record.status, record.loyaltyPoints,
+        new Date(record.emailVerifiedAt), new Date(record.createdAt), new Date(record.updatedAt)
+    ]));
+    await insertBatch(transaction, "user_addresses", [
+        ["id", "varchar"], ["user_id", "varchar"], ["recipient_name", "varchar"], ["phone", "varchar"],
+        ["address_line", "varchar"], ["is_default", "boolean"], ["created_at", "timestamptz"], ["updated_at", "timestamptz"]
+    ], records.flatMap((record) => record.addresses.map((address) => [
+        address.id, record.id, address.recipientName, address.phone, address.addressLine, address.isDefault,
+        new Date(address.createdAt), new Date(address.createdAt)
+    ])));
 }
 
 /**
@@ -752,7 +850,7 @@ async function backfillSeedExtras(transaction, users, orders) {
     return filled;
 }
 
-// redeemed_count starts at 0 and is incremented by insertOrders for each unreleased order voucher,
+// redeemed_count starts at 0 and insertOrders raises it by the unreleased order vouchers it inserts,
 // so it stays equal to the order_vouchers rows even when the voucher already existed.
 async function insertVouchers(transaction, records) {
     for (const record of records) {
@@ -769,35 +867,40 @@ async function insertVouchers(transaction, records) {
     }
 }
 
-async function insertOrderVouchers(transaction, orderId, vouchers) {
-    for (const voucher of vouchers) {
-        const found = await transaction.query("SELECT id FROM vouchers WHERE code = $1 FOR UPDATE", [voucher.code]);
-        if (found.rows.length !== 1) throw new Error(`Seed order voucher ${voucher.code} could not be resolved`);
-        await transaction.query(`
-            INSERT INTO order_vouchers
-                (order_id, voucher_id, code_snapshot, type_snapshot, percent_snapshot, discount_amount, released_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7);
-        `, [
-            orderId, found.rows[0].id, voucher.code, voucher.type, voucher.percent, voucher.discountAmount,
-            voucher.releasedAt === null ? null : new Date(voucher.releasedAt)
-        ]);
-        if (voucher.releasedAt === null) {
-            await transaction.query("UPDATE vouchers SET redeemed_count = redeemed_count + 1 WHERE id = $1", [found.rows[0].id]);
-        }
+/** Order vouchers of the inserted orders, in one batch; each voucher's redeemed_count grows by its unreleased uses. */
+async function insertOrderVouchers(transaction, records) {
+    const used = records.flatMap((record) => record.vouchers.map((voucher) => ({ orderId: record.id, ...voucher })));
+    if (used.length === 0) return;
+    const codes = [...new Set(used.map((voucher) => voucher.code))];
+    const found = await transaction.query("SELECT id, code FROM vouchers WHERE code = ANY($1::varchar[])", [codes]);
+    const idByCode = new Map(found.rows.map((row) => [row.code, row.id]));
+    for (const code of codes) {
+        if (!idByCode.has(code)) throw new Error(`Seed order voucher ${code} could not be resolved`);
+    }
+    await insertBatch(transaction, "order_vouchers", [
+        ["order_id", "varchar"], ["voucher_id", "integer"], ["code_snapshot", "varchar"], ["type_snapshot", "varchar"],
+        ["percent_snapshot", "integer"], ["discount_amount", "numeric(18,2)"], ["released_at", "timestamptz"]
+    ], used.map((voucher) => [
+        voucher.orderId, idByCode.get(voucher.code), voucher.code, voucher.type, voucher.percent, voucher.discountAmount,
+        voucher.releasedAt === null ? null : new Date(voucher.releasedAt)
+    ]));
+    const redeemed = new Map();
+    for (const voucher of used) {
+        if (voucher.releasedAt === null) redeemed.set(voucher.code, (redeemed.get(voucher.code) || 0) + 1);
+    }
+    for (const [code, count] of redeemed) {
+        await transaction.query("UPDATE vouchers SET redeemed_count = redeemed_count + $2 WHERE id = $1", [idByCode.get(code), count]);
     }
 }
 
 async function insertReviews(transaction, records) {
-    for (const record of records) {
-        await transaction.query(`
-            INSERT INTO product_reviews
-                (product_id, user_id, rating, comment, is_hidden, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7);
-        `, [
-            record.productId, record.userId, record.rating, record.comment, record.isHidden,
-            new Date(record.createdAt), new Date(record.updatedAt)
-        ]);
-    }
+    await insertBatch(transaction, "product_reviews", [
+        ["product_id", "integer"], ["user_id", "varchar"], ["rating", "smallint"], ["comment", "varchar"],
+        ["is_hidden", "boolean"], ["created_at", "timestamptz"], ["updated_at", "timestamptz"]
+    ], records.map((record) => [
+        record.productId, record.userId, record.rating, record.comment, record.isHidden,
+        new Date(record.createdAt), new Date(record.updatedAt)
+    ]));
 }
 
 async function insertAudits(transaction, records) {
@@ -838,10 +941,12 @@ async function seedDatabase() {
         await transaction.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
         transactionOpen = true;
         await transaction.query(`
-            LOCK TABLE users, products, product_variants, vouchers, orders, order_items,
-                       order_vouchers, product_reviews, audit_logs IN SHARE ROW EXCLUSIVE MODE;
+            LOCK TABLE users, categories, products, product_variants, tags, product_tags, vouchers, orders,
+                       order_items, order_vouchers, product_reviews, audit_logs IN SHARE ROW EXCLUSIVE MODE;
         `);
         await ensureDefaultAdmin(transaction);
+        await ensureCategories(transaction);
+        const tagIds = await ensureTags(transaction);
 
         const existingProducts = await loadProductCandidates(transaction, normalized.products);
         const existingVariants = await loadVariantSkuCandidates(transaction, normalized.products);
@@ -875,6 +980,7 @@ async function seedDatabase() {
         }
 
         await insertProducts(transaction, productInserts);
+        await insertProductTags(transaction, commerce.products, tagIds);
         await insertUsers(transaction, userInserts);
         await insertVouchers(transaction, voucherInserts);
         await insertOrders(transaction, orderInserts);
@@ -1123,6 +1229,8 @@ module.exports = {
     classifyUsers,
     classifyVouchers,
     createSummary,
+    insertBatch,
+    insertOrders,
     resolveSeedOrderItems,
     seedDatabase,
     resetDatabase,

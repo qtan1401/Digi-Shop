@@ -11,7 +11,7 @@ const optionValueText = (entry) =>
 
 const productMutationInput = (req) => {
     const input = { ...(req.body || {}) };
-    for (const field of ["options", "variants", "galleryOrder", "removeImageIds"]) {
+    for (const field of ["options", "variants", "galleryOrder", "removeImageIds", "tagIds"]) {
         if (typeof input[field] !== "string") continue;
         try {
             input[field] = JSON.parse(input[field]);
@@ -134,7 +134,13 @@ const errorStatus = (error) => {
     return 400;
 };
 
+const isDatabaseError = (error) => Boolean(error) && (/^Prisma/.test(error.name || "") || error.clientVersion !== undefined || /^P\d{4}$/.test(error.code || ""));
+
 const sendError = (res, error) => {
+    if (isDatabaseError(error)) {
+        console.error(error);
+        return res.status(500).json({ success: false, message: "Đã xảy ra lỗi hệ thống, vui lòng thử lại sau." });
+    }
     const message = error.message || "Yêu cầu không hợp lệ";
     const body = { success: false, message };
     if (error && error.code) body.error = { code: error.code, message };

@@ -11,6 +11,17 @@ const errorToStatus = (msg) => {
     return 500;
 };
 
+// Unexpected failures (database, programming errors) must never reach the client verbatim.
+const GENERIC_ERROR_MESSAGE = "Đã xảy ra lỗi hệ thống, vui lòng thử lại sau.";
+const sendPlainError = (res, error) => {
+    const status = error.statusCode === 400 ? 400 : errorToStatus(error.message || "");
+    if (status === 500) {
+        console.error(error);
+        return res.status(500).json({ success: false, message: GENERIC_ERROR_MESSAGE });
+    }
+    return res.status(status).json({ success: false, message: error.message });
+};
+
 // Voucher failures carry a code and HTTP status (409 VOUCHER_UNAVAILABLE, 422 VOUCHER_*);
 // everything else keeps the legacy message-based mapping. `message` stays for existing clients.
 const VOUCHER_CODE = /^(VOUCHER_|POINTS_|GUEST_)/;
@@ -22,7 +33,7 @@ const sendCheckoutError = (res, error) => {
             error: { code: error.code, message: error.message }
         });
     }
-    return res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
+    return sendPlainError(res, error);
 };
 
 /**
@@ -36,7 +47,7 @@ const checkVariantInStock = async (req, res) => {
         const result = await checkoutService.checkVariant(variantId, quantity);
         res.status(200).json({ success: true, message: "Phiên bản sản phẩm còn hàng trong kho", inStock: true, data: result });
     } catch (error) {
-        res.status(errorToStatus(error.message)).json({ success: false, message: error.message });
+        sendPlainError(res, error);
     }
 };
 

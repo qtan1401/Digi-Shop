@@ -14,24 +14,39 @@ const guestAccess = require("./guest-access");
 const { calculateShipping } = require("./cart.service");
 const { VoucherRuleError, assertCombination, normalizeCode } = require("./voucher-calculator");
 const { PointsError, parsePointsToUse, earnedPoints } = require("./loyalty-calculator");
+const { toQuantity } = require("../repositories/cart.repository");
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 const VALID_PAYMENT_METHODS = ["COD", "BANKING", "MOMO", "VNPAY"];
+// Column limits of orders.customer_name / customer_address / customer_note.
+const MAX_NAME_LENGTH = 200;
+const MAX_ADDRESS_LENGTH = 500;
+const MAX_NOTE_LENGTH = 1000;
+const QUANTITY_MESSAGE = "quantity phải là số nguyên dương";
 
-const validateCustomer = ({ customerName, customerPhone, customerAddress }) => {
+const invalidRequest = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+const validateCustomer = ({ customerName, customerPhone, customerAddress, note }) => {
     const errors = [];
-    if (!customerName || customerName.trim().length < 2) {
+    if (typeof customerName !== "string" || customerName.trim().length < 2) {
         errors.push("Tên khách hàng phải có ít nhất 2 ký tự");
+    } else if (customerName.trim().length > MAX_NAME_LENGTH) {
+        errors.push(`Tên khách hàng tối đa ${MAX_NAME_LENGTH} ký tự`);
     }
     const phoneRegex = /^(0|\+84)[0-9]{8,10}$/;
-    if (!customerPhone || !phoneRegex.test(customerPhone.trim())) {
+    if (typeof customerPhone !== "string" || !phoneRegex.test(customerPhone.trim())) {
         errors.push("Số điện thoại không hợp lệ (VD: 0901234567 hoặc +84901234567)");
     }
-    if (!customerAddress || customerAddress.trim().length < 5) {
+    if (typeof customerAddress !== "string" || customerAddress.trim().length < 5) {
         errors.push("Địa chỉ phải có ít nhất 5 ký tự");
+    } else if (customerAddress.trim().length > MAX_ADDRESS_LENGTH) {
+        errors.push(`Địa chỉ tối đa ${MAX_ADDRESS_LENGTH} ký tự`);
     }
-    if (errors.length) throw new Error(errors.join("; "));
+    if (note !== undefined && note !== null && (typeof note !== "string" || note.trim().length > MAX_NOTE_LENGTH)) {
+        errors.push(`Ghi chú tối đa ${MAX_NOTE_LENGTH} ký tự`);
+    }
+    if (errors.length) throw invalidRequest(errors.join("; "));
 };
 
 const buildCustomer = ({ customerName, customerPhone, customerAddress, note }) => ({
@@ -204,10 +219,10 @@ const processCheckout = async (userId, checkoutData, request, guest) => {
     const points = parsePointsToUse(pointsToUse);
     if (!variantId) throw new Error("Vui lòng cung cấp ID phiên bản sản phẩm.");
 
-    validateCustomer({ customerName, customerPhone, customerAddress });
+    validateCustomer({ customerName, customerPhone, customerAddress, note });
     const formattedPayment = formatPaymentMethod(paymentMethod);
-    const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) throw new Error("Số lượng mua không hợp lệ, vui lòng chọn ít nhất 1 sản phẩm.");
+    const qty = toQuantity(quantity);
+    if (qty === null) throw invalidRequest(QUANTITY_MESSAGE);
 
     const normalizedVariantId = Number(variantId);
     if (!Number.isInteger(normalizedVariantId) || normalizedVariantId <= 0) {
@@ -297,14 +312,12 @@ const processCartCheckout = async (userId, { items, customerName, customerPhone,
         throw new Error("Giỏ hàng trống, vui lòng thêm sản phẩm trước khi thanh toán.");
     }
 
-    validateCustomer({ customerName, customerPhone, customerAddress });
+    validateCustomer({ customerName, customerPhone, customerAddress, note });
     const formattedPayment = formatPaymentMethod(paymentMethod);
     const qtyMap = new Map();
     for (const { variantId, quantity } of items) {
-        const qty = parseInt(quantity, 10);
-        if (isNaN(qty) || qty <= 0) {
-            throw new Error(`Số lượng không hợp lệ cho phiên bản ID ${variantId}.`);
-        }
+        const qty = toQuantity(quantity);
+        if (qty === null) throw invalidRequest(QUANTITY_MESSAGE);
 
         const normalizedVariantId = Number(variantId);
         if (!Number.isInteger(normalizedVariantId) || normalizedVariantId <= 0) {

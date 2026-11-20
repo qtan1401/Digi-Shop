@@ -42,7 +42,7 @@
         const raw = event.target.value.trim();
         note = "";
         if (raw === "") { inputError = ""; vouchers().setPoints(0); update(); return; }
-        if (!/^\d{1,9}$/.test(raw)) { inputError = "Số điểm phải là số nguyên không âm."; update(); return; }
+        if (!/^\d{1,9}$/.test(raw)) { inputError = "Số điểm phải là số nguyên không âm."; vouchers().setPoints(0); update(); return; }
         inputError = "";
         const balance = q ? q.points.balance : null;
         let wanted = Number(raw);

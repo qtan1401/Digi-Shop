@@ -10,6 +10,7 @@ const adminReviewController = require("../controllers/admin-review.controller");
 const adminUserController = require("../controllers/admin-user.controller");
 const adminDashboardController = require("../controllers/admin-dashboard.controller");
 const { requireAdminExtras } = require("../middlewares/admin-extras");
+const adminCategoryController = require("../controllers/admin-category.controller");
 
 const router = express.Router();
 
@@ -30,6 +31,16 @@ router.get("/dashboard/summary", adminDashboardController.summary);
 router.get("/dashboard/series", adminDashboardController.series);
 
 
+// Category and Tag management is required for every administrator, independent of ADMIN_EXTRAS.
+router.get("/categories", adminCategoryController.categories.list);
+router.post("/categories", requireCsrf, adminCategoryController.categories.create);
+router.patch("/categories/:id", requireCsrf, adminCategoryController.categories.update);
+router.delete("/categories/:id", requireCsrf, adminCategoryController.categories.remove);
+router.get("/tags", adminCategoryController.tags.list);
+router.post("/tags", requireCsrf, adminCategoryController.tags.create);
+router.patch("/tags/:id", requireCsrf, adminCategoryController.tags.update);
+router.delete("/tags/:id", requireCsrf, adminCategoryController.tags.remove);
+
 // Static restore endpoint is intentionally declared before /products/:id.
 // The :id/restore form is the documented restore contract; the static form accepts { productId }.
 router.post("/products/restore", requireCsrf, adminController.restoreProduct);
@@ -40,6 +51,7 @@ router.get("/products", adminController.listProducts);
 router.get("/products/:id", adminController.getProduct);
 router.post("/products", requireCsrf, uploadProductImages, adminController.createProduct);
 router.put("/products/:id", requireCsrf, uploadProductImages, adminController.updateProduct);
+router.delete("/products/:id", requireCsrf, adminController.deleteProduct);
 
 // Audit trail.
 router.get("/audit-logs", requireAdminExtras, adminController.listAuditLogs);

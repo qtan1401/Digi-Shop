@@ -116,6 +116,8 @@
 .ao .ao-sel-trigger[aria-expanded="true"] { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
 .ao .ao-sel-trigger:disabled { opacity: 0.6; }
 .ao .ao-sel-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ao .ao-sel-filter .ao-sel-value { min-width: max-content; overflow: visible; }
+.ao .ao-sel-filter { min-width: max-content; }
 .ao .ao-sel-chev { color: var(--text-secondary); transition: rotate 150ms; }
 .ao .ao-sel-trigger[aria-expanded="true"] .ao-sel-chev { rotate: 180deg; }
 .ao .ao-sort-val { display: inline-flex; align-items: center; gap: 8px; }

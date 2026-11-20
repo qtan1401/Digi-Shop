@@ -553,13 +553,19 @@ function normalizeOrder(record, index, changes) {
             }
             return { variantSku: normalizeCode(item.variantSku, "variantSku", itemIdentity, changes, 100), unitPrice, quantity, lineTotal };
         }),
-        vouchers: (record.vouchers === undefined ? [] : normalizeOrderVouchers(record.vouchers, identity, changes))
+        vouchers: (record.vouchers === undefined ? [] : normalizeOrderVouchers(record.vouchers, identity, changes)),
+        pointsRedeemed: record.pointsRedeemed === undefined
+            ? 0
+            : normalizeInteger(record.pointsRedeemed, "pointsRedeemed", identity, changes, { minimum: 0, maximum: 2147483647 }),
+        pointsDiscount: record.pointsDiscount === undefined ? "0.00" : normalizeMoney(record.pointsDiscount, "pointsDiscount", identity, changes),
+        pointsReleasedAt: normalizeDate(record.pointsReleasedAt, "pointsReleasedAt", identity, changes, true)
     };
     order.statusHistory = normalizeStatusHistory(record.statusHistory, order, identity, changes);
     const itemSubtotal = order.items.reduce((sum, item) => sum + decimalToCents(item.lineTotal, "lineTotal", identity), 0n);
-    const expectedTotal = decimalToCents(order.subtotal, "subtotal", identity) + decimalToCents(order.shippingFee, "shippingFee", identity) - decimalToCents(order.discount, "discount", identity);
+    const expectedTotal = decimalToCents(order.subtotal, "subtotal", identity) + decimalToCents(order.shippingFee, "shippingFee", identity)
+        - decimalToCents(order.discount, "discount", identity) - decimalToCents(order.pointsDiscount, "pointsDiscount", identity);
     if (itemSubtotal !== decimalToCents(order.subtotal, "subtotal", identity)) throw new SeedDataError(identity, "subtotal must equal the sum of item line totals");
-    if (expectedTotal !== decimalToCents(order.totalPrice, "totalPrice", identity)) throw new SeedDataError(identity, "totalPrice must equal subtotal plus shippingFee minus discount");
+    if (expectedTotal !== decimalToCents(order.totalPrice, "totalPrice", identity)) throw new SeedDataError(identity, "totalPrice must equal subtotal plus shippingFee minus discount and pointsDiscount");
     return order;
 }
 
@@ -639,18 +645,29 @@ function assertCustomerData({ products, users, vouchers, orders, reviews }, vari
             }
         }
     }
-    // Loyalty and timeline invariants: a balance is exactly the points its credited orders earned, and every order's
-    // history starts as PENDING, never goes back in time, and ends on the order's current status.
-    const credited = new Map(users.map((user) => [user.id, 0]));
+    // Loyalty and timeline invariants: a balance is exactly the points its credited orders earned minus the points its orders
+    // redeemed (a cancelled order gave them back), and every order's history starts as PENDING, never goes back in time, and
+    // ends on the order's current status.
+    const balances = new Map(users.map((user) => [user.id, 0]));
     for (const order of orders) {
         const identity = `order:${order.id}`;
         const total = Number(order.totalPrice);
         if (order.pointsEarned !== 0 && order.pointsEarned !== Math.floor((total * 10) / 100000)) {
             throw new SeedDataError(identity, "pointsEarned must be floor(10% of totalPrice / 1000)");
         }
+        if (order.pointsRedeemed > 0 && order.userId === null) throw new SeedDataError(identity, "an order without a customer cannot redeem points");
+        if (decimalToCents(order.pointsDiscount, "pointsDiscount", identity) > BigInt(order.pointsRedeemed) * 100000n) {
+            throw new SeedDataError(identity, "pointsDiscount must not exceed pointsRedeemed x 1000");
+        }
+        if (order.pointsReleasedAt !== null && order.pointsRedeemed === 0) {
+            throw new SeedDataError(identity, "pointsReleasedAt needs redeemed points");
+        }
         if (order.pointsCreditedAt !== null) {
             if (order.userId === null) throw new SeedDataError(identity, "an order without a customer cannot have credited points");
-            credited.set(order.userId, credited.get(order.userId) + order.pointsEarned);
+            balances.set(order.userId, balances.get(order.userId) + order.pointsEarned);
+        }
+        if (order.pointsRedeemed > 0 && order.pointsReleasedAt === null) {
+            balances.set(order.userId, balances.get(order.userId) - order.pointsRedeemed);
         }
         const history = order.statusHistory;
         if (history[0].status !== "PENDING") throw new SeedDataError(identity, "statusHistory must start with PENDING");
@@ -662,8 +679,8 @@ function assertCustomerData({ products, users, vouchers, orders, reviews }, vari
         }
     }
     for (const user of users) {
-        if (user.loyaltyPoints !== credited.get(user.id)) {
-            throw new SeedDataError(`user:${user.id}`, "loyaltyPoints must equal the points of the customer's credited orders");
+        if (user.loyaltyPoints !== balances.get(user.id)) {
+            throw new SeedDataError(`user:${user.id}`, "loyaltyPoints must equal the points of the customer's credited orders minus the points redeemed");
         }
     }
     for (const voucher of vouchers) {

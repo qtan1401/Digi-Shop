@@ -10,7 +10,8 @@ datasource db {
 model Product {
   id          Int              @id @default(autoincrement())
   brand       String           @db.VarChar(16)
-  deviceType  String           @map("device_type") @db.VarChar(16)
+  deviceType  String           @map("device_type") @db.VarChar(40)
+  categoryId  Int              @map("category_id")
   name        String           @db.VarChar(200)
   slug        String           @unique(map: "products_slug_key") @db.VarChar(240)
   image       String           @db.VarChar(500)
@@ -23,9 +24,56 @@ model Product {
   variants    ProductVariant[]
   reviews     ProductReview[]
   images      ProductImage[]
+  category    Category         @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  tags        ProductTag[]
 
   @@index([isDeleted, updatedAt], map: "products_is_deleted_updated_at_idx")
+  @@index([categoryId, isDeleted], map: "products_category_id_is_deleted_idx")
   @@map("products")
+}
+
+// Category: admin-managed product group (replaces the fixed device_type list). products.device_type stays as a copy of
+// the category slug until a later sprint drops it. The slug is unique among rows that are not soft-deleted: a partial
+// unique index ("categories_slug_active_key" ... WHERE is_deleted = false) plus a slug-format CHECK, both created in SQL.
+model Category {
+  id        Int       @id @default(autoincrement())
+  slug      String    @db.VarChar(40)
+  name      String    @db.VarChar(80)
+  sortOrder Int       @default(0) @map("sort_order")
+  isDeleted Boolean   @default(false) @map("is_deleted")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  products  Product[]
+
+  @@index([isDeleted, sortOrder], map: "categories_is_deleted_sort_order_idx")
+  @@map("categories")
+}
+
+// Tag: free-form product attribute (gaming, khong-day, ...), separate from Brand. Same slug rules as Category
+// (partial unique index "tags_slug_active_key" ... WHERE is_deleted = false and a slug-format CHECK, created in SQL).
+model Tag {
+  id        Int          @id @default(autoincrement())
+  slug      String       @db.VarChar(40)
+  name      String       @db.VarChar(60)
+  isDeleted Boolean      @default(false) @map("is_deleted")
+  deletedAt DateTime?    @map("deleted_at") @db.Timestamptz(3)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  products  ProductTag[]
+
+  @@map("tags")
+}
+
+model ProductTag {
+  productId Int     @map("product_id")
+  tagId     Int     @map("tag_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([productId, tagId])
+  @@index([tagId], map: "product_tags_tag_id_idx")
+  @@map("product_tags")
 }
 
 // Extra gallery photos of a product (the main photo stays in products.image). position is 0-based and unique per product.

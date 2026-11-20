@@ -62,6 +62,25 @@ const parseIsoDate = (value) => {
 };
 
 /**
+ * The range compared against an inclusive local-date range [fromDate, toDate] ("previous period").
+ * - Whole calendar months (from on the 1st, to on the last day of a month; so a calendar month, quarter or year, or
+ *   any run of whole months): the same number of whole months immediately before, e.g. 2026 -> 2025,
+ *   Q1/2026 -> Q4/2025, March 2026 -> February 2026, Nov 2025 - Feb 2026 -> Jul - Oct 2025.
+ * - Anything else (custom day ranges, year to date): the equal-length range ending the day before `fromDate`.
+ * Returns inclusive local dates { fromDate, toDate }.
+ */
+const previousRange = (fromDate, toDate) => {
+    const previousTo = addDays(fromDate, -1);
+    const wholeMonths = fromDate.getUTCDate() === 1 && addDays(toDate, 1).getUTCDate() === 1;
+    if (wholeMonths) {
+        const months = (toDate.getUTCFullYear() - fromDate.getUTCFullYear()) * 12 + toDate.getUTCMonth() - fromDate.getUTCMonth() + 1;
+        return { fromDate: new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth() - months, 1)), toDate: previousTo };
+    }
+    const days = Math.round((toDate.getTime() - fromDate.getTime()) / DAY_MS) + 1;
+    return { fromDate: addDays(previousTo, -(days - 1)), toDate: previousTo };
+};
+
+/**
  * Named range -> { from, to } instants (to exclusive). `custom` takes inclusive local dates (either may be missing).
  * Returns undefined for an unknown name.
  */
@@ -98,5 +117,6 @@ module.exports = {
     bucketLabel,
     isoDate,
     parseIsoDate,
+    previousRange,
     namedRange
 };

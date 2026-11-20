@@ -1,0 +1,67 @@
+/* Danh mục & thẻ: dùng token và control của admin.css/admin-orders.css. */
+.ao.at { min-width: 0; }
+.ao .at-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ao .at-heading p { max-width: 62ch; color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.ao .at-heading .ao-btn { flex: 0 0 auto; }
+.ao .at-table { min-width: 35rem; }
+.ao .at-table .ao-td-end { text-align: right; }
+.ao .at-table .ao-td-sticky { min-width: 12rem; max-width: 25rem; }
+.ao .at-name { display: block; overflow-wrap: anywhere; color: var(--text-primary); font-weight: 500; }
+.ao .at-slug { display: block; margin-top: 2px; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 12px; line-height: 16px; }
+.ao .at-number { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ao .at-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.ao .at-delete { min-height: 32px; padding: 4px 12px; border-radius: 8px; }
+.ao .at-locked { display: flex; justify-content: flex-end; align-items: flex-start; gap: 4px; max-width: 28rem; margin: 4px 0 0 auto; color: var(--text-secondary); font-size: 12px; line-height: 16px; text-align: right; }
+.ao .at-locked svg { margin-top: 1px; }
+.ao .at-loading { display: grid; gap: 0; padding: 0 16px; }
+.ao .at-loading > div { display: flex; align-items: center; justify-content: space-between; height: 65px; border-bottom: 1px solid var(--border); }
+.ao .at-loading > div:last-child { border-bottom: 0; }
+.ao .at-card { display: grid; gap: 8px; padding: 14px 16px; }
+.ao .at-card-meta { color: var(--text-secondary); font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.ao .at-card .at-actions { justify-content: flex-start; }
+.ao .at-card .at-locked { margin: 0; text-align: left; justify-content: flex-start; }
+.ao .at-pager .ao-pg-num { min-width: 36px; }
+.ao .at-pager .ao-pg-num:disabled { opacity: .4; }
+.ao #at-panel:focus { outline: none; }
+
+/* Modal tương thích bàn phím trên điện thoại: chân cố định, chỉ vùng nhập cuộn. */
+.ao .at-overlay { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-start; justify-content: center; background: rgb(0 0 0 / .3); }
+.ao .at-scrim { position: absolute; inset: 0; }
+.ao .at-dialog { position: relative; display: flex; flex-direction: column; width: 100%; height: 100dvh; max-height: 100dvh; background: var(--bg-surface); box-shadow: var(--shadow-modal); }
+.ao .at-dialog-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.ao .at-dialog-head h2 { font-size: 18px; line-height: 28px; font-weight: 600; }
+.ao .at-form { display: flex; min-height: 0; flex: 1 1 auto; flex-direction: column; gap: 16px; overflow-y: auto; padding: 20px; overscroll-behavior: contain; }
+.ao .at-form > p:not(.at-error) { color: var(--text-secondary); line-height: 22px; text-wrap: pretty; }
+.ao .at-form strong { color: var(--text-primary); font-weight: 600; }
+.ao .at-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-weight: 500; }
+.ao .at-field small { color: var(--text-secondary); font-size: 12px; line-height: 16px; font-weight: 400; }
+.ao .at-field small[data-error]:not(:empty) { color: var(--error-text); }
+.ao .at-field:has(small[data-error]:not(:empty)) .ao-input { border-color: var(--error-text); }
+.ao .at-error { padding: 10px 12px; border-radius: 12px; background: var(--error-bg); color: var(--error-strong); }
+.ao .at-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
+.ao .at-dialog-foot .ao-btn { flex: 1 1 0; }
+@media (min-width: 640px) {
+    .ao .at-overlay { padding: 24px; }
+    .ao .at-dialog { width: min(32rem, 100%); height: auto; max-height: calc(100dvh - 48px); margin-top: 8vh; border: 1px solid var(--border); border-radius: 16px; }
+    .ao .at-dialog-foot .ao-btn { flex: 0 0 auto; }
+}
+@media (max-width: 639.98px) {
+    .ao .at-heading .ao-btn { width: 100%; }
+    .ao .at-pager { gap: 0; }
+    .ao .at-pager .ao-pg-num { min-width: 32px; height: 40px; }
+    .ao .ao-foot-flat { flex-wrap: wrap; gap: 6px; }
+    .ao .at-dialog-foot { position: sticky; bottom: 0; margin: auto -20px -20px; padding: 14px 20px; background: var(--bg-surface); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ao .at-loading .ao-sk { animation: none; }
+}
+
+/* Thẻ trong form sản phẩm dùng checkbox thật: nhiều lựa chọn không bị ẩn trong dropdown. */
+.product-tags { min-width: 0; margin: 0; padding: 0; border: 0; }
+.product-tags legend { margin-bottom: 8px; color: var(--text-primary); font: 500 14px/20px var(--font-body); }
+.product-tags__list { display: flex; flex-wrap: wrap; gap: 8px; color: var(--text-secondary); font: 400 14px/20px var(--font-body); }
+.product-tags__option { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-surface); cursor: pointer; overflow-wrap: anywhere; }
+.product-tags__option:has(input:checked) { border-color: var(--accent); background: var(--accent-light); color: var(--text-primary); }
+.product-tags__option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.product-tags__option input { width: 16px; height: 16px; min-height: 0; margin: 0; accent-color: var(--accent); }
+.product-tags .field-error { display: block; }

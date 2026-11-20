@@ -384,6 +384,8 @@
                 tab.tabIndex = active ? 0 : -1;
             });
             panels.forEach((panel) => { panel.hidden = panel.dataset.authPanel !== name; });
+            const title = document.getElementById("auth-title");
+            if (title) title.textContent = name === "register" ? "Tạo tài khoản mới" : "Chào mừng trở lại";
             document.querySelector(`[data-auth-panel="${name}"] input`)?.focus();
         };
         const initialTab = new URLSearchParams(window.location.search).get("tab") === "register" ? "register" : "login";
@@ -497,6 +499,15 @@
                 document.querySelector("[data-verification-login]")?.removeAttribute("hidden");
             } catch (error) {
                 if (status) { status.textContent = error.code === "TOKEN_EXPIRED" ? "Liên kết đã hết hạn. Hãy gửi lại email xác minh." : error.message; status.dataset.state = "error"; }
+            }
+        }
+        if (!context?.expiresAt && !token) {
+            countdown?.closest(".verify-meta")?.setAttribute("hidden", "");
+            if (status) {
+                status.textContent = "Chưa có đăng ký nào đang chờ xác minh. ";
+                const link = document.createElement("a");
+                link.href = "/auth.html?tab=register"; link.className = "auth-link"; link.textContent = "Đăng ký tài khoản";
+                status.append(link); status.dataset.state = "error"; status.hidden = false;
             }
         }
         let expiresAt = context?.expiresAt || Date.now();

@@ -34,7 +34,16 @@
 
     /* ---------- Định dạng ---------- */
     const vnd = (value) => Number(value || 0).toLocaleString("vi-VN") + "₫";
-    const mil = (value) => (Number(value || 0) / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+    const trim1 = (value) => value.toLocaleString("vi-VN", { maximumFractionDigits: 1 });
+    // Số gọn: 1,2 tỷ · 850 tr · 12,5 tr · 340 k.
+    const compact = (value) => {
+        const v = Number(value || 0);
+        const a = Math.abs(v);
+        if (a >= 1e9) return `${trim1(v / 1e9)} tỷ`;
+        if (a >= 1e6) return `${trim1(v / 1e6)} tr`;
+        if (a >= 1e3) return `${trim1(v / 1e3)} k`;
+        return v.toLocaleString("vi-VN");
+    };
     const num = (value) => Number(value || 0).toLocaleString("vi-VN");
     const waitText = (hours) => (hours >= 48 ? `Chờ ${Math.floor(hours / 24)} ngày` : hours < 1 ? "Chờ dưới 1 giờ" : `Chờ ${hours} giờ`);
 
@@ -80,7 +89,7 @@
             ${statCell({ label: "Tổng người dùng", value: num(s.totalUsers), sub: "Tài khoản khách hàng" })}
             ${statCell({ label: "Người dùng mới", value: num(s.newUsers), sub: "Trong 7 ngày gần nhất" })}
             ${statCell({ label: "Số đơn", value: num(s.orders), sub: `<span class="${c.late ? "ov-late" : ""}">${num(s.pendingOrders)} chờ xử lý</span> · không tính đơn hủy` })}
-            ${statCell({ label: "Doanh thu", value: mil(s.revenue), unit: "tr ₫", title: vnd(s.revenue), sub: "Đơn đã thanh toán hoặc đã giao" })}
+            ${statCell({ label: "Doanh thu", value: compact(s.revenue), unit: "₫", title: vnd(s.revenue), sub: "Đơn đã thanh toán hoặc đã giao" })}
             ${statCell({ label: "Sắp hết / hết hàng", value: c.low.length, sub: `${c.few} sắp hết · ${c.out} hết hàng` })}
         </div>`;
     };
@@ -125,7 +134,7 @@
 
     // Top 5 sản phẩm bán chạy: biểu đồ cột một màu, số lượng ghi trên đầu cột, tên dưới cột.
     const topBlock = (c) => {
-        const top = c.summary.topProducts || [];
+        const top = Array.isArray(c.summary.topProducts) ? c.summary.topProducts.slice(0, 5).map((p) => ({ ...p, quantity: Number(p.quantity) || 0 })) : [];
         const peak = Math.max(1, ...top.map((p) => p.quantity));
         const body = top.length
             ? `<div class="ov-top" role="img" aria-label="Top ${top.length} sản phẩm bán chạy: ${esc(top.map((p) => `${p.name} ${num(p.quantity)}`).join(", "))}">${top.map((p) => `

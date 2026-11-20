@@ -3,13 +3,16 @@
 // SQL text for which predicates are present and consuming `values` in the order the repository pushes them.
 // `calls` counts the database round trips so tests can prove the landing cache works.
 
+const { DEVICE_TYPE_LABELS } = require("../public/js/catalog-taxonomy");
+
 const createLandingFake = () => {
-    const state = { products: [], variants: [], reviews: [], orders: [], orderItems: [] };
+    const state = { products: [], variants: [], reviews: [], orders: [], orderItems: [], categories: [], tags: [], productTags: [] };
     const calls = { queryRaw: 0, findMany: 0, groupBy: 0 };
 
     const activeVariants = (productId) => state.variants.filter((variant) => variant.productId === productId && variant.isActive);
     const summary = (product, include) => ({
         ...product,
+        category: include?.category ? state.categories.find((category) => category.id === product.categoryId) : undefined,
         variants: include?.variants ? activeVariants(product.id).map(({ price, stock }) => ({ price, stock })) : undefined
     });
     const visibleReviews = (productId) => state.reviews.filter((review) => review.productId === productId && !review.isHidden && review.rating !== null);
@@ -31,9 +34,14 @@ const createLandingFake = () => {
         };
         let rows = state.products.filter((product) => !product.isDeleted);
         if (sql.includes("immutable_unaccent")) take(2);
-        const categories = inValues("p\\.device_type");
+        const categories = inValues("c\\.slug");
+        const tags = inValues("t\\.slug");
         const brands = inValues("p\\.brand");
-        if (categories.length) rows = rows.filter((product) => categories.includes(product.deviceType));
+        if (categories.length) rows = rows.filter((product) =>
+            state.categories.some((category) => category.id === product.categoryId && !category.isDeleted && categories.includes(category.slug)));
+        if (tags.length) rows = rows.filter((product) =>
+            state.productTags.some((link) => link.productId === product.id && state.tags.some((tag) =>
+                tag.id === link.tagId && !tag.isDeleted && tags.includes(tag.slug))));
         if (brands.length) rows = rows.filter((product) => brands.includes(product.brand));
         if (sql.includes("COALESCE(v.min_price, 0) >=")) { const [min] = take(1); rows = rows.filter((product) => minPriceOf(product.id) >= min); }
         if (sql.includes("COALESCE(v.min_price, 0) <=")) { const [max] = take(1); rows = rows.filter((product) => minPriceOf(product.id) <= max); }
@@ -88,6 +96,26 @@ const createLandingFake = () => {
             },
             count: async ({ where = {} } = {}) => state.products.filter((product) => where.isDeleted === undefined || product.isDeleted === where.isDeleted).length
         },
+        category: {
+            findMany: async ({ where = {} } = {}) => state.categories
+                .filter((row) => where.isDeleted === undefined || row.isDeleted === where.isDeleted)
+                .sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id),
+            findFirst: async ({ where }) => state.categories.find((row) =>
+                Object.entries(where).every(([field, value]) => row[field] === value)) || null
+        },
+        tag: {
+            findMany: async ({ where = {} } = {}) => state.tags
+                .filter((row) => where.isDeleted === undefined || row.isDeleted === where.isDeleted)
+                .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id),
+            findFirst: async ({ where }) => state.tags.find((row) =>
+                Object.entries(where).every(([field, value]) => row[field] === value)) || null
+        },
+        productTag: {
+            findMany: async ({ where }) => state.productTags
+                .filter((link) => where.productId.in.includes(link.productId))
+                .map((link) => ({ productId: link.productId, tag: state.tags.find((tag) => tag.id === link.tagId) }))
+                .filter(({ tag }) => tag && !tag.isDeleted)
+        },
         productReview: {
             groupBy: async ({ where }) => {
                 calls.groupBy += 1;
@@ -106,6 +134,8 @@ const createLandingFake = () => {
 
     const reset = () => {
         for (const key of Object.keys(state)) state[key] = [];
+        state.categories = Object.entries(DEVICE_TYPE_LABELS).map(([slug, name], index) =>
+            ({ id: index + 1, slug, name, sortOrder: index, isDeleted: false }));
         for (const key of Object.keys(calls)) calls[key] = 0;
     };
 

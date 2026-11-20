@@ -7,6 +7,8 @@
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
     const formatPrice = (value) => Number(value || 0).toLocaleString("vi-VN") + "₫";
     const deviceTypeLabels = (typeof module === "object" && module.exports ? require("./catalog-taxonomy.js") : window.CatalogTaxonomy).DEVICE_TYPE_LABELS;
+    let categoryLabels = deviceTypeLabels;
+    const setCategoryLabels = (labels) => { categoryLabels = labels; };
     const icon = (name, cls = "") => `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
     // 7,99 – 9,99 tr (dưới 1 triệu thì ghi đủ bằng ₫)
     const millions = (value) => (Number(value) / 1e6).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
@@ -47,7 +49,7 @@
         const stock = Number(product.stock) || 0;
         const badge = stockBadge(stock);
         const variantCount = Number(product.variantCount) || 0;
-        const typeLabel = deviceTypeLabels[product.deviceType] || product.deviceType;
+        const typeLabel = product.category?.name || categoryLabels[product.category?.slug || product.deviceType] || product.deviceType;
         const action = options.canPurchase === false ? '<span class="product-card__role-note">Tài khoản Admin chỉ xem catalog.</span>' : `<a href="${href}" class="ui-btn ui-btn--outline ui-btn--card">Chọn phiên bản</a>`;
         return `<article class="product-card"><div class="product-card__media"><a href="${href}" tabindex="-1" aria-hidden="true" class="product-card__image-link"><img src="${escapeHtml(product.image)}" alt="" class="product-card__image${stock <= 0 ? " product-card__image--out" : ""}"></a>${badge ? `<span class="product-card__badge">${badge}</span>` : ""}</div><div class="product-card__body"><p class="product-card__metadata">${escapeHtml(product.brand)} · ${escapeHtml(typeLabel)}</p><h3 class="product-card__name"><a href="${href}" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</a></h3><p class="product-card__price">${formatPriceRange(product.price, product.priceMax)}</p>${renderCardMeta(variantCount, product)}</div>${action}</article>`;
     };
@@ -69,5 +71,5 @@
         const summary = Number.isFinite(count) && total !== undefined && total !== null ? `<p class="catalog-pagination__count"><span class="catalog-pagination__range">${count ? (current - 1) * size + 1 : 0} tới ${Math.min(current * size, count)} trong </span>${count.toLocaleString("vi-VN")} ${escapeHtml(noun)}</p>` : "";
         return `${summary}<nav class="catalog-pagination__links" aria-label="${escapeHtml(ariaLabel)}">${previousLink}<span class="catalog-pagination__pages">${numbers.join("")}</span><span class="catalog-pagination__compact">${current} / ${pagesCount}</span>${nextLink}</nav>`;
     };
-    return { renderProductCard, renderProductSkeleton, renderPagination, deviceTypeLabels, escapeHtml, icon, renderStars, starIcon, formatRating, compactCount, ratingLabel };
+    return { renderProductCard, renderProductSkeleton, renderPagination, deviceTypeLabels, setCategoryLabels, escapeHtml, icon, renderStars, starIcon, formatRating, compactCount, ratingLabel };
 });

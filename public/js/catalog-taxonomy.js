@@ -1,5 +1,4 @@
-// Danh sách hãng và loại thiết bị của catalog: nguồn duy nhất cho server (validation, SEO, seed) và trình duyệt (bộ lọc, admin).
-// Đổi danh sách ở đây thì phải đổi cả hai CHECK constraint `products_brand_check` và `products_device_type_check` bằng migration mới.
+// Brand vocabulary and fallback category labels when the public taxonomy endpoint is unavailable.
 (function (root, factory) {
     const taxonomy = factory();
     if (typeof module === "object" && module.exports) module.exports = taxonomy;
@@ -16,7 +15,7 @@
         storage: "Ổ cứng SSD"
     });
     const DEVICE_TYPES = Object.freeze(Object.keys(DEVICE_TYPE_LABELS));
-    // Đường dẫn SEO: /the/<slug hãng> (slug = tên hãng viết thường).
+    // Brand URLs live under /hang; /the/<brand> redirects there for older links.
     const brandSlug = (brand) => String(brand).toLowerCase();
     const brandFromSlug = (slug) => BRANDS.find((brand) => brandSlug(brand) === String(slug).toLowerCase());
     return { BRANDS, DEVICE_TYPES, DEVICE_TYPE_LABELS, brandSlug, brandFromSlug };

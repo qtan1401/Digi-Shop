@@ -18,6 +18,10 @@ let productOptionValues;
 let productVariants;
 let variantOptionValues;
 let audits;
+let categories;
+let tags;
+let productTags;
+let retireCategoryOnLock;
 let nextProductId;
 let nextOptionId;
 let nextOptionValueId;
@@ -27,16 +31,17 @@ const clone = (value) => value === undefined ? undefined : structuredClone(value
 const matches = (row, where = {}) => Object.entries(where).every(([key, expected]) => {
     if (key === "OR") return expected.some((clause) => matches(row, clause));
     if (expected && typeof expected === "object" && "contains" in expected) {
-        const actual = String(row[key] ?? "");
-        return expected.mode === "insensitive"
-            ? actual.toLocaleLowerCase().includes(expected.contains.toLocaleLowerCase())
-            : actual.includes(expected.contains);
+        // PostgreSQL LIKE '%value%' with the default backslash escape: unescaped % and _ stay wildcards.
+        const source = expected.contains.replace(/\\(.)|(%)|(_)|[.*+?^${}()|[\]\\]/g, (match, escaped, percent, underscore) =>
+            escaped !== undefined ? escaped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : percent ? "[\\s\\S]*" : underscore ? "[\\s\\S]" : `\\${match}`);
+        return new RegExp(source, expected.mode === "insensitive" ? "i" : "").test(String(row[key] ?? ""));
     }
     if (expected && typeof expected === "object" && "in" in expected) return expected.in.includes(row[key]);
     return row[key] === expected;
 });
 const includeProduct = (row, include = {}) => {
     const result = clone(row);
+    if (include.category) result.category = clone(categories.find((category) => category.id === row.categoryId));
     if (include.options) {
         const optionFilter = include.options.where || {};
         result.options = productOptions.filter((option) =>
@@ -96,13 +101,21 @@ const includeVariant = (row, include = {}) => {
 };
 
 const fakePrisma = {
-    $queryRaw: async (query) => {
+    $queryRaw: async (query, ...parameters) => {
+        const sql = query.sql || query.join?.("?") || "";
+        const values = query.values || parameters;
+        if (sql.includes("FOR UPDATE")) {
+            if (sql.includes("FROM categories") && retireCategoryOnLock) {
+                categories.find(({ id }) => id === parameters[0]).isDeleted = true;
+            }
+            return [{ id: values[0] }];
+        }
         let rows = products.filter((product) => !product.isDeleted).sort((a, b) => a.id - b.id);
-        const sql = query.sql || "";
-        const values = query.values || [];
-        const category = values.find((value) => DEVICE_TYPES.includes(value));
+        const category = values.find((value) => categories.some(({ slug }) => slug === value));
         const brand = values.find((value) => BRANDS.includes(value));
-        if (sql.includes("p.device_type IN") && category) rows = rows.filter((product) => product.deviceType === category);
+        const tag = values.find((value) => tags.some(({ slug }) => slug === value));
+        if (sql.includes("categories c") && category) rows = rows.filter((product) => categories.some(({ id, slug, isDeleted }) => id === product.categoryId && slug === category && !isDeleted));
+        if (sql.includes("product_tags pt") && tag) rows = rows.filter((product) => productTags.some(({ productId, tagId }) => productId === product.id && tags.some(({ id, slug, isDeleted }) => id === tagId && slug === tag && !isDeleted)));
         if (sql.includes("p.brand IN") && brand) rows = rows.filter((product) => product.brand === brand);
         if (sql.includes("immutable_unaccent(")) {
             const queryText = values[0];
@@ -127,12 +140,15 @@ const fakePrisma = {
     $transaction: async (work) => {
         const previous = {
             products, productOptions, productOptionValues, productVariants, variantOptionValues,
-            nextProductId, nextOptionId, nextOptionValueId, nextVariantId
+            categories, tags, productTags, nextProductId, nextOptionId, nextOptionValueId, nextVariantId
         };
         products = clone(products);
         productOptions = clone(productOptions);
         productOptionValues = clone(productOptionValues);
         productVariants = clone(productVariants);
+        categories = clone(categories);
+        tags = clone(tags);
+        productTags = clone(productTags);
         variantOptionValues = clone(variantOptionValues);
         try {
             return await work(fakePrisma);
@@ -141,6 +157,9 @@ const fakePrisma = {
             productOptions = previous.productOptions;
             productOptionValues = previous.productOptionValues;
             productVariants = previous.productVariants;
+            categories = previous.categories;
+            tags = previous.tags;
+            productTags = previous.productTags;
             variantOptionValues = previous.variantOptionValues;
             nextProductId = previous.nextProductId;
             nextOptionId = previous.nextOptionId;
@@ -148,6 +167,24 @@ const fakePrisma = {
             nextVariantId = previous.nextVariantId;
             throw error;
         }
+    },
+    category: {
+        findMany: async ({ where = {} } = {}) => clone(categories.filter((row) => matches(row, where))),
+        findFirst: async ({ where = {} } = {}) => clone(categories.find((row) => matches(row, where))) || null
+    },
+    tag: {
+        findMany: async ({ where = {} } = {}) => clone(tags.filter((row) => {
+            if (where.products?.some) return !row.isDeleted && productTags.some((link) => link.tagId === row.id && link.productId === where.products.some.productId);
+            return matches(row, where);
+        })),
+        findFirst: async ({ where = {} } = {}) => clone(tags.find((row) => matches(row, where))) || null
+    },
+    productTag: {
+        findMany: async ({ where = {} } = {}) => productTags.filter((link) => where.productId.in.includes(link.productId) && tags.some((tag) => tag.id === link.tagId && !tag.isDeleted)).map((link) => ({
+            productId: link.productId, tag: clone(tags.find((tag) => tag.id === link.tagId))
+        })),
+        deleteMany: async ({ where }) => { productTags = productTags.filter((link) => link.productId !== where.productId); },
+        createMany: async ({ data }) => { productTags.push(...clone(data)); }
     },
     product: {
         findMany: async ({ where = {}, include = {}, orderBy, skip = 0, take } = {}) => {
@@ -172,6 +209,7 @@ const fakePrisma = {
             const direct = Object.fromEntries(Object.entries(where).filter(([key]) => key !== "OR"));
             return matches(row, direct);
         }).length,
+        findFirst: async ({ where = {} } = {}) => clone(products.find((row) => matches(row, where))) || null,
         findUnique: async ({ where, include } = {}) => {
             const row = products.find((candidate) => matches(candidate, where));
             return row ? includeProduct(row, include) : null;
@@ -317,6 +355,7 @@ const createProduct = (input) => {
     body.append("variants", JSON.stringify([{
         sku,
         price: Number(price),
+        costPrice: 1,
         stock: Number(stock),
         optionValues: {}
     }]));
@@ -364,8 +403,8 @@ test("admin creates purchasable variants and product detail returns their option
         { name: "Dung lượng", values: [{ value: "128GB", colorHex: null }, { value: "256GB", colorHex: null }] }
     ];
     const variants = [
-        { sku: "GS-BLK-128", price: 10_000_000, stock: 3, options: { "Màu sắc": "Đen", "Dung lượng": "128GB" } },
-        { sku: "GS-WHT-256", price: 10_100_000, stock: 4, options: { "Màu sắc": "Trắng", "Dung lượng": "256GB" } }
+        { sku: "GS-BLK-128", price: 10_000_000, costPrice: 1, stock: 3, options: { "Màu sắc": "Đen", "Dung lượng": "128GB" } },
+        { sku: "GS-WHT-256", price: 10_100_000, costPrice: 1, stock: 4, options: { "Màu sắc": "Trắng", "Dung lượng": "256GB" } }
     ];
     const colorImages = {
         "Đen": PNG.sync.write({ width: 1, height: 1, data: Buffer.from([0, 0, 0, 255]) }),
@@ -402,8 +441,8 @@ test("admin rejects a color configuration without a photo for every color", asyn
             { name: "Bộ nhớ", values: [{ value: "128GB" }] }
         ],
         variants: [
-            { sku: "GS-BLK-128", price: 10_000_000, stock: 3, options: { "Màu sắc": "Đen", "Bộ nhớ": "128GB" } },
-            { sku: "GS-WHT-128", price: 10_100_000, stock: 4, options: { "Màu sắc": "Trắng", "Bộ nhớ": "128GB" } }
+            { sku: "GS-BLK-128", price: 10_000_000, costPrice: 1, stock: 3, options: { "Màu sắc": "Đen", "Bộ nhớ": "128GB" } },
+            { sku: "GS-WHT-128", price: 10_100_000, costPrice: 1, stock: 4, options: { "Màu sắc": "Trắng", "Bộ nhớ": "128GB" } }
         ],
         colorImages: { "Đen": productPng }
     });
@@ -424,8 +463,8 @@ test("cart validation prices the selected variant and maps legacy product IDs on
     const variantResponse = await createProductWithVariants({
         options,
         variants: [
-            { sku: "GS-RED", price: 500, stock: 3, optionValues: { Color: "Red" } },
-            { sku: "GS-BLUE", price: 1000, stock: 4, optionValues: { Color: "Blue" } }
+            { sku: "GS-RED", price: 500, costPrice: 1, stock: 3, optionValues: { Color: "Red" } },
+            { sku: "GS-BLUE", price: 1000, costPrice: 1, stock: 4, optionValues: { Color: "Blue" } }
         ]
     });
     assert.equal(variantResponse.status, 201);
@@ -496,6 +535,10 @@ beforeEach(() => {
     products = [];
     productOptions = [];
     productOptionValues = [];
+    categories = Object.entries(DEVICE_TYPE_LABELS).map(([slug, name], index) => ({ id: index + 1, slug, name, sortOrder: index, isDeleted: false }));
+    tags = [{ id: 1, slug: "gaming", name: "Gaming", isDeleted: false }, { id: 2, slug: "khong-day", name: "Không dây", isDeleted: false }];
+    productTags = [];
+    retireCategoryOnLock = false;
     productVariants = [];
     variantOptionValues = [];
     audits = [];
@@ -521,6 +564,67 @@ test("admin creates supported taxonomy and public listing returns both fields", 
     );
     assert.deepEqual(payload.meta, { page: 1, pageSize: 12, total: 1, totalPages: 1, catalogTotal: 1 });
 });
+
+test("admin soft-deletes a product through DELETE /api/admin/products/:id and the storefront stops listing it", async () => {
+    const created = await (await createProduct(productInput())).json();
+    const response = await fetch(`${baseUrl}/api/admin/products/${created.data.id}`, { method: "DELETE", headers: adminHeaders });
+    assert.equal(response.status, 200);
+    const listing = await (await fetch(`${baseUrl}/api/products`)).json();
+    assert.equal(listing.data.length, 0);
+});
+
+test("public taxonomy, dynamic category, tag and brand filters remain distinct", async () => {
+    categories.push({ id: 7, slug: "webcam", name: "Webcam mới", sortOrder: 7, isDeleted: false });
+    const taxonomy = await fetch(`${baseUrl}/api/catalog/taxonomy`);
+    assert.equal(taxonomy.status, 200);
+    assert.deepEqual(await taxonomy.json(), {
+        categories: categories.map(({ id, slug, name, sortOrder }) => ({ id, slug, name, sortOrder })),
+        tags: tags.map(({ id, slug, name }) => ({ id, slug, name })),
+        brands: BRANDS
+    });
+    const created = await createProduct(productInput({ name: "Webcam Pro", categoryId: 7, deviceType: undefined, sku: "WEB-1" }));
+    assert.equal(created.status, 201);
+    const product = (await created.json()).data;
+    assert.equal(product.categoryId, 7);
+    assert.equal(product.deviceType, "webcam");
+    assert.equal(product.category.name, "Webcam mới");
+    const tagged = await fetch(`${baseUrl}/api/admin/products/${product.id}`, {
+        method: "PUT", headers: adminHeaders, body: JSON.stringify({ tagIds: [1] })
+    });
+    assert.equal(tagged.status, 200);
+    assert.deepEqual((await tagged.json()).data.tags.map(({ slug }) => slug), ["gaming"]);
+    for (const query of ["category=webcam", "tag=gaming", "brand=Logitech", "tag=Logitech"]) {
+        const response = await fetch(`${baseUrl}/api/products?${query}`);
+        assert.equal(response.status, 200, query);
+        assert.equal((await response.json()).meta.total, 1, query);
+    }
+    assert.equal((await (await fetch(`${baseUrl}/api/products?tag=khong-day`)).json()).meta.total, 0);
+    const tagPage = await fetch(`${baseUrl}/the/gaming`);
+    assert.equal(tagPage.status, 200);
+    assert.match(await tagPage.text(), /<title>Gaming — Sản phẩm công nghệ \| NodeShop<\/title>/);
+    const categoryPage = await fetch(`${baseUrl}/danh-muc/webcam`);
+    assert.match(await categoryPage.text(), /<h1>Webcam mới<\/h1>/);
+    const cleared = await fetch(`${baseUrl}/api/admin/products/${product.id}`, {
+        method: "PUT", headers: adminHeaders, body: JSON.stringify({ tagIds: [] })
+    });
+    assert.equal(cleared.status, 200);
+    assert.deepEqual((await cleared.json()).data.tags, []);
+    assert.equal((await (await fetch(`${baseUrl}/api/products?tag=gaming`)).json()).meta.total, 0);
+    assert.equal((await (await fetch(`${baseUrl}/api/products?brand=Logitech`)).json()).meta.total, 1);
+    tags.find(({ slug }) => slug === "gaming").isDeleted = true;
+    assert.equal((await fetch(`${baseUrl}/the/gaming`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/api/products?tag=gaming`)).status, 400);
+    categories.find(({ slug }) => slug === "webcam").isDeleted = true;
+    assert.equal((await fetch(`${baseUrl}/danh-muc/webcam`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/api/products?category=webcam`)).status, 400);
+});
+test("product creation rechecks category after taking the write lock", async () => {
+    retireCategoryOnLock = true;
+    const response = await createProduct(productInput());
+    assert.equal(response.status, 409);
+    assert.equal(products.length, 0);
+});
+
 
 test("public catalog validates pagination and returns stable empty-page metadata", async () => {
     const invalid = await fetch(`${baseUrl}/api/products?page=0`);
@@ -584,6 +688,55 @@ test("admin product listing returns paginated metadata", async () => {
     assert.deepEqual(payload.meta, { page: 1, pageSize: 10, total: 0, totalPages: 1 });
 });
 
+test("admin product validation bounds stock and price", async () => {
+    const attempt = (variant) => createProductWithVariants({ options: [], variants: [{ sku: "BOUND-1", price: 1000, costPrice: 500, stock: 3, optionValues: {}, ...variant }] });
+    const cases = [
+        [{ stock: 99999999999 }, /Tồn kho .* không vượt quá 1\.000\.000/],
+        [{ stock: 1_000_001 }, /Tồn kho/],
+        [{ price: 10_000_000_001 }, /Giá của biến thể .* không vượt quá 10\.000\.000\.000 VND/],
+        [{ costPrice: 1001 }, /Giá vốn .* không vượt quá giá bán/],
+        [{ costPrice: 10_000_000_001, price: 10_000_000_000 }, /Giá vốn .* không vượt quá giá bán/],
+        [{ costPrice: 10_000_000_001 }, /Giá vốn .* không vượt quá/],
+        [{ costPrice: -1 }, /Giá vốn/]
+    ];
+    for (const [variant, message] of cases) {
+        const response = await attempt(variant);
+        const payload = await response.json();
+        assert.equal(response.status, 400, JSON.stringify(variant));
+        assert.ok(payload.errors.some((error) => message.test(error.message)), `${JSON.stringify(variant)}: ${JSON.stringify(payload.errors)}`);
+    }
+    assert.equal(products.length, 0);
+    assert.equal((await attempt({ stock: 1_000_000, price: 10_000_000_000, costPrice: 10_000_000_000 })).status, 201);
+});
+
+test("admin product search treats % and _ as literal characters", async () => {
+    await createProduct(productInput({ name: "Giảm 50% Mouse", sku: "PCT-1" }));
+    await createProduct(productInput({ name: "Plain Mouse", sku: "PLAIN-1" }));
+    const names = async (q) => (await (await fetch(`${baseUrl}/api/admin/products?q=${encodeURIComponent(q)}`, { headers: adminHeaders })).json()).data.map((product) => product.name);
+    assert.deepEqual(await names("%"), ["Giảm 50% Mouse"]);
+    assert.deepEqual(await names("_"), []);
+    assert.deepEqual(await names("Pl_in"), []);
+    assert.deepEqual(await names("Plain"), ["Plain Mouse"]);
+});
+
+test("SEO category pages show page 1 for unusable page numbers and keep a Vietnamese 404 for unknown pages", async () => {
+    await createProduct(productInput({ name: "Mouse Page", sku: "PAGE-1" }));
+    for (const page of ["abc", "0", "-1", "1.5", ""]) {
+        const response = await fetch(`${baseUrl}/danh-muc/mouse?page=${page}`);
+        assert.equal(response.status, 200, `page=${page}`);
+        assert.match(await response.text(), /Mouse Page/);
+    }
+    assert.equal((await fetch(`${baseUrl}/danh-muc/mouse?page=1&page=2`)).status, 400);
+    for (const url of ["/danh-muc/unknown-slug", "/hang/xyz", "/the/nope", "/khong-co-trang"]) {
+        const response = await fetch(`${baseUrl}${url}`, { headers: { Accept: "text/html" } });
+        assert.equal(response.status, 404, url);
+        assert.match(await response.text(), /Không tìm thấy trang/, url);
+    }
+    const api = await fetch(`${baseUrl}/api/khong-co`);
+    assert.equal(api.status, 404);
+    assert.deepEqual(await api.json(), { success: false, error: { code: "NOT_FOUND", message: "Không tìm thấy tài nguyên" } });
+});
+
 test("audit panel requests and returns only the first eight logs", async () => {
     audits = Array.from({ length: 10 }, (_, index) => ({
         id: `AUD-${index}`,
@@ -642,9 +795,12 @@ test("category and brand pages render server-side with canonical pagination and 
     assert.match(filteredHtml, /rel="canonical" href="https:\/\/catalog\.example\.test\/danh-muc\/mouse"/);
     assert.match(filteredHtml, /href="\/danh-muc\/mouse\?sort=name&amp;order=asc&amp;tag=Logitech&amp;page=2"/);
 
-    const brandPage = await fetch(`${baseUrl}/the/logitech?page=2`);
+    const legacyBrandPage = await fetch(`${baseUrl}/the/logitech?page=2`, { redirect: "manual" });
+    assert.equal(legacyBrandPage.status, 301);
+    assert.equal(legacyBrandPage.headers.get("location"), "/hang/logitech?page=2");
+    const brandPage = await fetch(`${baseUrl}/hang/logitech?page=2`);
     assert.equal(brandPage.status, 200);
-    assert.match(await brandPage.text(), /rel="canonical" href="https:\/\/catalog\.example\.test\/the\/logitech\?page=2"/);
+    assert.match(await brandPage.text(), /rel="canonical" href="https:\/\/catalog\.example\.test\/hang\/logitech\?page=2"/);
 
     const emptyPage = await fetch(`${baseUrl}/danh-muc/monitor`);
     const emptyHtml = await emptyPage.text();
@@ -658,7 +814,9 @@ test("category and brand pages render server-side with canonical pagination and 
     const sitemapXml = await sitemap.text();
     assert.equal(sitemap.status, 200);
     assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/danh-muc\/mouse\?page=2/);
-    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/the\/logitech\?page=2/);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/hang\/logitech\?page=2/);
+    assert.match(sitemapXml, /https:\/\/catalog\.example\.test\/the\/gaming/);
+    assert.doesNotMatch(sitemapXml, /\/the\/logitech/);
     assert.equal((sitemapXml.match(/product_info\.html\?id=/g) || []).length, 13);
 });
 
@@ -668,10 +826,13 @@ test("every supported device type and brand has a server-rendered page and anyth
         assert.equal(response.status, 200, slug);
         assert.match(await response.text(), new RegExp(`<h1>${label}</h1>`), slug);
     }
-    for (const brand of ["Apple", "Samsung", "MSI", "Aula", "Logitech", "Razer", "Keychron", "Asus"]) {
-        const response = await fetch(`${baseUrl}/the/${brand.toLowerCase()}`);
+    for (const brand of BRANDS) {
+        const response = await fetch(`${baseUrl}/hang/${brand.toLowerCase()}`);
         assert.equal(response.status, 200, brand);
         assert.match(await response.text(), new RegExp(`<h1>${brand}</h1>`), brand);
+        const legacy = await fetch(`${baseUrl}/the/${brand.toLowerCase()}`, { redirect: "manual" });
+        assert.equal(legacy.status, 301, brand);
+        assert.equal(legacy.headers.get("location"), `/hang/${brand.toLowerCase()}`);
     }
     for (const path of ["/danh-muc/phone", "/danh-muc/tablet", "/the/google"]) {
         assert.equal((await fetch(`${baseUrl}${path}`)).status, 404, path);
@@ -716,7 +877,7 @@ test("product create reports missing and unsupported taxonomy with field errors"
         [productInput({ brand: "Google" }), "brand"],
         [productInput({ deviceType: "phone" }), "deviceType"],
         [productInput({ brand: undefined }), "brand"],
-        [productInput({ deviceType: undefined }), "deviceType"]
+        [productInput({ deviceType: undefined }), "categoryId"]
     ]) {
         const response = await createProduct(input);
         assert.equal(response.status, 400);
@@ -768,28 +929,25 @@ test("every supported brand and device type persists through HTTP", async () => 
     }
 });
 
-test("unsupported taxonomy errors name the current supported values", async () => {
-    const response = await createProduct(productInput({ brand: "Google", deviceType: "phone" }));
+test("invalid category or brand returns a field error", async () => {
+    const response = await createProduct(productInput({ deviceType: "phone" }));
     assert.equal(response.status, 400);
-    const { errors } = await response.json();
-    assert.equal(errors.find((error) => error.field === "brand").message, "Thương hiệu phải là Apple, Samsung, MSI, Aula, Logitech, Razer, Keychron hoặc Asus");
-    assert.equal(errors.find((error) => error.field === "deviceType").message, "Loại thiết bị phải là laptop, keyboard, mouse, headphone, monitor hoặc storage");
+    assert.equal((await response.json()).errors[0].field, "deviceType");
+    const invalidBrand = await createProduct(productInput({ brand: "Google" }));
+    assert.equal(invalidBrand.status, 400);
+    assert.equal((await invalidBrand.json()).errors.find(({ field }) => field === "brand").message, "Thương hiệu phải là Apple, Samsung, MSI, Aula, Logitech, Razer, Keychron hoặc Asus");
 });
 
 test("a deleted product of a retired device type cannot be restored", async () => {
     const { id } = (await (await createProduct(productInput())).json()).data;
-    Object.assign(products.find((row) => row.id === id), { deviceType: "phone", isDeleted: true });
+    Object.assign(products.find((row) => row.id === id), { isDeleted: true });
+    categories.find(({ slug }) => slug === "mouse").isDeleted = true;
     const response = await fetch(`${baseUrl}/api/admin/products/${id}/restore`, { method: "POST", headers: adminHeaders });
     assert.equal(response.status, 409);
     assert.equal(products.find((row) => row.id === id).isDeleted, true);
 });
 
-test("legacy category APIs are no longer mounted", async () => {
+test("obsolete public category endpoint stays unmounted", async () => {
     const publicResponse = await fetch(`${baseUrl}/api/categories`);
     assert.equal(publicResponse.status, 404);
-    const adminResponse = await fetch(`${baseUrl}/api/admin/categories`, {
-        method: "POST", headers: adminHeaders,
-        body: JSON.stringify({ name: "Accessories" })
-    });
-    assert.equal(adminResponse.status, 404);
 });

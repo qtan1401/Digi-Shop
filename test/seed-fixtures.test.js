@@ -6,8 +6,10 @@ const seedData = require("../prisma/seed-data");
 const { COMMENT_POOL_SIZE, buildSeedFixtures } = require("../prisma/seed-fixtures");
 const { normalizeSeedData, SeedDataError } = require("../scripts/db/normalize-seed");
 const {
-    backfillProductImages, backfillSeedExtras, classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary, resolveSeedOrderItems
+    backfillProductImages, backfillSeedExtras, classifyOrders, classifyReviews, classifyUsers, classifyVouchers, createSummary,
+    insertBatch, insertOrders, resolveSeedOrderItems
 } = require("../prisma/seed");
+const { POINT_VALUE } = require("../src/services/loyalty-calculator");
 
 const { products, users, vouchers, orders, reviews } = seedData.commerce;
 const SHIPPING_FEE = 100000;
@@ -16,19 +18,43 @@ const skuToProduct = new Map(products.flatMap((product) => product.variants.map(
 const orderProducts = (order) => new Set(order.items.map((item) => skuToProduct.get(item.variantSku)));
 const delivered = orders.filter((order) => order.orderStatus === "DELIVERED");
 const vnd = (text) => Number(text.replace(/\.00$/, ""));
+const HOUR = 60 * 60 * 1000;
+const TODAY = new Date("2026-11-20T10:00:00Z");
+const LATER = new Date(TODAY.getTime() + 400 * DAY);
+const fixtureCache = new Map();
+const fixturesAt = (reference) => {
+    if (!fixtureCache.has(reference.getTime())) fixtureCache.set(reference.getTime(), buildSeedFixtures(products, reference));
+    return fixtureCache.get(reference.getTime());
+};
+// Calendar month / year in shop time (UTC+7), as the dashboard groups them.
+const shopMonth = (iso) => new Date(Date.parse(iso) + 7 * HOUR).toISOString().slice(0, 7);
+const shopYear = (iso) => Number(shopMonth(iso).slice(0, 4));
+// Revenue order (GLOSSARY): PAID or DELIVERED and not CANCELLED.
+const isRevenue = (order) => order.orderStatus !== "CANCELLED" && (order.paymentStatus === "PAID" || order.orderStatus === "DELIVERED");
+const productOf = (item) => products.find((product) => product.id === skuToProduct.get(item.variantSku));
 
-test("seed fixtures are deterministic for a given reference time and only timestamps move with it", () => {
+test("seed fixtures are deterministic: the same reference time gives the same data and a later one extends the history", () => {
     const reference = new Date("2026-11-05T10:00:00Z");
     const first = buildSeedFixtures(products, reference);
     assert.deepEqual(buildSeedFixtures(products, reference), first);
     const later = buildSeedFixtures(products, new Date(reference.getTime() + 30 * DAY));
-    const stable = (fixtures) => JSON.stringify(fixtures, (key, value) => (/(At|^at)$/.test(key) ? undefined : value));
-    assert.equal(stable(later), stable(first));
-    assert.notDeepEqual(later.orders.map((order) => order.createdAt), first.orders.map((order) => order.createdAt));
+    // Everything older than the moving window (the last weeks' sign-ups, the last 48 hours) is the same order, in the same place.
+    const settled = (fixtures) => fixtures.orders
+        .filter((order) => Date.parse(order.createdAt) < reference.getTime() - 45 * DAY)
+        .map(({ id, userId, items, createdAt, updatedAt, orderStatus, paymentStatus, paymentMethod, customer, statusHistory }) =>
+            ({ id, userId, items, createdAt, updatedAt, orderStatus, paymentStatus, paymentMethod, customer, statusHistory }));
+    assert.ok(settled(first).length > 600);
+    assert.deepEqual(settled(later), settled(first));
+    assert.ok(later.orders.length > first.orders.length, "a later run appends the days in between");
+    const founders = (fixtures) => fixtures.users
+        .filter((user) => Date.parse(user.createdAt) < reference.getTime() - 45 * DAY)
+        .map(({ id, email, username, createdAt }) => ({ id, email, username, createdAt }));
+    assert.deepEqual(founders(later), founders(first));
+    assert.ok(founders(first).length >= 50);
 });
 
 test("seed customers are active, verified, password-less @seed.local accounts", () => {
-    assert.equal(users.length, 12);
+    assert.ok(users.length >= 55 && users.length <= 65, `${users.length} customers`);
     for (const user of users) {
         assert.equal(user.role, "user");
         assert.equal(user.status, "ACTIVE");
@@ -39,11 +65,41 @@ test("seed customers are active, verified, password-less @seed.local accounts", 
     }
     assert.equal(new Set(users.map((user) => user.username)).size, users.length);
     assert.equal(new Set(users.map((user) => user.id)).size, users.length);
+    assert.equal(new Set(users.map((user) => user.email)).size, users.length);
+});
+
+test("the twelve founding demo accounts keep their ids, e-mails and usernames; new customers join over two years with spikes", () => {
+    const founding = [
+        ["minh.tran@seed.local", "minh_tran92"], ["hoa.nguyen@seed.local", "hoa.nguyen"], ["quang.vu@seed.local", "quangvu"],
+        ["trang.le@seed.local", "trangle_hn"], ["anh.pham@seed.local", "ducanh.pham"], ["hai.hoang@seed.local", "haihoang88"],
+        ["lan.dang@seed.local", "lan.dang"], ["bao.bui@seed.local", "baobui_sg"], ["linh.do@seed.local", "khanhlinh"],
+        ["huy.ngo@seed.local", "giahuy.ngo"], ["duyen.duong@seed.local", "myduyen97"], ["kiet.phan@seed.local", "tuankiet_pn"]
+    ];
+    founding.forEach(([email, username], index) => {
+        assert.equal(users[index].email, email);
+        assert.equal(users[index].username, username);
+        assert.equal(users[index].id, `5eed0000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+    });
+    for (const reference of [TODAY, LATER]) {
+        const { users: customers } = fixturesAt(reference);
+        const signups = customers.map((user) => Date.parse(user.createdAt));
+        assert.equal(shopMonth(customers[0].createdAt), "2024-11");
+        assert.ok(signups.every((time) => time <= reference.getTime()));
+        const perMonth = new Map();
+        for (const user of customers.slice(founding.length)) perMonth.set(shopMonth(user.createdAt), (perMonth.get(shopMonth(user.createdAt)) || 0) + 1);
+        assert.ok(perMonth.size >= 18, `new customers appear in ${perMonth.size} different months`);
+        const counts = [...perMonth.values()];
+        assert.ok(Math.max(...counts) >= 3 * Math.min(...counts), "some months have a spike of sign-ups");
+        const lastWeek = customers.filter((user) => reference.getTime() - Date.parse(user.createdAt) <= 7 * DAY);
+        assert.ok(lastWeek.length >= 1, "there are new customers in the last week");
+    }
 });
 
 test("every order has consistent totals, a stable id, and the fixed shipping fee", () => {
-    assert.equal(delivered.length, 40);
-    assert.equal(orders.length - delivered.length, 8);
+    const historyDays = (Date.now() - Date.parse("2024-10-31T17:00:00Z")) / DAY;
+    assert.ok(orders.length >= historyDays * 0.9 && orders.length <= historyDays * 2.5, `${orders.length} orders over ${Math.round(historyDays)} days`);
+    assert.ok(delivered.length >= Math.ceil(products.length * 4 / 3));
+    assert.ok(delivered.length < orders.length);
     assert.equal(new Set(orders.map((order) => order.id)).size, orders.length);
     for (const order of orders) {
         assert.match(order.id, /^ORD-[0-9A-Z]+-[0-9A-Z]{5}$/);
@@ -51,29 +107,40 @@ test("every order has consistent totals, a stable id, and the fixed shipping fee
         for (const item of order.items) assert.equal(vnd(item.unitPrice) * item.quantity, vnd(item.lineTotal));
         assert.equal(vnd(order.subtotal), subtotal);
         assert.equal(vnd(order.shippingFee), SHIPPING_FEE);
-        assert.equal(vnd(order.totalPrice), vnd(order.subtotal) + SHIPPING_FEE - vnd(order.discount));
+        assert.equal(vnd(order.totalPrice), vnd(order.subtotal) + SHIPPING_FEE - vnd(order.discount) - vnd(order.pointsDiscount));
         assert.ok(vnd(order.totalPrice) >= 1000);
         assert.ok(["COD", "MOMO", "VNPAY"].some((method) => order.paymentMethod === method || order.paymentMethod === "Thanh toán khi nhận hàng (COD)"));
         assert.ok(users.some((user) => user.id === order.userId));
     }
+    const times = orders.map((order) => Date.parse(order.createdAt));
+    assert.deepEqual(times, [...times].sort((left, right) => left - right), "orders are listed oldest first");
 });
 
-test("delivered orders are 7-90 days old and recent orders cover every other state", () => {
-    const reference = Math.max(...orders.map((order) => Date.parse(order.updatedAt)));
-    const now = Date.now();
-    assert.ok(reference <= now + 1000);
-    for (const order of delivered) {
-        const ageDays = (now - Date.parse(order.createdAt)) / DAY;
+test("delivered orders are at least three days old and the last 48 hours cover every other state", () => {
+    const { orders: list } = fixturesAt(TODAY);
+    const now = TODAY.getTime();
+    const deliveredList = list.filter((order) => order.orderStatus === "DELIVERED");
+    for (const order of deliveredList) {
         assert.equal(order.paymentStatus, "PAID");
-        assert.ok(ageDays >= 7 && ageDays <= 90.1, `${order.id} is ${ageDays} days old`);
+        assert.ok(now - Date.parse(order.createdAt) >= 3 * DAY, `${order.id} was delivered too early`);
     }
-    const recent = orders.filter((order) => order.orderStatus !== "DELIVERED");
-    for (const order of recent) assert.ok(now - Date.parse(order.createdAt) <= 48 * 60 * 60 * 1000 + 5000);
+    for (const order of list) assert.ok(Date.parse(order.updatedAt) <= now, `${order.id} was updated in the future`);
+    const recent = list.filter((order) => now - Date.parse(order.createdAt) <= 48 * 60 * 60 * 1000);
+    assert.equal(recent.length, 8);
     assert.deepEqual([...new Set(recent.map((order) => order.orderStatus))].sort(), ["CANCELLED", "PENDING", "PROCESSING", "SHIPPED"]);
     const stale = (order) => now - Date.parse(order.createdAt) > 24 * 60 * 60 * 1000;
     assert.ok(recent.some((order) => order.orderStatus === "PENDING" && order.paymentStatus === "UNPAID" && order.paymentMethod.includes("COD") && stale(order)));
     assert.ok(recent.some((order) => order.orderStatus === "PENDING" && order.paymentStatus === "PAID" && ["MOMO", "VNPAY"].includes(order.paymentMethod) && stale(order)));
     assert.ok(recent.some((order) => order.orderStatus === "CANCELLED" && order.paymentStatus === "REFUNDED"));
+    for (const order of recent) assert.equal(order.pointsRedeemed, 0);
+
+    // Older orders: mostly delivered, a share cancelled, every payment method in use.
+    const settled = list.filter((order) => now - Date.parse(order.createdAt) > 14 * DAY);
+    const share = (status) => settled.filter((order) => order.orderStatus === status).length / settled.length;
+    assert.ok(share("DELIVERED") > 0.8 && share("DELIVERED") < 0.97, `delivered share ${share("DELIVERED")}`);
+    assert.ok(share("CANCELLED") > 0.04 && share("CANCELLED") < 0.2, `cancelled share ${share("CANCELLED")}`);
+    assert.ok(settled.every((order) => ["DELIVERED", "CANCELLED"].includes(order.orderStatus)), "nothing is left open after two weeks");
+    assert.deepEqual([...new Set(settled.map((order) => order.paymentMethod))].sort(), ["MOMO", "Thanh toán khi nhận hàng (COD)", "VNPAY"]);
 });
 
 test("vouchers cover every state and each redeemed_count equals its unreleased order vouchers", () => {
@@ -108,7 +175,7 @@ test("vouchers cover every state and each redeemed_count equals its unreleased o
 
 test("order voucher discounts follow the redemption rules and sum to the order discount", () => {
     const withVouchers = orders.filter((order) => order.vouchers.length > 0);
-    assert.ok(withVouchers.length >= 8 && withVouchers.length <= 12);
+    assert.ok(withVouchers.length >= 8 && withVouchers.length < orders.length / 10, "some orders use vouchers, most do not");
     assert.ok(withVouchers.some((order) => order.vouchers.length === 2 && order.vouchers.some((used) => used.type === "PERCENT") && order.vouchers.some((used) => used.type === "FREE_SHIPPING")));
     assert.ok(withVouchers.some((order) => order.vouchers.length === 3));
     const byCode = new Map(vouchers.map((voucher) => [voucher.code, voucher]));
@@ -182,8 +249,16 @@ test("review mix: Vietnamese comment pool, one hidden review, varied product ave
     assert.ok(new Set(reviews.filter((review) => review.comment).map((review) => review.comment)).size >= 40);
     assert.ok(COMMENT_POOL_SIZE >= 40);
     assert.ok(reviews.every((review) => !review.comment || /[À-ỹ]/.test(review.comment)));
+    const wired = new Set(products.filter((product) =>
+        ["keyboard", "mouse"].includes(product.deviceType) && !product.tags.includes("khong-day")).map((product) => product.id));
+    for (const review of reviews.filter((entry) => wired.has(entry.productId) && entry.comment !== null)) {
+        assert.doesNotMatch(review.comment, /pin|Bluetooth|không dây|ghép nối|chuyển giữa máy tính/i);
+    }
     const perProduct = new Map(products.map((product) => [product.id, reviews.filter((review) => review.productId === product.id)]));
     const counts = [...perProduct.values()].map((list) => list.length);
+    assert.equal(perProduct.get(504).length, 0, "Razer Viper V3 Pro has no reviews");
+    assert.ok(perProduct.get(405).every((review) => review.rating === null && review.comment), "Keychron K2 V2 has comment-only reviews");
+    assert.equal(reviews.find((review) => review.isHidden).productId, 402);
     assert.equal(counts.filter((count) => count === 0).length, 1);
     for (const count of counts.filter((entry) => entry > 0)) assert.ok(count >= 3 && count <= 8);
     const averages = [...perProduct.values()].map((list) => {
@@ -199,7 +274,7 @@ test("review mix: Vietnamese comment pool, one hidden review, varied product ave
 
 test("normalization accepts the generated data and rejects broken invariants", () => {
     const normalized = normalizeSeedData(seedData.commerce);
-    assert.equal(normalized.orders.length, 48);
+    assert.equal(normalized.orders.length, orders.length);
     assert.equal(normalized.reviews.length, reviews.length);
     const broken = (mutate) => {
         const copy = structuredClone(seedData.commerce);
@@ -232,9 +307,9 @@ test("seed classification reports unchanged rows on re-run and conflicts instead
     };
 
     const empty = run({ users: [], vouchers: [], orders: [], items: [], orderVouchers: [], reviews: [] });
-    assert.equal(empty.inserts.users.length, 12);
-    assert.equal(empty.inserts.vouchers.length, 8);
-    assert.equal(empty.inserts.orders.length, 48);
+    assert.equal(empty.inserts.users.length, users.length);
+    assert.equal(empty.inserts.vouchers.length, vouchers.length);
+    assert.equal(empty.inserts.orders.length, orders.length);
     assert.equal(empty.inserts.reviews.length, reviews.length);
     assert.equal(empty.conflicts.length, 0);
 
@@ -260,9 +335,9 @@ test("seed classification reports unchanged rows on re-run and conflicts instead
     const again = run(existing);
     assert.equal(again.conflicts.length, 0, JSON.stringify(again.conflicts));
     assert.deepEqual(Object.values(again.inserts).map((list) => list.length), [0, 0, 0, 0]);
-    assert.equal(again.summary.unchanged.users, 12);
-    assert.equal(again.summary.unchanged.vouchers, 8);
-    assert.equal(again.summary.unchanged.orders, 48);
+    assert.equal(again.summary.unchanged.users, users.length);
+    assert.equal(again.summary.unchanged.vouchers, vouchers.length);
+    assert.equal(again.summary.unchanged.orders, orders.length);
     assert.equal(again.summary.unchanged.orderVouchers, normalized.orders.reduce((sum, order) => sum + order.vouchers.length, 0));
     assert.equal(again.summary.unchanged.reviews, reviews.length);
 
@@ -293,7 +368,7 @@ test("every demo customer has a full name and an address book with exactly one d
     assert.ok(ids.every((id) => id.length === 36));
 });
 
-test("loyalty points: each order stores floor(10% of its total / 1000) and each balance is the sum of the credited orders", () => {
+test("loyalty points: each order stores floor(10% of its total / 1000) and each balance is the credited points minus the redeemed ones", () => {
     const worked = (total) => Math.floor(total / 10 / 1000); // 1,000,000 VND -> 100 points
     const balances = new Map(users.map((user) => [user.id, 0]));
     for (const order of orders) {
@@ -302,10 +377,52 @@ test("loyalty points: each order stores floor(10% of its total / 1000) and each 
         const shouldCredit = order.orderStatus !== "CANCELLED" && order.paymentStatus === "PAID" && (order.orderStatus === "DELIVERED" || online);
         assert.equal(order.pointsCreditedAt !== null, shouldCredit, `${order.id} ${order.orderStatus} ${order.paymentMethod}`);
         if (shouldCredit) balances.set(order.userId, balances.get(order.userId) + order.pointsEarned);
+        if (order.pointsRedeemed > 0 && order.pointsReleasedAt === null) balances.set(order.userId, balances.get(order.userId) - order.pointsRedeemed);
     }
     for (const user of users) assert.equal(user.loyaltyPoints, balances.get(user.id), user.username);
-    assert.ok(users.every((user) => user.loyaltyPoints > 0), "every demo customer has points to spend");
+    assert.ok(users.slice(0, 12).every((user) => user.loyaltyPoints > 0), "every founding customer has points to spend");
     assert.ok(orders.some((order) => order.pointsEarned > 0 && order.pointsCreditedAt === null), "some demo orders still wait to credit their points");
+});
+
+test("loyalty points redeemed on orders are legal: 1.000 VND each, within the balance at that moment, returned once by a cancellation", () => {
+    for (const reference of [TODAY, LATER]) {
+        const { users: customers, orders: list } = fixturesAt(reference);
+        const events = new Map(customers.map((user) => [user.id, []]));
+        let redeemedOrders = 0;
+        let released = 0;
+        for (const order of list) {
+            const redeemed = order.pointsRedeemed;
+            assert.equal(vnd(order.pointsDiscount), redeemed * POINT_VALUE, order.id);
+            assert.equal(vnd(order.totalPrice), vnd(order.subtotal) + SHIPPING_FEE - vnd(order.discount) - vnd(order.pointsDiscount), order.id);
+            assert.ok(vnd(order.pointsDiscount) <= (vnd(order.subtotal) + SHIPPING_FEE - vnd(order.discount)) * 0.4 + POINT_VALUE, `${order.id} points cover too much`);
+            if (redeemed === 0) {
+                assert.equal(order.pointsReleasedAt, null);
+                continue;
+            }
+            redeemedOrders += 1;
+            assert.equal(order.pointsReleasedAt !== null, order.orderStatus === "CANCELLED", order.id);
+            events.get(order.userId).push({ at: Date.parse(order.createdAt), points: -redeemed });
+            if (order.pointsReleasedAt !== null) {
+                released += 1;
+                events.get(order.userId).push({ at: Date.parse(order.pointsReleasedAt), points: redeemed });
+            }
+        }
+        for (const order of list) {
+            if (order.pointsCreditedAt !== null) events.get(order.userId).push({ at: Date.parse(order.pointsCreditedAt), points: order.pointsEarned });
+        }
+        for (const user of customers) {
+            // Credits and refunds at the same instant count before a redemption; a balance never dips below zero.
+            const moves = events.get(user.id).sort((left, right) => left.at - right.at || right.points - left.points);
+            let balance = 0;
+            for (const move of moves) {
+                balance += move.points;
+                assert.ok(balance >= 0, `${user.username} overspends points at ${new Date(move.at).toISOString()}`);
+            }
+            assert.equal(balance, user.loyaltyPoints, user.username);
+        }
+        assert.ok(redeemedOrders >= list.length * 0.05, "a share of the orders redeems points");
+        assert.ok(released >= 1, "a cancelled order gave redeemed points back");
+    }
 });
 
 test("every demo order has a status history that starts PENDING, ends on its status and never goes back in time", () => {
@@ -402,7 +519,7 @@ test("every normalized seed variant and order line has a cost below the selling 
 
 test("every sample product shows at least three different photos: the main one plus a numbered gallery whose files exist", () => {
     const normalized = normalizeSeedData({ products, users, vouchers, orders, reviews, audits: seedData.commerce.audits });
-    assert.equal(normalized.products.length, 24);
+    assert.equal(normalized.products.length, products.length);
     for (const product of normalized.products) {
         const urls = [product.image, ...product.images.map((image) => image.url)];
         assert.ok(product.images.length >= 2, `${product.name} needs at least two gallery photos`);
@@ -447,4 +564,192 @@ test("gallery backfill fills a product that has no gallery rows and leaves an ed
     const populated = await run(2);
     assert.equal(populated.filled, 0);
     assert.equal(populated.writes.length, 0);
+});
+
+// ── Two-year demo history ────────────────────────────────────────────────────
+
+test("orders span 2024-11 to the reference day: earliest by 2024-11-30 and orders in every month", () => {
+    for (const reference of [TODAY, LATER]) {
+        const { orders: list } = fixturesAt(reference);
+        const counts = new Map();
+        for (const order of list) counts.set(shopMonth(order.createdAt), (counts.get(shopMonth(order.createdAt)) || 0) + 1);
+        assert.ok(Date.parse(list[0].createdAt) <= Date.parse("2024-11-30T16:59:59Z"), "the first order is placed in 2024-11");
+        assert.equal(shopMonth(list[0].createdAt), "2024-11");
+        const last = shopMonth(list[list.length - 1].createdAt);
+        let [year, month] = [2024, 11];
+        for (;;) {
+            const key = `${year}-${String(month).padStart(2, "0")}`;
+            assert.ok(counts.get(key) >= (key === last ? 1 : 10), `${key} has ${counts.get(key)} orders`);
+            if (key === last) break;
+            [year, month] = month === 12 ? [year + 1, 1] : [year, month + 1];
+        }
+        assert.ok(list.length >= 600, `${list.length} orders`);
+    }
+});
+
+test("revenue (paid or delivered, not cancelled) grows year over year and follows the seasons", () => {
+    const revenueByYear = (list) => {
+        const totals = new Map();
+        for (const order of list.filter(isRevenue)) totals.set(shopYear(order.createdAt), (totals.get(shopYear(order.createdAt)) || 0) + vnd(order.totalPrice));
+        return totals;
+    };
+    const today = revenueByYear(fixturesAt(TODAY).orders);
+    assert.ok(today.get(2026) > today.get(2025), "2026 so far already beats the whole of 2025");
+    assert.ok(today.get(2025) > today.get(2024));
+    const later = revenueByYear(fixturesAt(LATER).orders);
+    const growth = later.get(2026) / later.get(2025);
+    assert.ok(growth >= 1.2 && growth <= 1.45, `2026 is ${Math.round((growth - 1) * 100)}% above 2025`);
+
+    const monthly = new Map();
+    for (const order of fixturesAt(LATER).orders.filter(isRevenue)) monthly.set(shopMonth(order.createdAt), (monthly.get(shopMonth(order.createdAt)) || 0) + 1);
+    const average = (keys) => keys.reduce((sum, key) => sum + monthly.get(key), 0) / keys.length;
+    const springAverage = average(["2025-03", "2025-04", "2025-05"]);
+    assert.ok(average(["2025-06", "2025-07", "2025-08"]) > springAverage * 1.2, "back-to-school months sell more");
+    assert.ok(monthly.get("2025-11") > monthly.get("2025-10") * 1.2, "Black Friday month sells more");
+    assert.ok(average(["2025-12", "2026-01"]) > springAverage * 1.2, "the Tet shopping months sell more");
+});
+
+test("product mix: mice and keyboards sell the most units, laptops and monitors earn more per order, best seller is not the top earner", () => {
+    for (const reference of [TODAY, LATER]) {
+        const { orders: list } = fixturesAt(reference);
+        const units = new Map();
+        const earned = new Map();
+        const typeUnits = new Map();
+        const typeOrders = new Map();
+        for (const order of list.filter(isRevenue)) {
+            const types = new Set();
+            for (const item of order.items) {
+                const product = productOf(item);
+                units.set(product.id, (units.get(product.id) || 0) + item.quantity);
+                earned.set(product.id, (earned.get(product.id) || 0) + vnd(item.lineTotal));
+                typeUnits.set(product.deviceType, (typeUnits.get(product.deviceType) || 0) + item.quantity);
+                types.add(product.deviceType);
+            }
+            for (const type of types) typeOrders.set(type, [...(typeOrders.get(type) || []), vnd(order.totalPrice)]);
+        }
+        const total = [...typeUnits.values()].reduce((sum, value) => sum + value, 0);
+        const peripherals = (typeUnits.get("mouse") + typeUnits.get("keyboard")) / total;
+        assert.ok(peripherals > 0.5 && peripherals > 5 * (typeUnits.get("laptop") / total), `mice and keyboards are ${Math.round(peripherals * 100)}% of the units`);
+        const averageOrder = (type) => typeOrders.get(type).reduce((sum, value) => sum + value, 0) / typeOrders.get(type).length;
+        assert.ok(averageOrder("laptop") > averageOrder("mouse") && averageOrder("laptop") > averageOrder("keyboard"));
+        assert.ok(averageOrder("monitor") > averageOrder("mouse"));
+        const top = (totals) => [...totals.entries()].sort((left, right) => right[1] - left[1])[0][0];
+        const byId = new Map(products.map((product) => [product.id, product]));
+        assert.ok(["mouse", "keyboard"].includes(byId.get(top(units)).deviceType), "the best seller is a mouse or keyboard");
+        assert.ok(["laptop", "monitor"].includes(byId.get(top(earned)).deviceType), "the top earner is a laptop or monitor");
+        assert.notEqual(top(units), top(earned));
+    }
+});
+
+test("history invariants hold on every run date: stock, deleted products, customers, vouchers, buyers and reviews", () => {
+    for (const reference of [TODAY, LATER]) {
+        const fixtures = fixturesAt(reference);
+        const created = new Map(fixtures.users.map((user) => [user.id, Date.parse(user.createdAt)]));
+        for (const product of products) for (const variant of product.variants) assert.ok(variant.stock >= 0, variant.sku);
+        for (const order of fixtures.orders) {
+            assert.ok(created.get(order.userId) < Date.parse(order.createdAt), `${order.id} predates its customer`);
+            for (const item of order.items) {
+                const product = productOf(item);
+                assert.ok(!product.isDeleted || Date.parse(product.deletedAt) > Date.parse(order.createdAt), `${order.id} contains a deleted product`);
+            }
+        }
+        for (const voucher of fixtures.vouchers) {
+            const entries = fixtures.orders.flatMap((order) => order.vouchers).filter((used) => used.code === voucher.code);
+            assert.ok(voucher.quantity <= 10 && entries.length <= voucher.quantity, voucher.code);
+            assert.equal(voucher.redeemedCount, entries.filter((used) => used.releasedAt === null).length);
+        }
+        const deliveredOrders = fixtures.orders.filter((order) => order.orderStatus === "DELIVERED");
+        for (const product of products) {
+            const buyers = new Set(deliveredOrders.filter((order) => orderProducts(order).has(product.id)).map((order) => order.userId));
+            assert.ok(buyers.size >= 4, `${product.name} has ${buyers.size} delivered buyers`);
+        }
+        // Reviews: the same profiles as ever, verified delivered buyers only, identical on a repeated build.
+        assert.deepEqual(buildSeedFixtures(products, reference).reviews, fixtures.reviews);
+        const reviewed = (id) => fixtures.reviews.filter((review) => review.productId === id);
+        assert.equal(reviewed(504).length, 0);
+        assert.ok(reviewed(405).length > 0 && reviewed(405).every((review) => review.rating === null && review.comment));
+        assert.equal(fixtures.reviews.filter((review) => review.isHidden).length, 1);
+        assert.equal(fixtures.reviews.find((review) => review.isHidden).productId, 402);
+        for (const review of fixtures.reviews) {
+            const verified = deliveredOrders.filter((order) => order.userId === review.userId && orderProducts(order).has(review.productId));
+            assert.ok(verified.some((order) => Date.parse(review.createdAt) > Date.parse(order.updatedAt)), `${review.productId}|${review.userId}`);
+            assert.ok(Date.parse(review.createdAt) <= reference.getTime());
+        }
+        normalizeSeedData({ ...seedData.commerce, users: fixtures.users, vouchers: fixtures.vouchers, orders: fixtures.orders, reviews: fixtures.reviews });
+    }
+});
+
+test("insertBatch writes rows in chunks with one cast, numbered placeholder per value", async () => {
+    const statements = [];
+    const transaction = { query: async (statement, parameters) => { statements.push({ statement, parameters }); return { rows: [] }; } };
+    const rows = Array.from({ length: 1201 }, (_, index) => [index, `name ${index}`, index % 2 === 0 ? null : new Date(index)]);
+    await insertBatch(transaction, "things", [["id", "integer"], ["name", "varchar"], ["at", "timestamptz"]], rows);
+    assert.deepEqual(statements.map(({ parameters }) => parameters.length / 3), [500, 500, 201]);
+    assert.match(statements[0].statement, /^INSERT INTO things \(id, name, at\) VALUES \(\$1::integer, \$2::varchar, \$3::timestamptz\), \(\$4::integer/);
+    assert.deepEqual(statements[2].parameters.slice(0, 3), [1000, "name 1000", null]);
+    await insertBatch(transaction, "things", [["id", "integer"]], []);
+    assert.equal(statements.length, 3, "no rows, no statement");
+});
+
+test("insertOrders sends orders, status history, lines and order vouchers as batches that carry every column and count", async () => {
+    const normalized = normalizeSeedData(seedData.commerce);
+    const records = resolveSeedOrderItems(normalized.products, normalized.orders);
+    const statements = [];
+    const transaction = {
+        query: async (statement, parameters = []) => {
+            statements.push({ statement: statement.replace(/\s+/g, " ").trim(), parameters });
+            if (/FROM product_variants/.test(statement)) return { rows: parameters[0].map((sku, index) => ({ id: index + 1, sku })) };
+            if (/FROM vouchers/.test(statement)) return { rows: parameters[0].map((code, index) => ({ id: index + 1, code })) };
+            return { rows: [], rowCount: 1 };
+        }
+    };
+    await insertOrders(transaction, records);
+    const inserted = new Map();
+    for (const { statement, parameters } of statements.filter(({ statement: text }) => text.startsWith("INSERT INTO"))) {
+        const [, table, columns] = statement.match(/^INSERT INTO (\w+) \(([^)]+)\) VALUES/);
+        const width = columns.split(", ").length;
+        const placeholders = [...statement.matchAll(/\$(\d+)::[\w()]+(?:,\d+\))?/g)].map((match) => Number(match[1]));
+        assert.deepEqual(placeholders, parameters.map((_, index) => index + 1), `${table} placeholders are numbered once each, in order`);
+        assert.equal(parameters.length % width, 0);
+        assert.ok(parameters.length / width <= 500 && parameters.length <= 65535);
+        const rows = inserted.get(table) || { columns: columns.split(", "), values: [] };
+        for (let start = 0; start < parameters.length; start += width) rows.values.push(parameters.slice(start, start + width));
+        inserted.set(table, rows);
+    }
+    const count = (pick) => records.reduce((sum, record) => sum + pick(record).length, 0);
+    assert.equal(inserted.get("orders").values.length, records.length);
+    assert.equal(inserted.get("order_status_history").values.length, count((record) => record.statusHistory));
+    assert.equal(inserted.get("order_items").values.length, count((record) => record.items));
+    assert.equal(inserted.get("order_vouchers").values.length, count((record) => record.vouchers));
+    const { columns, values } = inserted.get("orders");
+    const column = (row, name) => row[columns.indexOf(name)];
+    values.forEach((row, index) => {
+        const record = records[index];
+        assert.equal(column(row, "id"), record.id);
+        assert.equal(column(row, "points_redeemed"), record.pointsRedeemed);
+        assert.equal(column(row, "points_discount"), record.pointsDiscount);
+        assert.equal(column(row, "total_price"), record.totalPrice);
+        assert.equal(column(row, "points_released_at")?.getTime() ?? null, record.pointsReleasedAt === null ? null : Date.parse(record.pointsReleasedAt));
+        assert.equal(column(row, "cancelled_at")?.getTime() ?? null, record.orderStatus === "CANCELLED" ? Date.parse(record.updatedAt) : null);
+    });
+    const redeemed = new Map();
+    for (const { statement, parameters } of statements.filter(({ statement: text }) => text.startsWith("UPDATE vouchers SET redeemed_count"))) {
+        redeemed.set(parameters[0], parameters[1]);
+    }
+    assert.equal([...redeemed.values()].reduce((sum, value) => sum + value, 0), vouchers.reduce((sum, voucher) => sum + voucher.redeemedCount, 0));
+});
+
+test("normalization rejects redeemed points that break the total, the balance or the release rule", () => {
+    const broken = (mutate) => {
+        const copy = structuredClone(seedData.commerce);
+        mutate(copy);
+        return () => normalizeSeedData(copy);
+    };
+    const spent = orders.findIndex((order) => order.pointsRedeemed > 0 && order.pointsReleasedAt === null);
+    const unspent = orders.findIndex((order) => order.pointsRedeemed === 0);
+    assert.ok(spent >= 0 && unspent >= 0);
+    assert.throws(broken((data) => { data.orders[spent].pointsRedeemed += 1; }), /loyaltyPoints must equal/);
+    assert.throws(broken((data) => { data.orders[spent].pointsDiscount = "1.00"; }), /totalPrice must equal/);
+    assert.throws(broken((data) => { data.orders[unspent].pointsReleasedAt = data.orders[unspent].updatedAt; }), /pointsReleasedAt needs redeemed points/);
+    assert.throws(broken((data) => { data.orders[unspent].userId = null; data.orders[unspent].pointsRedeemed = 1; }), /without a customer/);
 });

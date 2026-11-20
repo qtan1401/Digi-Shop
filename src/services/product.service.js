@@ -3,14 +3,19 @@
 
 const productRepository = require("../repositories/product.repository");
 const reviewService = require("./review.service");
+const categoryService = require("./category.service");
+const tagService = require("./tag.service");
 
-const REQUIRED_FIELDS = ["name", "brand", "deviceType", "image", "description"];
-const EDITABLE_FIELDS = ["name", "brand", "deviceType", "image", "description"];
-const { BRANDS, DEVICE_TYPES } = require("../../public/js/catalog-taxonomy");
+const REQUIRED_FIELDS = ["name", "brand", "image", "description"];
+const EDITABLE_FIELDS = ["name", "brand", "categoryId", "deviceType", "image", "description"];
+const { BRANDS, brandFromSlug } = require("../../public/js/catalog-taxonomy");
 const joinChoices = (choices) => `${choices.slice(0, -1).join(", ")} hoặc ${choices.at(-1)}`;
 const PRODUCT_STATUSES = ["all", "active", "deleted"];
 const MAX_GALLERY_IMAGES = 20;
 const MIN_SEARCH_LENGTH = 2;
+const { escapeLike } = require("../repositories/like-escape");
+const MAX_PRICE = 10_000_000_000;
+const MAX_STOCK = 1_000_000;
 
 const createDomainError = (message, errors = [], statusCode = 400) => {
     const error = new Error(message);
@@ -148,8 +153,8 @@ const validateProduct = (input) => {
     if (!isAllowed(data.brand, BRANDS)) {
         errors.push({ field: "brand", message: `Thương hiệu phải là ${joinChoices(BRANDS)}` });
     }
-    if (!isAllowed(data.deviceType, DEVICE_TYPES)) {
-        errors.push({ field: "deviceType", message: `Loại thiết bị phải là ${joinChoices(DEVICE_TYPES)}` });
+    if (!Number.isSafeInteger(data.categoryId) || data.categoryId < 1) {
+        errors.push({ field: "categoryId", message: "Vui lòng chọn danh mục đang hoạt động" });
     }
 
     if (typeof data.image !== "string" || isBlank(data.image)) {
@@ -192,11 +197,11 @@ const validateProduct = (input) => {
 
         const price = Number(variant.price);
         const stock = Number(variant.stock);
-        if (!Number.isFinite(price) || !Number.isInteger(price) || price <= 0) {
-            errors.push({ field: "variants", message: `Giá của biến thể ${field} phải là số nguyên dương.` });
+        if (!Number.isFinite(price) || !Number.isInteger(price) || price <= 0 || price > MAX_PRICE) {
+            errors.push({ field: "variants", message: `Giá của biến thể ${field} phải là số nguyên dương và không vượt quá ${MAX_PRICE.toLocaleString("vi-VN")} VND.` });
         }
-        if (!Number.isFinite(stock) || !Number.isInteger(stock) || stock < 0) {
-            errors.push({ field: "variants", message: `Tồn kho của biến thể ${field} phải là số nguyên không âm.` });
+        if (!Number.isFinite(stock) || !Number.isInteger(stock) || stock < 0 || stock > MAX_STOCK) {
+            errors.push({ field: "variants", message: `Tồn kho của biến thể ${field} phải là số nguyên không âm và không vượt quá ${MAX_STOCK.toLocaleString("vi-VN")}.` });
         }
 
         // Cost price: what the shop pays per unit; whole VND, never above the selling price. Left out = 0 (callers that
@@ -238,6 +243,33 @@ const validateProduct = (input) => {
     data.options = options;
     data.variants = normalizedVariants;
     return data;
+};
+
+const resolveCategory = async (input, current) => {
+    const categories = await categoryService.listCategories();
+    const hasId = Object.hasOwn(input, "categoryId");
+    const hasSlug = Object.hasOwn(input, "deviceType");
+    const category = hasId
+        ? categories.find(({ id }) => id === Number(input.categoryId) && /^[1-9]\d{0,9}$/.test(String(input.categoryId)))
+        : hasSlug ? categories.find(({ slug }) => slug === input.deviceType)
+            : categories.find(({ id }) => id === current?.categoryId);
+    if (!category) {
+        const field = hasId || !hasSlug ? "categoryId" : "deviceType";
+        throw createDomainError("Danh mục không tồn tại hoặc đã bị xóa.", [{ field, message: "Vui lòng chọn danh mục đang hoạt động" }]);
+    }
+    return category;
+};
+
+const validateTagIds = async (tagIds) => {
+    if (tagIds === undefined) return;
+    if (!Array.isArray(tagIds) || tagIds.length > tagService.MAX_TAGS_PER_PRODUCT ||
+        tagIds.some((id) => !/^[1-9]\d{0,9}$/.test(String(id)) || Number(id) > 2147483647)) {
+        throw createDomainError("Danh sách thẻ không hợp lệ.", [{ field: "tagIds", message: "Mã thẻ không hợp lệ" }]);
+    }
+    const activeIds = new Set((await tagService.listTags()).map(({ id }) => id));
+    if (tagIds.some((id) => !activeIds.has(Number(id)))) {
+        throw createDomainError("Có thẻ không tồn tại hoặc đã bị xóa.", [{ field: "tagIds", message: "Có thẻ không tồn tại hoặc đã bị xóa" }]);
+    }
 };
 
 const assertUniqueSkus = async (variants, productId, currentProduct) => {
@@ -317,6 +349,7 @@ const getProductByID = async (id, options = {}) => {
     if (!product || (product.isDeleted === true && options.includeDeleted !== true)) {
         throw createDomainError("Không tìm thấy sản phẩm", [], 404);
     }
+    product.tags = await tagService.getProductTags(product.id);
     if (options.includeRatings === true) await reviewService.attachRatings([product]);
     return presentProduct(product, options.includeDeleted === true);
 };
@@ -344,14 +377,16 @@ const getAdminProducts = async (filters = {}) => {
     }
     const q = typeof filters.q === "string" ? filters.q.trim() : "";
     if (q) where.OR = [
-        { name: { contains: q, mode: "insensitive" } },
-        { variants: { some: { isActive: true, sku: { contains: q, mode: "insensitive" } } } }
+        { name: { contains: escapeLike(q), mode: "insensitive" } },
+        { variants: { some: { isActive: true, sku: { contains: escapeLike(q), mode: "insensitive" } } } }
     ];
     const total = await productRepository.countProducts(where);
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const actualPage = Math.min(page, totalPages);
     const data = await productRepository.findAdminPage(where, actualPage, pageSize);
     await reviewService.attachRatings(data);
+    const tagsByProduct = await tagService.getTagsByProductIds(data.map(({ id }) => id));
+    for (const product of data) product.tags = tagsByProduct.get(product.id) || [];
     return { data, meta: { page: actualPage, pageSize, total, totalPages } };
 };
 
@@ -388,21 +423,36 @@ const getCatalogPage = async (filters = {}) => {
     if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) throw createDomainError("Invalid price range.");
     if (filters.minRating !== undefined && !/^[1-5]$/.test(String(filters.minRating))) throw createDomainError("Invalid minRating.");
     const minRating = filters.minRating === undefined ? null : Number(filters.minRating);
+    const [categories, tags] = await Promise.all([categoryService.listCategories(), tagService.listTags()]);
+    const rawTags = filters.tag === undefined ? [] : Array.isArray(filters.tag) ? filters.tag : [filters.tag];
+    const legacyBrands = rawTags.map((value) => brandFromSlug(value)).filter(Boolean);
+    const tagSlugs = rawTags.filter((value) => !brandFromSlug(value));
+    const rawBrands = filters.brand === undefined ? [] : Array.isArray(filters.brand) ? filters.brand : [filters.brand];
+    const brandValues = [...rawBrands, ...legacyBrands];
+    if (brandValues.some((value) => !BRANDS.includes(value))) throw createDomainError("Invalid brand.");
     const result = await productRepository.getCatalogPage({
         page, pageSize, q: Array.from(q).length >= MIN_SEARCH_LENGTH ? q : null,
-        category: allowed("category", DEVICE_TYPES),
-        tag: allowed("tag", BRANDS), minPrice, maxPrice, minRating, sort, order
+        category: allowed("category", categories.map(({ slug }) => slug)),
+        tag: tagSlugs.map((slug) => {
+            if (!tags.some((tag) => tag.slug === slug)) throw createDomainError("Invalid tag.");
+            return slug;
+        }),
+        brand: brandValues, minPrice, maxPrice, minRating, sort, order
     });
     await reviewService.attachRatings(result.data);
+    const tagsByProduct = await tagService.getTagsByProductIds(result.data.map(({ id }) => id));
+    for (const product of result.data) product.tags = tagsByProduct.get(product.id) || [];
     return result;
 };
 
 const createProduct = async (input) => {
-    const data = validateProduct(input);
+    const category = await resolveCategory(input);
+    await validateTagIds(input.tagIds);
+    const data = validateProduct({ ...input, categoryId: category.id, deviceType: category.slug });
     await assertUniqueSkus(data.variants);
     const galleryPlan = resolveGalleryPlan([], input.galleryChanges);
     const timestamp = new Date().toISOString();
-    return await productRepository.createProduct({
+    const product = await productRepository.createProduct({
         ...data,
         galleryPlan,
         slug: slugify(data.name),
@@ -411,6 +461,8 @@ const createProduct = async (input) => {
         createdAt: timestamp,
         updatedAt: timestamp
     });
+    product.tags = await tagService.getProductTags(product.id);
+    return product;
 };
 
 const updateProduct = async (id, input = {}) => {
@@ -433,7 +485,10 @@ const updateProduct = async (id, input = {}) => {
                 : variant);
     }
 
-    const merged = validateProduct({ ...product, ...changes });
+    const category = await resolveCategory(changes, product);
+    await validateTagIds(input.tagIds);
+    const merged = validateProduct({ ...product, ...changes, categoryId: category.id, deviceType: category.slug });
+    merged.tagIds = input.tagIds;
     await assertUniqueSkus(merged.variants, product.id, product);
     merged.galleryPlan = resolveGalleryPlan(product.gallery, input.galleryChanges);
 
@@ -443,7 +498,9 @@ const updateProduct = async (id, input = {}) => {
     delete merged.deletedAt;
     delete merged.createdAt;
     delete merged.gallery;
-    return await productRepository.updateProduct(product.id, merged);
+    const updated = await productRepository.updateProduct(product.id, merged);
+    updated.tags = await tagService.getProductTags(product.id);
+    return updated;
 };
 
 const softDeleteProduct = async (id) => {
@@ -463,9 +520,8 @@ const restoreProduct = async (id) => {
     if (product.isDeleted !== true) {
         throw createDomainError("Sản phẩm hiện không ở trạng thái đã xóa.");
     }
-    if (!isAllowed(product.deviceType, DEVICE_TYPES)) {
-        throw createDomainError("Loại thiết bị của sản phẩm này không còn được bán nên không thể khôi phục.", [], 409);
-    }
+    const category = (await categoryService.listCategories()).find(({ id }) => id === product.categoryId);
+    if (!category) throw createDomainError("Danh mục của sản phẩm đã bị xóa nên không thể khôi phục.", [], 409);
     return await productRepository.restoreProduct(id);
 };
 
@@ -474,7 +530,6 @@ const restore = restoreProduct;
 module.exports = {
     REQUIRED_FIELDS,
     BRANDS,
-    DEVICE_TYPES,
     PRODUCT_STATUSES,
     normalizeSku,
     getProductByID,

@@ -421,7 +421,7 @@ const loadProductInfo = async () => {
             <a href="/" class="product-info__back">Quay lại trang chủ</a>
             <div class="error-message">
                 <h2>Không tìm thấy sản phẩm</h2>
-                <p>${escapeHtml(error.message)}</p>
+                <p>${error.message === "Không tìm thấy sản phẩm" ? "Sản phẩm có thể đã bị xóa hoặc đường dẫn không đúng." : escapeHtml(error.message)}</p>
             </div>`;
     }
 };

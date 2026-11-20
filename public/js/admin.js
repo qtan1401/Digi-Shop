@@ -25,7 +25,39 @@
     const { BRANDS, DEVICE_TYPE_LABELS } = window.CatalogTaxonomy;
     const fillSelect = (select, entries) => entries.forEach(([value, label]) => select.append(new Option(label, value)));
     fillSelect($("#product-brand"), BRANDS.map((brand) => [brand, brand]));
-    fillSelect($("#product-device-type"), Object.entries(DEVICE_TYPE_LABELS));
+    let productTaxonomyReady = false;
+
+    const loadProductTaxonomy = async () => {
+        productTaxonomyReady = false;
+        const [categoriesResponse, tagsResponse] = await Promise.all([
+            api("/api/admin/categories"), api("/api/admin/tags")
+        ]);
+        const categories = categoriesResponse.data;
+        const tags = tagsResponse.data;
+        if (!Array.isArray(categories) || !Array.isArray(tags)) throw new Error("Danh mục và thẻ trả về không hợp lệ.");
+        const categorySelect = $("#product-category");
+        categorySelect.replaceChildren(new Option("Chọn danh mục", ""));
+        categorySelect.value = "";
+        fillSelect(categorySelect, categories.map(({ id, name }) => [id, name]));
+        const tagsList = $("#product-tags-list");
+        tagsList.replaceChildren();
+        if (!tags.length) {
+            tagsList.textContent = "Chưa có thẻ. Bạn có thể tạo thẻ trong mục Danh mục & thẻ.";
+        } else {
+            tags.forEach(({ id, name }) => {
+                const label = document.createElement("label");
+                label.className = "product-tags__option";
+                const input = document.createElement("input");
+                input.type = "checkbox";
+                input.name = "tagIds";
+                input.value = String(id);
+                label.append(input, document.createTextNode(name));
+                tagsList.append(label);
+            });
+        }
+        if (!categories.length) throw new Error("Chưa có danh mục. Hãy tạo danh mục trong mục Danh mục & thẻ trước.");
+        productTaxonomyReady = true;
+    };
 
     const escapeHtml = (value) => String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -197,7 +229,7 @@
             return `<tr class="${deleted ? "is-deleted" : ""}">
                 <td><div class="product-cell"><img src="${escapeHtml(product.image || "")}" alt="" loading="lazy" onerror="this.classList.add('is-broken')"><div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.description || "")}</small></div></div></td>
                 <td><span class="variant-count">${escapeHtml(product.variantCount || 0)} phiên bản</span></td>
-                <td class="brand-cell"><span>${escapeHtml(product.brand)}</span><small>${escapeHtml(DEVICE_TYPE_LABELS[product.deviceType] || product.deviceType)}</small></td>
+                <td class="brand-cell"><span>${escapeHtml(product.brand)}</span><small>${escapeHtml(product.category?.name || DEVICE_TYPE_LABELS[product.deviceType] || product.deviceType)}</small></td>
                 <td class="price-cell">${Number(product.price) === Number(product.priceMax) ? formatPrice(product.price) : `${formatPrice(product.price)} – ${formatPrice(product.priceMax)}`}</td>
                 <td>${stockCell(product.stock)}</td>
                 ${state.status === "deleted" ? `<td class="date-cell">${formatDate(product.deletedAt)}</td>` : ""}
@@ -630,7 +662,8 @@
         const fields = {
             name: $("#product-name").value.trim(),
             brand: $("#product-brand").value,
-            deviceType: $("#product-device-type").value,
+            categoryId: Number($("#product-category").value),
+            tagIds: $$('input[name="tagIds"]:checked', $("#product-tags-list")).map((input) => Number(input.value)),
             image: $("#product-image").files[0] || null,
             description: $("#product-description").value.trim(),
             options,
@@ -640,7 +673,8 @@
         const errors = {};
         if (!fields.name) errors.name = "Vui lòng nhập tên sản phẩm.";
         if (!fields.brand) errors.brand = "Vui lòng chọn thương hiệu.";
-        if (!fields.deviceType) errors.deviceType = "Vui lòng chọn loại thiết bị.";
+        if (!productTaxonomyReady || !$("#product-category").value) errors.categoryId = "Vui lòng chọn danh mục đang hoạt động.";
+        if (fields.tagIds.length > 20) errors.tagIds = "Mỗi sản phẩm có tối đa 20 thẻ.";
         if (!activeColors.length && !state.editingId && !fields.image) errors.image = "Vui lòng chọn ảnh PNG hoặc WebP sản phẩm.";
         if (!fields.description) errors.description = "Vui lòng nhập mô tả.";
         if (!fields.variants.length || fields.variants.some((variant) =>
@@ -778,19 +812,21 @@
         $("#product-image-current").textContent = "";
         $("#product-image-current").hidden = true;
         const submitButton = $("#product-submit-btn");
-        submitButton.disabled = Boolean(id);
-        submitButton.textContent = id ? "Đang tải…" : "Thêm sản phẩm";
+        submitButton.disabled = true;
+        submitButton.textContent = "Đang tải…";
         $("#product-modal-title").textContent = id ? "Sửa sản phẩm" : "Thêm sản phẩm";
-        $("#product-modal-kicker").textContent = id ? "EDIT CATALOG ITEM" : "NEW CATALOG ITEM";
-        $("#product-submit-btn").textContent = id ? "Cập nhật" : "Thêm sản phẩm";
+        $("#product-modal-kicker").textContent = id ? "CHỈNH SỬA SẢN PHẨM" : "SẢN PHẨM MỚI";
         openModal("product-modal", "#product-name");
-        if (!id) return;
         try {
+            await loadProductTaxonomy();
+            if (!id) return;
             const payload = await api(`/api/admin/products/${encodeURIComponent(id)}`);
             const product = payload.data || {};
             $("#product-name").value = product.name || "";
             $("#product-brand").value = product.brand || "";
-            $("#product-device-type").value = product.deviceType || "";
+            $("#product-category").value = String(product.categoryId || product.category?.id || "");
+            const selectedTagIds = new Set((product.tags || []).map((tag) => Number(tag.id)));
+            $$('#product-tags-list input[name="tagIds"]').forEach((input) => { input.checked = selectedTagIds.has(Number(input.value)); });
             const options = product.options || [];
             const colorOption = options.find((option) => String(option.name).trim().toLocaleLowerCase("vi") === "màu sắc");
             const storageOption = options.find((option) => option !== colorOption);
@@ -813,11 +849,14 @@
             updateCoverImageVisibility();
             $("#product-description").value = product.description || "";
         } catch (error) {
-            closeModal("product-modal");
-            showToast(error.message, "error");
+            if (id && !$("#product-name").value) productTaxonomyReady = false;
+            const summary = $("#product-form-error");
+            summary.textContent = error.message || "Không tải được danh mục và thẻ. Hãy đóng biểu mẫu và thử lại.";
+            summary.hidden = false;
+            showToast(summary.textContent, "error");
         } finally {
-            submitButton.disabled = false;
-            submitButton.textContent = "Cập nhật";
+            submitButton.disabled = !productTaxonomyReady;
+            submitButton.textContent = id ? "Cập nhật" : "Thêm sản phẩm";
         }
     };
 
@@ -826,7 +865,7 @@
         event.preventDefault();
         if (state.busy) return;
         const values = validateProductForm();
-        if (!values) return;
+        if (!values || !productTaxonomyReady) return;
         state.busy = true;
         const button = $("#product-submit-btn");
         const original = state.editingId ? "Cập nhật" : "Thêm sản phẩm";
@@ -835,7 +874,8 @@
         for (const [field, value] of Object.entries({
             name: values.name,
             brand: values.brand,
-            deviceType: values.deviceType,
+            categoryId: values.categoryId,
+            tagIds: JSON.stringify(values.tagIds),
             description: values.description,
             options: JSON.stringify(values.options),
             variants: JSON.stringify(values.variants)

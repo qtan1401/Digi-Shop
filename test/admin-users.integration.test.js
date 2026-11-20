@@ -66,6 +66,15 @@ test("search matches email, full name and username", async () => {
     assert.equal((await harness.json("GET", "/api/admin/users?q=" + "x".repeat(101), { as: ADMIN })).status, 400);
 });
 
+test("search treats % and _ as literal characters, not wildcards", async () => {
+    state.users.push(makeUser("a1", { email: "linh@shop.test", fullName: "Nguyễn 100% Linh", username: "nl" }));
+    state.users.push(makeUser("a2", { email: "minh@shop.test", fullName: "Trần Minh", username: "tm" }));
+    const percent = await harness.json("GET", "/api/admin/users?q=" + encodeURIComponent("%"), { as: ADMIN });
+    assert.deepEqual(percent.body.data.map((row) => row.id), ["a1"]);
+    const underscore = await harness.json("GET", "/api/admin/users?q=" + encodeURIComponent("_"), { as: ADMIN });
+    assert.deepEqual(underscore.body.data.map((row) => row.id), []);
+});
+
 test("banning revokes sessions and bumps authVersion, audits, and the old access token stops working", async () => {
     state.users.push(makeUser("victim"));
     state.refreshSessions.push({ id: "s1", userId: "victim", revokedAt: null });

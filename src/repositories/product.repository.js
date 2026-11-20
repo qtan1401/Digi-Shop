@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const { getPrismaClient } = require("../db/prisma");
 const { Prisma } = require("@prisma/client");
 const productImageRepository = require("./product-image.repository");
+const tagRepository = require("./tag.repository");
+const { escapeLike } = require("./like-escape");
 
 const toId = (id) => {
     const value = Number(id);
@@ -30,6 +32,7 @@ const normalizeText = (value) => String(value ?? "").trim().normalize("NFC");
 const normalizeKey = (value) => normalizeText(value).toLocaleLowerCase("vi");
 
 const SUMMARY_INCLUDE = {
+    category: { select: { id: true, slug: true, name: true } },
     variants: {
         where: { isActive: true },
         select: { price: true, stock: true }
@@ -37,6 +40,7 @@ const SUMMARY_INCLUDE = {
 };
 
 const DETAIL_INCLUDE = {
+    category: { select: { id: true, slug: true, name: true } },
     images: { orderBy: { position: "asc" } },
     options: {
         where: { isActive: true },
@@ -90,6 +94,8 @@ const mapProduct = (row, { includeConfiguration = false } = {}) => {
     const product = {
         id: row.id,
         brand: row.brand,
+        categoryId: row.categoryId,
+        category: row.category ? { id: row.category.id, slug: row.category.slug, name: row.category.name } : undefined,
         deviceType: row.deviceType,
         name: row.name,
         slug: row.slug,
@@ -310,12 +316,38 @@ const updateAndRead = async (id, data) => {
     return getProductByIdFrom(prisma, productId);
 };
 
+// Lock the Category in the same transaction as the Product write: concurrent soft-delete must either
+// finish first (and fail this write), or wait until this Product is visible to its in-use check.
+const lockActiveCategory = async (transaction, categoryId) => {
+    await transaction.$queryRaw`SELECT id FROM categories WHERE id = ${categoryId} FOR UPDATE`;
+    const row = await transaction.category.findFirst({ where: { id: categoryId, isDeleted: false }, select: { slug: true } });
+    if (!row) {
+        const error = new Error("Danh mục không tồn tại hoặc đã bị xóa.");
+        error.statusCode = 409;
+        error.errors = [{ field: "categoryId", message: error.message }];
+        throw error;
+    }
+    return row;
+};
+
+const applyTags = async (transaction, productId, tagIds) => {
+    if (tagIds === undefined) return;
+    const result = await tagRepository.replaceProductTags(productId, tagIds.map(Number), transaction);
+    if (result === null) {
+        const error = new Error("Có thẻ không tồn tại hoặc đã bị xóa.");
+        error.statusCode = 400;
+        error.errors = [{ field: "tagIds", message: error.message }];
+        throw error;
+    }
+};
 const createProduct = async (productData = {}) => {
     const prisma = getPrismaClient();
     return prisma.$transaction(async (transaction) => {
+        const category = await lockActiveCategory(transaction, productData.categoryId);
         const data = {
             brand: productData.brand,
-            deviceType: productData.deviceType,
+            categoryId: productData.categoryId,
+            deviceType: category.slug,
             name: productData.name,
             slug: productData.slug,
             image: productData.image,
@@ -329,6 +361,7 @@ const createProduct = async (productData = {}) => {
         const row = await transaction.product.create({ data });
         await saveConfiguration(transaction, row.id, productData.options || [], productData.variants || []);
         await productImageRepository.applyGalleryPlan(transaction, row.id, productData.galleryPlan);
+        await applyTags(transaction, row.id, productData.tagIds);
         return await getProductByIdFrom(transaction, row.id);
     });
 };
@@ -340,14 +373,18 @@ const updateProduct = async (id, changes = {}) => {
     return prisma.$transaction(async (transaction) => {
         const current = await transaction.product.findUnique({ where: { id: productId } });
         if (!current) return null;
+        const category = await lockActiveCategory(transaction, changes.categoryId);
         const data = {};
-        for (const field of ["brand", "deviceType", "name", "image", "description", "isDeleted"]) {
+        for (const field of ["brand", "name", "image", "description", "isDeleted"]) {
             if (Object.prototype.hasOwnProperty.call(changes, field)) data[field] = changes[field];
         }
+        data.categoryId = changes.categoryId;
+        data.deviceType = category.slug;
         if (Object.prototype.hasOwnProperty.call(changes, "deletedAt")) data.deletedAt = toDate(changes.deletedAt);
         await transaction.product.update({ where: { id: productId }, data });
         await saveConfiguration(transaction, productId, changes.options || [], changes.variants || []);
         await productImageRepository.applyGalleryPlan(transaction, productId, changes.galleryPlan);
+        await applyTags(transaction, productId, changes.tagIds);
         return await getProductByIdFrom(transaction, productId);
     });
 };
@@ -363,29 +400,38 @@ const softDelete = async (id) => {
 
 const deleteProduct = async (id) => softDelete(id);
 
-const restore = async (id) => updateAndRead(id, {
-    isDeleted: false,
-    deletedAt: null,
-    updatedAt: new Date()
-});
+const restore = async (id) => {
+    const productId = toId(id);
+    if (productId === null) return null;
+    return getPrismaClient().$transaction(async (tx) => {
+        const current = await tx.product.findUnique({ where: { id: productId } });
+        if (!current) return null;
+        const category = await lockActiveCategory(tx, current.categoryId);
+        await tx.product.update({ where: { id: productId }, data: {
+            isDeleted: false, deletedAt: null, updatedAt: new Date(), deviceType: category.slug
+        } });
+        return getProductByIdFrom(tx, productId);
+    });
+};
 
 const restoreProduct = async (id) => restore(id);
 
 
 
-const getCatalogPage = async ({ page, pageSize, q, category, tag, minPrice, maxPrice, minRating = null, sort, order }) => {
+const getCatalogPage = async ({ page, pageSize, q, category, tag, brand, minPrice, maxPrice, minRating = null, sort, order }) => {
     const client = getPrismaClient();
     const predicates = [Prisma.sql`p.is_deleted = false`];
     if (q) {
         // Treat LIKE wildcards as literal characters, matching substring-search semantics.
-        const escapedQuery = q.replace(/[\\%_]/g, "\\$&");
+        const escapedQuery = escapeLike(q);
         predicates.push(Prisma.sql`(
             lower(immutable_unaccent(p.name)) LIKE '%' || lower(immutable_unaccent(${escapedQuery})) || '%' ESCAPE E'\\\\'
             OR lower(immutable_unaccent(p.description)) LIKE '%' || lower(immutable_unaccent(${escapedQuery})) || '%' ESCAPE E'\\\\'
         )`);
     }
-    if (category.length) predicates.push(Prisma.sql`p.device_type IN (${Prisma.join(category)})`);
-    if (tag.length) predicates.push(Prisma.sql`p.brand IN (${Prisma.join(tag)})`);
+    if (category.length) predicates.push(Prisma.sql`EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.slug IN (${Prisma.join(category)}) AND c.is_deleted = false)`);
+    if (tag.length) predicates.push(Prisma.sql`EXISTS (SELECT 1 FROM product_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.product_id = p.id AND t.slug IN (${Prisma.join(tag)}) AND t.is_deleted = false)`);
+    if (brand.length) predicates.push(Prisma.sql`p.brand IN (${Prisma.join(brand)})`);
     if (minPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) >= ${minPrice}`);
     if (maxPrice !== null) predicates.push(Prisma.sql`COALESCE(v.min_price, 0) <= ${maxPrice}`);
     // Same figure the cards show: average of visible star ratings rounded to one decimal; unrated Products never match.

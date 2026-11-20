@@ -20,20 +20,33 @@ test("normal seed inputs cover every brand and device type with image-backed var
         deviceTypes: ["laptop", "keyboard", "mouse", "headphone", "monitor", "storage"]
     });
     assert.equal(seedData.administrator.username, "admin123");
-    assert.equal(seedData.commerce.orders.length, 48);
-    assert.equal(seedData.commerce.users.length, 12);
-    assert.equal(seedData.commerce.vouchers.length, 8);
+    const commerce = seedData.commerce;
+    assert.ok(commerce.orders.length >= Math.ceil(commerce.products.length * 4 / 3) + 8);
+    // Two years of demo history: 12 founding accounts plus the customers that joined later.
+    assert.ok(commerce.users.length >= 55 && commerce.users.length <= 65);
+    assert.ok(commerce.users.slice(0, 12).every((user) => user.email.endsWith("@seed.local")));
+    assert.equal(commerce.vouchers.length, 8);
     assert.deepEqual(seedData.commerce.audits, []);
-    assert.equal(seedData.commerce.products.length, 24);
+    assert.equal(seedData.commerce.products.length, 42);
     const normalized = normalizeSeedData(seedData.commerce);
-    assert.equal(normalized.products.length, 24);
-    assert.equal(normalized.products.reduce((total, product) => total + product.variants.length, 0), 76);
+    assert.equal(normalized.products.length, seedData.commerce.products.length);
+    assert.ok(normalized.products.reduce((total, product) => total + product.variants.length, 0) >= seedData.commerce.products.length * 2);
     assert.equal(normalized.products.find((product) => product.id === 401).options[0].values[0].colorHex, "#F2F2F4");
 
     const products = seedData.commerce.products;
     for (const brand of seedData.catalog.brands) assert.ok(products.some((product) => product.brand === brand), brand);
     for (const deviceType of seedData.catalog.deviceTypes) assert.ok(products.some((product) => product.deviceType === deviceType), deviceType);
     assert.equal(products.filter((product) => product.deviceType === "laptop").length, 5);
+    for (const type of ["keyboard", "mouse"]) {
+        assert.ok(products.filter((product) => product.deviceType === type).length >= 14, `${type} should paginate at 12 per page`);
+    }
+    const tagCounts = new Map();
+    for (const product of products) {
+        assert.ok(product.tags?.length > 0, `${product.name} needs a seed tag`);
+        for (const tag of product.tags) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+    }
+    assert.deepEqual([...tagCounts.keys()].sort(), ["co-hoc", "di-dong", "gaming", "khong-day", "rgb", "sang-tao-noi-dung", "van-phong"]);
+    for (const [tag, count] of tagCounts) assert.ok(count >= 3, `${tag} needs at least three products`);
 
     for (const product of products) {
         assert.ok(product.variants.length >= 2, `${product.name} needs at least two variants`);

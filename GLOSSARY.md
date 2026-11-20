@@ -22,11 +22,16 @@ A possible choice within a Product option.
 A unique stock-keeping code identifying one Product variant.
 
 **Brand**:
-The maker's customer-facing identity associated with a Product.
+The maker's customer-facing identity associated with a Product. A fixed vocabulary kept in code (`catalog-taxonomy.js`) and checked by the database; each Product has exactly one. Its pages live at `/hang/<brand>`. It is not a Tag: a Brand names who makes the Product, a Tag describes what it is good for.
+_Avoid_: Tag (for a maker), Manufacturer
 
-**Device type**:
-The broad class used to organize a Product in the catalog: phone, tablet, or laptop.
-_Avoid_: Category
+**Category**:
+The broad class an administrator uses to organize a Product in the catalog (laptop, keyboard, mouse, headphone, monitor, storage, and any later one). Each Product belongs to exactly one Category. It is a row of the `categories` table with a Vietnamese name, a unique slug and a sort order, managed in the admin "Danh mục & thẻ" screen, and its page is `/danh-muc/<slug>`. Deleting one is a soft delete, refused while undeleted Products still belong to it; its slug cannot change while any Product belongs to it. It replaces the former fixed Device type (the `device_type` column stays for now, copied from the Category on write).
+_Avoid_: Device type, Type, Collection
+
+**Tag**:
+A free-form attribute attached to any number of Products, and any number of Tags to a Product, such as `gaming`, `khong-day`, `van-phong`, `co-hoc`, `rgb` or `di-dong`. A row of the `tags` table (unique slug, name, soft delete) linked through `product_tags`. Its page is `/the/<slug>`. A Tag is not a Brand and not a Category.
+_Avoid_: Label, Keyword, Brand (for a Tag)
 
 **Product catalog**:
 The set of Products currently offered for browsing and purchase.
@@ -162,11 +167,11 @@ _Avoid_: Blocked, suspended
 ### Landing page and catalog
 
 **Landing page**:
-The shop's front page at `/`: a short introduction, the New products, the Best sellers and one strip of four Products per device type. It lists nothing in full; each group links to the Catalog page.
+The shop's front page at `/`: a short introduction, the New products, the Best sellers and one strip of four Products per Category. It lists nothing in full; each group links to the Catalog page.
 _Avoid_: Home catalog
 
 **Catalog page**:
-The page at `/catalog.html` (also `/danh-muc/<device type>` and `/the/<brand>`) that lists the whole Product catalog, 12 per page, filterable by device type, brand, price range and minimum rating, with the page number always shown.
+The page at `/catalog.html` (also `/danh-muc/<category slug>`, `/hang/<brand>` and `/the/<tag slug>`) that lists the whole Product catalog, 12 per page, filterable by Category, Brand, Tag, price range and minimum rating, with the page number always shown. The old `/the/<brand>` links answer 301 to `/hang/<brand>`.
 _Avoid_: Home page
 
 **New products**:

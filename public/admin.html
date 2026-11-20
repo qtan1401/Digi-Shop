@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/css/admin.css">
     <link rel="stylesheet" href="/css/admin-orders.css">
     <link rel="stylesheet" href="/css/admin-vouchers.css">
+    <link rel="stylesheet" href="/css/admin-categories.css">
     <link rel="stylesheet" href="/css/admin-reviews.css">
     <link rel="stylesheet" href="/css/admin-users.css">
     <link rel="stylesheet" href="/css/admin-dashboard.css">
@@ -28,6 +29,9 @@
                 </a>
                 <a class="admin-navlink" href="#/san-pham" data-nav="san-pham">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/></svg>Sản phẩm
+                </a>
+                <a class="admin-navlink" href="#/danh-muc-the" data-nav="danh-muc-the">
+                    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12V5a2 2 0 0 0-2-2h-7L3 11l8 8a2 2 0 0 0 2.8 0l5.6-5.6A2 2 0 0 0 20 12Z"/><circle cx="15" cy="8" r="1"/></svg>Danh mục &amp; thẻ
                 </a>
                 <a class="admin-navlink" href="#/don-hang" data-nav="don-hang">
                     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Đơn hàng
@@ -118,6 +122,10 @@
                     </div>
                 </section>
 
+                <section data-view="danh-muc-the" id="view-danh-muc-the" aria-label="Danh mục và thẻ" hidden>
+                    <div id="categories-root"></div>
+                </section>
+
                 <section data-view="don-hang" id="view-don-hang" aria-label="Đơn hàng" hidden>
                     <div id="orders-root"></div>
                 </section>
@@ -181,7 +189,7 @@
         <section class="modal" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
             <div class="modal-header">
                 <div>
-                    <p class="panel-kicker" id="product-modal-kicker">CATALOG</p>
+                    <p class="panel-kicker" id="product-modal-kicker">DANH MỤC</p>
                     <h2 id="product-modal-title">Thêm sản phẩm</h2>
                 </div>
                 <button class="modal-close" type="button" data-close-modal="product-modal" aria-label="Đóng cửa sổ">×</button>
@@ -222,13 +230,18 @@
                         </select>
                         <small class="field-error" data-error-for="brand"></small>
                     </div>
-                    <div class="field" data-field="deviceType">
-                        <label for="product-device-type">Loại thiết bị <span>*</span></label>
-                        <select id="product-device-type" name="deviceType" required>
-                            <option value="">Chọn loại thiết bị</option>
+                    <div class="field" data-field="categoryId">
+                        <label for="product-category">Danh mục <span>*</span></label>
+                        <select id="product-category" name="categoryId" required>
+                            <option value="">Chọn danh mục</option>
                         </select>
-                        <small class="field-error" data-error-for="deviceType"></small>
+                        <small class="field-error" data-error-for="categoryId"></small>
                     </div>
+                    <fieldset class="field field--wide product-tags" data-field="tagIds">
+                        <legend>Thẻ sản phẩm <span class="field-hint-inline">(tuỳ chọn, tối đa 20)</span></legend>
+                        <div id="product-tags-list" class="product-tags__list" aria-live="polite"></div>
+                        <small class="field-error" data-error-for="tagIds"></small>
+                    </fieldset>
                     <div class="field field--wide variant-editor" data-field="variants">
                         <label>Các phiên bản có thể bán <span>*</span></label>
                         <p class="field-hint">Mỗi tổ hợp tùy chọn là một phiên bản. SKU, giá và tồn kho được quản lý riêng.</p>
@@ -278,6 +291,7 @@
     <script src="/js/admin.js"></script>
     <script src="/js/admin-kit.js"></script>
     <script src="/js/admin-orders.js"></script>
+    <script src="/js/admin-categories.js"></script>
     <script src="/js/admin-vouchers.js"></script>
     <script src="/js/admin-reviews.js"></script>
     <script src="/js/admin-overview.js"></script>

@@ -13,13 +13,17 @@ const REVENUE_SQL = "(o.payment_status = 'PAID' OR o.order_status = 'DELIVERED')
 // Bucket start as a calendar date in shop time (UTC+7). PostgreSQL date_trunc('week', ...) starts on Monday.
 // Convert timestamptz to a timezone-independent local timestamp before truncating, then return a date at UTC midnight.
 // These are whitelisted constants chosen by granularity, never user input.
-const LOCAL = "((o.created_at AT TIME ZONE 'UTC') + interval '7 hours')";
-const BUCKET_SQL = Object.freeze({
-    year: `date_trunc('year', ${LOCAL})::date`,
-    quarter: `date_trunc('quarter', ${LOCAL})::date`,
-    month: `date_trunc('month', ${LOCAL})::date`,
-    week: `date_trunc('week', ${LOCAL})::date`
-});
+const bucketSql = (alias) => {
+    const local = `((${alias}.created_at AT TIME ZONE 'UTC') + interval '7 hours')`;
+    return Object.freeze({
+        year: `date_trunc('year', ${local})::date`,
+        quarter: `date_trunc('quarter', ${local})::date`,
+        month: `date_trunc('month', ${local})::date`,
+        week: `date_trunc('week', ${local})::date`
+    });
+};
+const ORDER_BUCKET_SQL = bucketSql("o");
+const USER_BUCKET_SQL = bucketSql("u");
 
 const num = (value) => (value === null || value === undefined ? 0 : Number(value));
 
@@ -60,14 +64,16 @@ const getSummary = async ({ newUsersSince }) => {
 };
 
 /**
- * Per-bucket aggregates between two instants (to exclusive):
+ * Per-bucket aggregates between two instants (to exclusive), every one a single GROUP BY:
  *  orders: non-cancelled orders placed, revenue orders' total and voucher+points deductions;
- *  items: revenue orders' lines per bucket and device type (units, line totals, cost at purchase).
+ *  items: revenue orders' lines per bucket and device type (units, line totals, cost at purchase);
+ *  users: customer accounts (role 'user') created per bucket.
  */
 const getSeriesRows = async ({ granularity, from, to }) => {
-    const bucket = BUCKET_SQL[granularity];
+    const bucket = ORDER_BUCKET_SQL[granularity];
+    const userBucket = USER_BUCKET_SQL[granularity];
     const client = getPrismaClient();
-    const [orders, items] = await Promise.all([
+    const [orders, items, users] = await Promise.all([
         client.$queryRawUnsafe(
             `SELECT ${bucket} AS bucket,
                     COUNT(*) AS orders,
@@ -93,6 +99,14 @@ const getSeriesRows = async ({ granularity, from, to }) => {
              GROUP BY ${bucket}, p.device_type`,
             from,
             to
+        ),
+        client.$queryRawUnsafe(
+            `SELECT ${userBucket} AS bucket, COUNT(*) AS "newUsers"
+             FROM users u
+             WHERE u.role = 'user' AND u.created_at >= $1 AND u.created_at < $2
+             GROUP BY ${userBucket}`,
+            from,
+            to
         )
     ]);
     return {
@@ -103,7 +117,8 @@ const getSeriesRows = async ({ granularity, from, to }) => {
             quantity: num(row.quantity),
             lineTotal: num(row.lineTotal),
             cost: num(row.cost)
-        }))
+        })),
+        users: users.map((row) => ({ bucket: row.bucket, newUsers: num(row.newUsers) }))
     };
 };
 

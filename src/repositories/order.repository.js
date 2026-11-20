@@ -3,6 +3,7 @@
 
 const { getPrismaClient } = require("../db/prisma");
 const voucherRepository = require("./voucher.repository");
+const { escapeLike } = require("./like-escape");
 const loyaltyRepository = require("./loyalty.repository");
 
 const CANCELLABLE_STATUSES = ["PENDING", "PROCESSING"];
@@ -207,9 +208,9 @@ const adminOrderWhere = ({ status, paymentStatus, from, to, search } = {}) => {
     }
     if (search) {
         where.OR = [
-            { id: { contains: search, mode: "insensitive" } },
-            { customerName: { contains: search, mode: "insensitive" } },
-            { customerPhone: { contains: search, mode: "insensitive" } }
+            { id: { contains: escapeLike(search), mode: "insensitive" } },
+            { customerName: { contains: escapeLike(search), mode: "insensitive" } },
+            { customerPhone: { contains: escapeLike(search), mode: "insensitive" } }
         ];
     }
     return where;

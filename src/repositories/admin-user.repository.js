@@ -2,6 +2,7 @@
 // Read side of customer management. Status changes go through auth.repository.setUserStatus.
 
 const { getPrismaClient } = require("../db/prisma");
+const { escapeLike } = require("./like-escape");
 
 const LIST_SELECT = {
     id: true,
@@ -33,9 +34,9 @@ const customerWhere = (search) => {
     const where = { role: "user" };
     if (search) {
         where.OR = [
-            { email: { contains: search, mode: "insensitive" } },
-            { fullName: { contains: search, mode: "insensitive" } },
-            { username: { contains: search, mode: "insensitive" } }
+            { email: { contains: escapeLike(search), mode: "insensitive" } },
+            { fullName: { contains: escapeLike(search), mode: "insensitive" } },
+            { username: { contains: escapeLike(search), mode: "insensitive" } }
         ];
     }
     return where;

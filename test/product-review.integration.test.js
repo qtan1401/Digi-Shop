@@ -11,6 +11,9 @@ process.env.TRUST_PROXY = "1";
 // ===== In-memory Prisma fake (only what the review/product code paths use) =====
 let users;
 let products;
+let categories;
+let tags;
+let productTags;
 let reviews;
 let audits;
 let nextReviewId;
@@ -52,6 +55,24 @@ const reviewMatches = (row, where = {}) => {
 const byNewest = (a, b) => b.createdAt - a.createdAt || b.id - a.id;
 
 const fakePrisma = {
+    category: {
+        findMany: async ({ where = {} } = {}) => categories.filter((row) =>
+            Object.entries(where).every(([field, value]) => row[field] === value)),
+        findFirst: async ({ where = {} } = {}) => categories.find((row) =>
+            Object.entries(where).every(([field, value]) => row[field] === value)) || null
+    },
+    tag: {
+        findMany: async ({ where = {} } = {}) => tags.filter((row) =>
+            Object.entries(where).every(([field, value]) => row[field] === value)),
+        findFirst: async ({ where = {} } = {}) => tags.find((row) =>
+            Object.entries(where).every(([field, value]) => row[field] === value)) || null
+    },
+    productTag: {
+        findMany: async ({ where }) => productTags
+            .filter((link) => where.productId.in.includes(link.productId))
+            .map((link) => ({ productId: link.productId, tag: tags.find((tag) => tag.id === link.tagId) }))
+            .filter(({ tag }) => tag && !tag.isDeleted)
+    },
     user: {
         findUnique: async ({ where }) => {
             const row = users.find((user) => user.id === where.id);
@@ -122,18 +143,31 @@ const fakePrisma = {
 };
 // Catalog code reads product data through other methods; this suite only needs the review paths
 // plus the catalog listing, which is served from these minimal product readers.
-fakePrisma.product.count = async () => products.filter((row) => !row.isDeleted).length;
+fakePrisma.product.count = async ({ where = {} } = {}) => products.filter((row) =>
+    Object.entries(where).every(([field, value]) => row[field] === value)).length;
 fakePrisma.$queryRaw = async (query) => {
     const sql = query.sql || "";
-    const live = products.filter((row) => !row.isDeleted).sort((a, b) => a.id - b.id);
-    if (sql.includes("COUNT(*) AS total")) return [{ total: live.length }];
-    return live.map((row) => ({ id: row.id, min_price: 1000 }));
+    const values = query.values || [];
+    let rows = products.filter((row) => !row.isDeleted).sort((a, b) => a.id - b.id);
+    if (sql.includes("categories c")) {
+        const category = values.find((value) => categories.some(({ slug }) => slug === value));
+        rows = rows.filter((row) => categories.some(({ id, slug, isDeleted }) =>
+            id === row.categoryId && slug === category && !isDeleted));
+    }
+    if (sql.includes("COUNT(*) AS total")) return [{ total: rows.length }];
+    const size = Number(values.at(-2));
+    const offset = Number(values.at(-1));
+    return rows.slice(offset, offset + size).map((row) => ({ id: row.id, min_price: 1000 }));
 };
-fakePrisma.product.findMany = async ({ where }) => {
+fakePrisma.product.findMany = async ({ where, include }) => {
     const ids = where.id?.in;
     return products
         .filter((row) => ids ? ids.includes(row.id) : !where.isDeleted || !row.isDeleted)
-        .map((row) => ({ ...row, variants: [{ price: 1000, stock: 1 }] }));
+        .map((row) => ({
+            ...row,
+            category: include?.category ? categories.find(({ id }) => id === row.categoryId) : undefined,
+            variants: [{ price: 1000, stock: 1 }]
+        }));
 };
 
 const db = require("../src/db/prisma");
@@ -195,10 +229,16 @@ beforeEach(() => {
         { id: "noname", email: "n@x.test", username: null, role: "user", status: "ACTIVE", authVersion: 1, forcePasswordChange: false },
         { id: "admin-1", email: "ad@x.test", username: "root", role: "admin", status: "ACTIVE", authVersion: 1, forcePasswordChange: false }
     ];
+    categories = [
+        { id: 1, slug: "mouse", name: "Chuột", sortOrder: 0, isDeleted: false },
+        { id: 2, slug: "laptop", name: "Laptop", sortOrder: 1, isDeleted: false }
+    ];
+    tags = [];
+    productTags = [];
     products = [
-        { id: 1, name: "Mouse One", isDeleted: false },
-        { id: 2, name: "Laptop Two", isDeleted: false },
-        { id: 3, name: "Gone", isDeleted: true }
+        { id: 1, name: "Mouse One", categoryId: 1, deviceType: "mouse", isDeleted: false },
+        { id: 2, name: "Laptop Two", categoryId: 2, deviceType: "laptop", isDeleted: false },
+        { id: 3, name: "Gone", categoryId: 1, deviceType: "mouse", isDeleted: true }
     ];
     reviews = [];
     audits = [];

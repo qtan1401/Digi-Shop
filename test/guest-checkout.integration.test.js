@@ -543,6 +543,34 @@ test("an invalid or missing email is rejected before anything is created", async
     assert.equal(sentMail.length, 0);
 });
 
+test("checkout rejects over-long customer fields and non-integer quantities with a Vietnamese 400 before touching the database", async () => {
+    const as = { as: ["user-1", "user"] };
+    const cart = (extra = {}) => send("POST", "/api/checkout/batch", { items: [{ variantId: 1, quantity: 1 }], paymentMethod: "COD", ...customer, ...extra }, as);
+    const buyNow = (extra = {}) => send("POST", "/api/checkout", { variantId: 1, quantity: 1, paymentMethod: "COD", ...customer, ...extra }, as);
+    const tooLong = [
+        [{ customerName: "N".repeat(300) }, /Tên khách hàng tối đa 200 ký tự/],
+        [{ customerAddress: "A".repeat(2000) }, /Địa chỉ tối đa 500 ký tự/],
+        [{ note: "x".repeat(5000) }, /Ghi chú tối đa 1000 ký tự/]
+    ];
+    for (const [extra, message] of tooLong) {
+        for (const response of [await cart(extra), await buyNow(extra)]) {
+            const body = await response.json();
+            assert.equal(response.status, 400);
+            assert.match(body.message, message);
+        }
+    }
+    for (const quantity of [1.5, "1.5", 0, -1, "abc", null]) {
+        const batch = await cart({ items: [{ variantId: 1, quantity }] });
+        assert.equal(batch.status, 400, `batch ${quantity}`);
+        assert.equal((await batch.json()).message, "quantity phải là số nguyên dương");
+        const single = await buyNow({ quantity });
+        assert.equal(single.status, 400, `single ${quantity}`);
+        assert.equal((await single.json()).message, "quantity phải là số nguyên dương");
+    }
+    assert.equal(state.orders.size, 0);
+    assert.equal(state.productVariants.get(1).stock, 10);
+});
+
 test("pointsToUse is rejected for a guest, even on an account that has points", async () => {
     const response = await guestCart("khach@example.test", { pointsToUse: 5 });
     assert.equal(response.status, 400);
