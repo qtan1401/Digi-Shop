@@ -1,0 +1,57 @@
+# Render Blueprint for Digi-Shop (one free Docker web service). See docs/deploy.md.
+# Secrets are never stored here: variables marked `sync: false` are typed once in the Render dashboard.
+services:
+  - type: web
+    name: digishop
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      # One instance on Render's free plan: keep throttling and review events in this process
+      # so Neon is not woken up for them. Multi-instance mode is demonstrated locally (npm run cluster).
+      - key: RATE_LIMIT_STORE
+        value: memory
+      - key: REVIEW_EVENTS_MODE
+        value: direct
+      - key: PRODUCT_IMAGE_STORAGE
+        value: cloudinary
+      - key: PAYMENT_ENV
+        value: sandbox
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DB_SSL
+        value: "true"
+      - key: DB_POOL_MAX
+        value: "5"
+      - key: DB_CONNECT_TIMEOUT_MS
+        value: "15000"
+      - key: ADMIN_EXTRAS
+        value: "0"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: APP_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: ADMIN_DEFAULT_PASSWORD
+        sync: false

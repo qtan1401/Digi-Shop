@@ -2,6 +2,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+deploy/*.env.yaml
+deploy/*.env
 data/product-images/*
 !data/product-images/SOURCES.md
 # Commit only seed fixtures; UUID-named runtime uploads remain ignored.

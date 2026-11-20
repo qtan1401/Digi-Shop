@@ -1,0 +1,15 @@
+.env*
+!.env.example
+deploy/*.env.yaml
+node_modules
+.git
+test
+test-db
+test-support
+docs
+prisma/migrations-sqlserver
+data/product-images/[0-9a-f]*-*-*
+# Product images are deny-by-default; allow only committed seed assets.
+data/product-images/*
+!data/product-images/SOURCES.md
+!data/product-images/[0-9][0-9][0-9]-*
