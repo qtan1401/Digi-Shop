@@ -110,11 +110,15 @@ const toPublicReview = (row) => ({
 
 /** Broadcast after the database change is committed. A broadcast failure never fails the request. */
 const publishChange = async (productId, type, review) => {
-    if (!reviewHub.hasSubscribers(productId)) return;
+    const hasSubscribers = reviewHub.hasSubscribers(productId);
+    const reviewEvents = require("../realtime/review-events");
+    if (!hasSubscribers && !reviewEvents.isDatabaseMode()) return;
     try {
-        reviewHub.publish(productId, { type, review, aggregate: await buildSummary(productId) });
-    } catch (error) {
-        console.error(`Review broadcast failed: ${error?.message || "unknown error"}`);
+        const event = { type, review, aggregate: await buildSummary(productId) };
+        await reviewEvents.record(productId, event);
+        if (hasSubscribers) reviewHub.publish(productId, event);
+    } catch (_) {
+        console.error("Review broadcast failed");
     }
 };
 

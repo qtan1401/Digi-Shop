@@ -1,4 +1,5 @@
 const { expireDueAttempts } = require("../repositories/payment.repository");
+const { instanceId } = require("../infra/instance");
 
 const startPaymentExpirationWorker = ({ intervalMs = 10_000, expire = expireDueAttempts, logger = console } = {}) => {
     let running = false;
@@ -10,7 +11,8 @@ const startPaymentExpirationWorker = ({ intervalMs = 10_000, expire = expireDueA
         running = true;
         currentRun = (async () => {
             try {
-                await expire();
+                const expiredCount = await expire();
+                if (expiredCount > 0) logger.log?.(`Payment expiry sweep processed ${expiredCount} attempt(s) on ${instanceId}.`);
             } catch (error) {
                 logger.error?.(`Payment expiry sweep failed (${error?.code || error?.name || "unknown"}).`);
             } finally {

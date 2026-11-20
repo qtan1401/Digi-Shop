@@ -35,7 +35,7 @@ const clientAddress = (req) => {
     return req.socket.remoteAddress || "unknown";
 };
 
-const createReviewHub = () => {
+const createReviewHub = ({ reviewEvents = require("./review-events") } = {}) => {
     const rooms = new Map(); // productId -> Set<WebSocket>
     const perIp = new Map(); // address -> open connections
     let total = 0;
@@ -47,6 +47,11 @@ const createReviewHub = () => {
         let room = rooms.get(productId);
         if (!room) rooms.set(productId, room = new Set());
         room.add(ws);
+        if (rooms.size === 1 && room.size === 1) {
+            void reviewEvents.startPolling((eventProductId, payload) => {
+                try { publish(eventProductId, payload); } catch (_) { console.error("Review event delivery failed"); }
+            });
+        }
     };
 
     const leave = (productId, ws) => {
@@ -54,6 +59,7 @@ const createReviewHub = () => {
         if (!room) return;
         room.delete(ws);
         if (room.size === 0) rooms.delete(productId);
+        if (rooms.size === 0) reviewEvents.stopPolling();
     };
 
     const track = (address, delta) => {
@@ -131,6 +137,7 @@ const createReviewHub = () => {
         detach = async () => {
             server.removeListener("upgrade", handleUpgrade);
             clearInterval(heartbeat);
+            reviewEvents.stopPolling();
             const closing = wss;
             wss = null;
             detach = null;

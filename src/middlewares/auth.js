@@ -31,7 +31,8 @@ const serializeCookie = (name, value, options) => {
     if (options.maxAge !== undefined) parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
     return parts.join("; ");
 };
-const rateBuckets = new Map();
+const { createRateLimitStore } = require("../infra/rate-limit-store");
+const rateLimitStore = createRateLimitStore();
 const RATE_LIMITS = Object.freeze({
     login: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 30, identifierMax: 10 }),
     resend: Object.freeze({ windowMs: 15 * 60 * 1000, ipMax: 10, identifierMax: 5 }),
@@ -54,45 +55,22 @@ const normalizeRateIdentifier = (value) =>
 const rateKey = (kind, value) =>
     crypto.createHash("sha256").update(`${kind}\u0000${value}`, "utf8").digest("hex");
 
-const pruneRateBuckets = (now) => {
-    for (const [key, bucket] of rateBuckets) {
-        if (bucket.expiresAt <= now) rateBuckets.delete(key);
-    }
-    while (rateBuckets.size > 10000) {
-        const oldest = rateBuckets.keys().next().value;
-        if (oldest === undefined) break;
-        rateBuckets.delete(oldest);
-    }
-};
-
-const rateLimitAuth = (kind) => (req, res, next) => {
+const rateLimitAuth = (kind) => async (req, res, next) => {
     const policy = RATE_LIMITS[kind] || RATE_LIMITS.login;
-    const now = Date.now();
-    pruneRateBuckets(now);
     const ip = req.ip || req.socket?.remoteAddress || "unknown";
     const identifier = normalizeRateIdentifier(req.body?.identifier || req.body?.email);
     const descriptors = [
         { key: rateKey(`${kind}:ip`, ip), limit: policy.ipMax },
         ...(identifier ? [{ key: rateKey(`${kind}:identifier`, identifier), limit: policy.identifierMax }] : [])
     ];
-    const blocked = descriptors.some(({ key, limit }) => {
-        const bucket = rateBuckets.get(key);
-        return bucket && bucket.expiresAt > now && bucket.count >= limit;
-    });
+    const hits = await Promise.all(descriptors.map(({ key }) => rateLimitStore.hit(key, policy.windowMs)));
+    const blocked = hits.some((bucket, index) => bucket && bucket.count > descriptors[index].limit);
     if (blocked) {
         res.set("Retry-After", String(Math.ceil(policy.windowMs / 1000)));
         return res.status(429).json({
             success: false,
             error: { code: "RATE_LIMITED", message: "Too many requests" }
         });
-    }
-    for (const { key } of descriptors) {
-        const bucket = rateBuckets.get(key);
-        if (bucket && bucket.expiresAt > now) {
-            bucket.count += 1;
-        } else {
-            rateBuckets.set(key, { count: 1, expiresAt: now + policy.windowMs });
-        }
     }
     return next();
 };

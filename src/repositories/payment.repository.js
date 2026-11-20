@@ -175,16 +175,27 @@ const expireAttempt = async (id, now = new Date()) => getPrismaClient().$transac
     return mapAttempt(await expireAttemptInTransaction(transaction, attempt, now));
 });
 
-const expireDueAttempts = async (now = new Date(), limit = 100) => {
-    const rows = await getPrismaClient().paymentAttempt.findMany({
+const expireDueAttempts = async (now = new Date(), limit = 100, client = getPrismaClient()) => client.$transaction(async (transaction) => {
+    const [lock] = await transaction.$queryRaw`
+        SELECT pg_try_advisory_xact_lock(5350501202611200001::bigint) AS acquired;
+    `;
+    if (!lock?.acquired) return 0;
+
+    const rows = await transaction.paymentAttempt.findMany({
         where: { status: ACTIVE, expiresAt: { lte: now } },
         select: { id: true },
         orderBy: { expiresAt: "asc" },
         take: limit
     });
-    for (const row of rows) await expireAttempt(row.id, now);
+    for (const row of rows) {
+        const initial = await transaction.paymentAttempt.findUnique({ where: { id: row.id } });
+        if (!initial) continue;
+        await lockOrder(transaction, initial.orderId);
+        const attempt = await transaction.paymentAttempt.findUnique({ where: { id: row.id } });
+        await expireAttemptInTransaction(transaction, attempt, now);
+    }
     return rows.length;
-};
+});
 
 const processCallback = async ({ provider, providerReference, amount, successful, providerTransactionId, now = new Date() }) => getPrismaClient().$transaction(async (transaction) => {
     const initial = await transaction.paymentAttempt.findFirst({ where: { id: providerReference, provider } });

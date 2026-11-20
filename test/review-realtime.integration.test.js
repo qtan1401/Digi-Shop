@@ -305,18 +305,25 @@ const loadReviewLive = () => {
         constructor(url) { this.url = url; this.listeners = {}; sockets.push(this); }
         addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
         emit(type, event = {}) { for (const listener of this.listeners[type] || []) listener(event); }
-        close() { this.emit("close"); }
+        close() { this.closed = true; this.emit("close"); }
     }
     const window = {};
+    const visibilityListeners = new Set();
+    const document = {
+        hidden: false,
+        addEventListener(type, listener) { if (type === "visibilitychange") visibilityListeners.add(listener); },
+        removeEventListener(type, listener) { if (type === "visibilitychange") visibilityListeners.delete(listener); },
+        setHidden(hidden) { this.hidden = hidden; for (const listener of visibilityListeners) listener(); }
+    };
     const context = vm.createContext({
         window, Math, encodeURIComponent, JSON, Number, Set,
-        document: { hidden: false, addEventListener() {}, removeEventListener() {} },
+        document,
         location: { protocol: "https:", host: "shop.test" },
         WebSocket: FakeWebSocket,
         setTimeout, clearTimeout, setInterval, clearInterval
     });
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/js/review-live.js"), "utf8"), context);
-    return { ReviewLive: window.ReviewLive, sockets };
+    return { ReviewLive: window.ReviewLive, sockets, document };
 };
 
 test("the browser client ignores malformed events and accepts only the four review types", () => {
@@ -368,5 +375,25 @@ test("the browser client polls every 30 s while the socket is down and resyncs a
     assert.equal(log.statuses.at(-1), "live");
     t.mock.timers.tick(60000);
     assert.equal(log.resyncs, before + 1, "polling stops once the socket is back");
+    live.close();
+});
+test("a tab hidden for two minutes closes and resyncs its socket when visible again", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+    const { ReviewLive, sockets, document } = loadReviewLive();
+    let resyncs = 0;
+    const live = ReviewLive.connect({ productId: 9, onResync: () => { resyncs += 1; } });
+    sockets[0].emit("open");
+    document.setHidden(true);
+    t.mock.timers.tick(119999);
+    assert.equal(sockets[0].closed, undefined);
+    t.mock.timers.tick(1);
+    assert.equal(sockets[0].closed, true);
+    t.mock.timers.tick(60000);
+    assert.equal(sockets.length, 1, "does not reconnect while the tab remains hidden");
+    assert.equal(resyncs, 0, "does not poll while the tab remains hidden");
+    document.setHidden(false);
+    assert.equal(sockets.length, 2);
+    sockets[1].emit("open");
+    assert.equal(resyncs, 1);
     live.close();
 });

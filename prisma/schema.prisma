@@ -464,3 +464,20 @@ model OrderStatusHistory {
   @@index([orderId, createdAt], map: "order_status_history_order_id_created_at_idx")
   @@map("order_status_history")
 }
+model RateLimitBucket {
+  key       String   @id @db.VarChar(200)
+  count     Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@map("rate_limit_buckets")
+}
+model ReviewEvent {
+  id        BigInt   @id @default(autoincrement())
+  productId Int      @map("product_id")
+  origin    String   @db.VarChar(64)
+  payload   Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt], map: "review_events_created_at_idx")
+  @@map("review_events")
+}

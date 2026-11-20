@@ -1,12 +1,12 @@
-# 0001. Realtime Product reviews over `ws`, single process
+# 0001. Realtime Product reviews over `ws`
 
-Status: accepted (2026-11-12)
+Status: accepted (2026-11-12; amended for Sprint 5)
 
 ## Context
 
 The Product page must show new, edited, deleted and hidden Product reviews, and the new average Rating,
-without a reload. Anyone may also leave a Guest comment (no account, no Rating). The app is one Node/Express
-process today.
+without a reload. Anyone may also leave a Guest comment (no account, no Rating). The app was one Node/Express
+process when this decision was accepted; Sprint 5 adds a multi-instance runtime without requiring a pub/sub service.
 
 ## Decision
 
@@ -16,10 +16,11 @@ process today.
   and proxy, and ~10x the code surface, for features we do not use. `ws` is a thin, widely audited dependency and the
   browser needs no library.
 - **One room per Product.** The hub (`src/realtime/review-hub.js`) keeps `productId -> Set<socket>` in memory.
-  Services publish `{type, review, aggregate}` after the database write has returned (so after commit), only
-  when somebody is watching that Product. The payload is the public list shape (`authorType`, display name,
-  Rating, comment, dates) plus the aggregate; never an email or user id. Broadcast errors are logged and never fail
-  the HTTP request.
+  In `direct` mode, services publish `{type, review, aggregate}` after the database write has returned (so after commit),
+  only when somebody is watching that Product. In `database` mode, the event is also persisted after commit even when
+  this instance has no local watcher, so other instances can deliver it. The payload is the public list shape
+  (`authorType`, display name, Rating, comment, dates) plus the aggregate; never an email or user id. Broadcast errors
+  are logged and never fail the HTTP request.
 - **Types:** `review.created`, `review.updated`, `review.deleted`, `review.hidden`. An admin un-hide is sent as
   `review.updated` (the client upserts). Changes to a review an admin has hidden are not broadcast.
 - **Hardening:** the `Origin` header must be present and listed in `APP_ORIGIN` (the same list CSRF uses), otherwise
@@ -33,11 +34,12 @@ process today.
 
 ## Consequences
 
-- **Single process only.** Rooms and the rate-limit buckets are process memory. With two or more app instances a
-  comment posted on instance A is never pushed to watchers connected to instance B (they only catch up through the
-  30 s poll or a reconnect). This is acceptable for one instance.
-- **Next step for several instances (Wave 2):** publish the event to Redis pub/sub (one channel per Product or one
-  shared channel); every instance subscribes and fans out to its own local rooms. Rate limits and the connection
-  caps move to Redis at the same time. The hub's `publish(productId, event)` is the single seam to change.
+- **Delivery modes.** `direct` keeps delivery in process memory and is for a single instance or tests. Multi-instance
+  deployments use `database`: committed events are stored in Postgres `review_events`; each instance polls from an
+  initialized cursor every 1.5 s only while local sockets exist, ignores its own writes, and periodically removes
+  rows older than one hour. `LISTEN/NOTIFY` is avoided so idle database connections can close.
+- **Scaling trade-off.** Database polling adds query load but avoids another service. Redis/pub-sub remains a possible
+  future backend if polling becomes a bottleneck, not a prerequisite for multiple instances. Database-backed rate
+  limits (`RATE_LIMIT_STORE=database`) are shared; WebSocket connection caps remain local to each process.
 - Graceful shutdown must close sockets first (`server-lifecycle.js` does), otherwise `server.close()` waits forever.
 - A reverse proxy must forward `Upgrade`/`Connection` headers and keep idle connections open longer than 30 s.

@@ -18,6 +18,8 @@ const guestRoutes = require("./routes/guest.routes");
 const landingRoutes = require("./routes/landing.routes");
 const { sendNotFound, handleError } = require("./middlewares/not-found");
 const { parseCookies, ensureCsrfCookie, attachUser } = require("./middlewares/auth");
+const { instanceId } = require("./infra/instance");
+const healthRoutes = require("./routes/health.routes");
 
 const app = express();
 
@@ -26,6 +28,12 @@ const app = express();
 if (/^[1-9]\d*$/.test(process.env.TRUST_PROXY || "")) {
     app.set("trust proxy", Number(process.env.TRUST_PROXY));
 }
+app.use((req, res, next) => {
+    res.set("X-Instance", instanceId);
+    next();
+});
+app.use(healthRoutes);
+
 
 // ===== MIDDLEWARE =====
 app.use(express.json());

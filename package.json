@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "cluster": "node scripts/cluster/start-cluster.js",
+    "cluster:smoke": "node scripts/cluster/smoke.js",
     "db:create": "node scripts/db/create-database.js",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
@@ -12,8 +14,8 @@
     "db:reset:local": "node prisma/seed.js reset",
     "db:reset:rollback-check": "node prisma/seed.js rollback-check",
     "db:setup": "npm run db:create && npm run db:migrate && npm run db:generate && npm run db:seed",
-    "test": "node --test",
-    "test:db": "node --env-file-if-exists=.env --test --test-concurrency=1 test-db/concurrency.db-test.js test-db/constraints.db-test.js test-db/dashboard.db-test.js test-db/schema.db-test.js test-db/search.db-test.js test-db/seed.db-test.js"
+    "test": "node --require ./scripts/test-bootstrap.js --test",
+    "test:db": "node --env-file-if-exists=.env --test --test-concurrency=1 test-db/concurrency.db-test.js test-db/constraints.db-test.js test-db/dashboard.db-test.js test-db/payment-worker.db-test.js test-db/rate-limit.db-test.js test-db/review-events.db-test.js test-db/schema.db-test.js test-db/search.db-test.js test-db/seed.db-test.js"
   },
   "keywords": [],
   "author": "",

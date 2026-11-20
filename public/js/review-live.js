@@ -33,6 +33,7 @@
         let hasDropped = false;
         let reconnectTimer = null;
         let pollTimer = null;
+        let hiddenTimer = null;
         let status = "";
 
         const setStatus = (next) => {
@@ -52,14 +53,14 @@
         };
 
         const scheduleReconnect = () => {
-            if (closed || reconnectTimer) return;
+            if (closed || document.hidden || reconnectTimer) return;
             const ceiling = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * 2 ** attempts);
             attempts += 1;
             reconnectTimer = setTimeout(() => { reconnectTimer = null; open(); }, ceiling * (0.5 + Math.random() / 2));
         };
 
         const open = () => {
-            if (closed) return;
+            if (closed || document.hidden) return;
             if (typeof WebSocket !== "function") { startPolling(); return; }
             let ws;
             try { ws = new WebSocket(url); } catch (_) { startPolling(); scheduleReconnect(); return; }
@@ -79,6 +80,7 @@
                 if (socket === ws) socket = null;
                 if (closed) return;
                 hasDropped = true;
+                if (document.hidden) { stopPolling(); return; }
                 startPolling();
                 scheduleReconnect();
             });
@@ -86,19 +88,36 @@
         };
 
         const onVisible = () => {
-            if (document.hidden || closed || socket || !reconnectTimer) return;
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-            open();
+            if (closed) return;
+            if (document.hidden) {
+                if (!hiddenTimer) hiddenTimer = setTimeout(() => {
+                    hiddenTimer = null;
+                    if (document.hidden && socket) socket.close();
+                }, 2 * 60 * 1000);
+                if (!socket) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                    stopPolling();
+                }
+                return;
+            }
+            clearTimeout(hiddenTimer);
+            hiddenTimer = null;
+            if (!socket) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+                open();
+            }
         };
         document.addEventListener("visibilitychange", onVisible);
+        onVisible();
 
-        open();
 
         return {
             close() {
                 closed = true;
                 clearTimeout(reconnectTimer);
+                clearTimeout(hiddenTimer);
                 stopPolling();
                 document.removeEventListener("visibilitychange", onVisible);
                 if (socket) socket.close();
