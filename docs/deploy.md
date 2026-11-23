@@ -63,7 +63,7 @@ Script áp dụng toàn bộ migration, rồi seed dữ liệu mẫu (sản ph�
 | `DATABASE_URL` | Neon, chuỗi **pooled** |
 | `CLOUDINARY_URL` | Mục 3 |
 | `GOOGLE_CLIENT_ID` | Cùng giá trị trong `.env` ở máy |
-| `MAIL_FROM`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Cùng giá trị trong `.env` ở máy |
+| `MAIL_FROM`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Thông tin SMTP2GO (xem mục 6a); **không** dùng Gmail SMTP |
 | `ADMIN_DEFAULT_PASSWORD` | Cùng giá trị đã nhập khi seed (mục 5) |
 
 4. Bấm **Apply**. Lần build đầu mất vài phút (Render dựng `Dockerfile`; máy bạn không cần Docker).
@@ -71,6 +71,20 @@ Script áp dụng toàn bộ migration, rồi seed dữ liệu mẫu (sản ph�
 Nếu không dùng Blueprint, tạo **New → Web Service**, chọn repo, **Language/Runtime: Docker**, **Region: Singapore**, **Instance type: Free**, **Health Check Path: `/healthz`**, rồi nhập các biến theo bảng ở trên và theo `deploy/render.env.example`.
 
 MoMo và VNPay là tuỳ chọn: bỏ trống thì hai phương thức này không dùng được, COD và chuyển khoản vẫn chạy. Có khoá sandbox thì thêm vào **Environment** sau (xem mục 8).
+
+## 6a. Email trên Render Free (bắt buộc đọc)
+
+Render ghi rõ: *"Free web services can't send outbound network traffic on ports 25, 465, or 587"*. Gmail SMTP (`smtp.gmail.com`, cổng 587/465) vì vậy **không gửi được** từ Render Free: đơn hàng vẫn thành công nhưng email xác nhận không đi, log ghi `Order confirmation email for ... failed`. Ở máy local Gmail SMTP vẫn dùng bình thường.
+
+Cách dùng trên Render Free mà không phải đổi code: **SMTP2GO**, một SMTP relay nhận cổng **2525** (gói miễn phí có giới hạn số email mỗi tháng; kiểm tra điều kiện hiện hành). Không cần tên miền riêng và gửi được tới bất kỳ người nhận nào.
+
+1. Tạo tài khoản SMTP2GO, xác minh email đăng ký.
+2. Vào **Sending → Verified Senders**, thêm địa chỉ gửi (ví dụ Gmail của bạn) và bấm link xác minh gửi về hộp thư đó.
+3. Vào **Sending → SMTP Users**, tạo một SMTP user; ghi lại username và password của user này.
+4. Trên Render → **Environment**: `SMTP_HOST=mail.smtp2go.com`, `SMTP_PORT=2525` (đã đặt trong `render.yaml`), `SMTP_SECURE=false`, `SMTP_USER=<username>`, `SMTP_PASSWORD=<password>`, `MAIL_FROM=<địa chỉ đã xác minh>`. Lưu để Render khởi động lại.
+5. Đặt một đơn bằng email thật và kiểm tra hộp thư, **cả thư mục Spam**: thư gửi "từ" một địa chỉ Gmail qua relay có thể bị xếp vào Spam. Dùng tên miền riêng đã xác minh trong SMTP2GO sẽ ổn định hơn.
+
+Phương án dự phòng không cần đổi code: Brevo (`smtp-relay.brevo.com`, cổng 2525).
 
 ## 7. Kiểm tra sau khi deploy
 
